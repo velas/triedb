@@ -71,9 +71,14 @@ impl<T: TrieMut> AnyTrieMut<T> {
 
 /// Represents a mutable trie that is operated on a fixed RLP value type.
 #[derive(Clone, Debug)]
-pub struct FixedTrieMut<T: TrieMut, K: rlp::Encodable, V: rlp::Encodable + rlp::Decodable>(AnyTrieMut<T>, PhantomData<(K, V)>);
+pub struct FixedTrieMut<T: TrieMut, K: rlp::Encodable, V: rlp::Encodable + rlp::Decodable>(
+    AnyTrieMut<T>,
+    PhantomData<(K, V)>,
+);
 
-impl<T: TrieMut + Default, K: rlp::Encodable, V: rlp::Encodable + rlp::Decodable> Default for FixedTrieMut<T, K, V> {
+impl<T: TrieMut + Default, K: rlp::Encodable, V: rlp::Encodable + rlp::Decodable> Default
+    for FixedTrieMut<T, K, V>
+{
     fn default() -> Self {
         FixedTrieMut::new(T::default())
     }
@@ -208,9 +213,14 @@ impl<T: TrieMut> AnySecureTrieMut<T> {
 /// Represents a secure mutable trie where the key is hashed, and
 /// operated on a fixed RLP value type.
 #[derive(Clone, Debug)]
-pub struct FixedSecureTrieMut<T: TrieMut, K: AsRef<[u8]>, V: rlp::Encodable + rlp::Decodable>(AnySecureTrieMut<T>, PhantomData<(K, V)>);
+pub struct FixedSecureTrieMut<T: TrieMut, K: AsRef<[u8]>, V: rlp::Encodable + rlp::Decodable>(
+    AnySecureTrieMut<T>,
+    PhantomData<(K, V)>,
+);
 
-impl<T: TrieMut + Default, K: AsRef<[u8]>, V: rlp::Encodable + rlp::Decodable> Default for FixedSecureTrieMut<T, K, V> {
+impl<T: TrieMut + Default, K: AsRef<[u8]>, V: rlp::Encodable + rlp::Decodable> Default
+    for FixedSecureTrieMut<T, K, V>
+{
     fn default() -> Self {
         FixedSecureTrieMut::new(T::default())
     }

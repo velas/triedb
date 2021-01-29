@@ -1,11 +1,12 @@
-use merkle::{MerkleValue, MerkleNode};
-use merkle::nibble::{self, NibbleVec, NibbleSlice, Nibble};
+use merkle::nibble::{self, Nibble, NibbleSlice, NibbleVec};
+use merkle::{MerkleNode, MerkleValue};
 use {Change, DatabaseHandle};
 
 use rlp::{self, Rlp};
 
 fn find_and_remove_child<'a, D: DatabaseHandle>(
-    merkle: MerkleValue<'a>, database: &'a D
+    merkle: MerkleValue<'a>,
+    database: &'a D,
 ) -> (MerkleNode<'a>, Change) {
     let mut change = Change::default();
 
@@ -16,14 +17,15 @@ fn find_and_remove_child<'a, D: DatabaseHandle>(
             let sub_node = MerkleNode::decode(&Rlp::new(database.get(h)));
             change.remove_raw(h);
             sub_node
-        },
+        }
     };
 
     (node, change)
 }
 
 fn collapse_extension<'a>(
-    node_nibble: NibbleVec, subnode: MerkleNode<'a>
+    node_nibble: NibbleVec,
+    subnode: MerkleNode<'a>,
 ) -> (MerkleNode<'a>, Change) {
     let mut change = Change::default();
 
@@ -32,33 +34,34 @@ fn collapse_extension<'a>(
             let mut new_sub_nibble = node_nibble.clone();
             new_sub_nibble.append(&mut sub_nibble);
             MerkleNode::Leaf(new_sub_nibble, sub_value)
-        },
+        }
         MerkleNode::Extension(mut sub_nibble, sub_value) => {
             debug_assert!(sub_value != MerkleValue::Empty);
 
             let mut new_sub_nibble = node_nibble.clone();
             new_sub_nibble.append(&mut sub_nibble);
             MerkleNode::Extension(new_sub_nibble, sub_value)
-        },
+        }
         branch => {
             let subvalue = change.add_value(&branch);
             MerkleNode::Extension(node_nibble, subvalue)
-        },
+        }
     };
 
     (node, change)
 }
 
 fn nonempty_node_count<'a, 'b>(
-    nodes: &'b [MerkleValue<'a>; 16], additional: &'b Option<&'a [u8]>
+    nodes: &'b [MerkleValue<'a>; 16],
+    additional: &'b Option<&'a [u8]>,
 ) -> usize {
-    additional.iter().count() +
-        nodes.iter().filter(|v| v != &&MerkleValue::Empty).count()
+    additional.iter().count() + nodes.iter().filter(|v| v != &&MerkleValue::Empty).count()
 }
 
 fn collapse_branch<'a, D: DatabaseHandle>(
-    node_nodes: [MerkleValue<'a>; 16], node_additional: Option<&'a [u8]>,
-    database: &'a D
+    node_nodes: [MerkleValue<'a>; 16],
+    node_additional: Option<&'a [u8]>,
+    database: &'a D,
 ) -> (MerkleNode<'a>, Change) {
     let mut change = Change::default();
 
@@ -102,41 +105,41 @@ fn collapse_branch<'a, D: DatabaseHandle>(
 }
 
 pub fn delete_by_child<'a, D: DatabaseHandle>(
-    merkle: MerkleValue<'a>, nibble: NibbleVec, database: &'a D
+    merkle: MerkleValue<'a>,
+    nibble: NibbleVec,
+    database: &'a D,
 ) -> (Option<MerkleNode<'a>>, Change) {
     let mut change = Change::default();
 
     let new = match merkle {
-        MerkleValue::Empty => {
-            None
-        },
+        MerkleValue::Empty => None,
         MerkleValue::Full(ref sub_node) => {
-            let (new_node, subchange) = delete_by_node(
-                sub_node.as_ref().clone(), nibble, database);
+            let (new_node, subchange) = delete_by_node(sub_node.as_ref().clone(), nibble, database);
             change.merge(&subchange);
             match new_node {
                 Some(new_node) => Some(new_node),
                 None => None,
             }
-        },
+        }
         MerkleValue::Hash(h) => {
             let sub_node = MerkleNode::decode(&Rlp::new(database.get(h)));
             change.remove_raw(h);
-            let (new_node, subchange) = delete_by_node(
-                sub_node, nibble, database);
+            let (new_node, subchange) = delete_by_node(sub_node, nibble, database);
             change.merge(&subchange);
             match new_node {
                 Some(new_node) => Some(new_node),
                 None => None,
             }
-        },
+        }
     };
 
     (new, change)
 }
 
 pub fn delete_by_node<'a, D: DatabaseHandle>(
-    node: MerkleNode<'a>, nibble: NibbleVec, database: &'a D
+    node: MerkleNode<'a>,
+    nibble: NibbleVec,
+    database: &'a D,
 ) -> (Option<MerkleNode<'a>>, Change) {
     let mut change = Change::default();
 
@@ -147,12 +150,11 @@ pub fn delete_by_node<'a, D: DatabaseHandle>(
             } else {
                 Some(MerkleNode::Leaf(node_nibble, node_value))
             }
-        },
+        }
         MerkleNode::Extension(node_nibble, node_value) => {
             if nibble.starts_with(&node_nibble) {
-                let (subnode, subchange) = delete_by_child(
-                    node_value, nibble[node_nibble.len()..].into(),
-                    database);
+                let (subnode, subchange) =
+                    delete_by_child(node_value, nibble[node_nibble.len()..].into(), database);
                 change.merge(&subchange);
 
                 match subnode {
@@ -161,13 +163,13 @@ pub fn delete_by_node<'a, D: DatabaseHandle>(
                         change.merge(&subchange);
 
                         Some(new)
-                    },
+                    }
                     None => None,
                 }
             } else {
                 Some(MerkleNode::Extension(node_nibble, node_value))
             }
-        },
+        }
         MerkleNode::Branch(mut node_nodes, mut node_additional) => {
             let needs_collapse;
 
@@ -176,9 +178,8 @@ pub fn delete_by_node<'a, D: DatabaseHandle>(
                 needs_collapse = true;
             } else {
                 let ni: usize = nibble[0].into();
-                let (new_subnode, subchange) = delete_by_child(
-                    node_nodes[ni].clone(), nibble[1..].into(),
-                    database);
+                let (new_subnode, subchange) =
+                    delete_by_child(node_nodes[ni].clone(), nibble[1..].into(), database);
                 change.merge(&subchange);
 
                 match new_subnode {
@@ -187,11 +188,11 @@ pub fn delete_by_node<'a, D: DatabaseHandle>(
 
                         node_nodes[ni] = new_subvalue;
                         needs_collapse = false;
-                    },
+                    }
                     None => {
                         node_nodes[ni] = MerkleValue::Empty;
                         needs_collapse = true;
-                    },
+                    }
                 }
             }
 
@@ -208,7 +209,7 @@ pub fn delete_by_node<'a, D: DatabaseHandle>(
             } else {
                 Some(MerkleNode::Branch(node_nodes, node_additional))
             }
-        },
+        }
     };
 
     (new, change)

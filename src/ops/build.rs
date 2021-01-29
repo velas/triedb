@@ -1,13 +1,14 @@
-use merkle::{MerkleValue, MerkleNode};
-use merkle::nibble::{self, NibbleVec, NibbleSlice, Nibble};
+use merkle::nibble::{self, Nibble, NibbleSlice, NibbleVec};
+use merkle::{MerkleNode, MerkleValue};
 use {Change, DatabaseHandle};
 
 use std::collections::HashMap;
 
 use rlp::{self, Rlp};
 
-fn make_submap<'a, 'b: 'a, T: Iterator<Item=(&'a NibbleVec, &'a &'b [u8])>>(
-    common_len: usize, map: T
+fn make_submap<'a, 'b: 'a, T: Iterator<Item = (&'a NibbleVec, &'a &'b [u8])>>(
+    common_len: usize,
+    map: T,
 ) -> HashMap<NibbleVec, &'b [u8]> {
     let mut submap = HashMap::new();
     for (key, value) in map {
@@ -29,7 +30,10 @@ pub fn build_node<'a>(map: &HashMap<NibbleVec, &'a [u8]>) -> (MerkleNode<'a>, Ch
     assert!(map.len() > 0);
     if map.len() == 1 {
         let key = map.keys().next().unwrap();
-        return (MerkleNode::Leaf(key.clone(), map.get(key).unwrap().clone()), change);
+        return (
+            MerkleNode::Leaf(key.clone(), map.get(key).unwrap().clone()),
+            change,
+        );
     }
 
     debug_assert!(map.len() > 1);
@@ -52,9 +56,11 @@ pub fn build_node<'a>(map: &HashMap<NibbleVec, &'a [u8]>) -> (MerkleNode<'a>, Ch
         for i in 0..16 {
             let nibble: Nibble = i.into();
 
-            let submap = make_submap(1, map.iter().filter(|&(key, _value)| {
-                key.len() > 0 && key[0] == nibble
-            }));
+            let submap = make_submap(
+                1,
+                map.iter()
+                    .filter(|&(key, _value)| key.len() > 0 && key[0] == nibble),
+            );
 
             if submap.len() > 0 {
                 let (node, subchange) = build_node(&submap);
@@ -67,8 +73,10 @@ pub fn build_node<'a>(map: &HashMap<NibbleVec, &'a [u8]>) -> (MerkleNode<'a>, Ch
             }
         }
 
-        let additional = map.iter()
-            .filter(|&(key, _value)| key.len() == 0).next()
+        let additional = map
+            .iter()
+            .filter(|&(key, _value)| key.len() == 0)
+            .next()
             .map(|(_key, value)| value.clone());
 
         (MerkleNode::Branch(nodes, additional), change)

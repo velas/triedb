@@ -1,49 +1,59 @@
 //! Merkle trie implementation for Ethereum.
 
 extern crate bigint;
+#[cfg(test)]
+extern crate hexutil;
 extern crate rlp;
 extern crate sha3;
-#[cfg(test)] extern crate hexutil;
 
 use bigint::H256;
+use merkle::nibble::{self, Nibble, NibbleSlice, NibbleVec};
+use merkle::{MerkleNode, MerkleValue};
 use rlp::Rlp;
 use sha3::{Digest, Keccak256};
 use std::collections::{HashMap, HashSet};
-use merkle::{MerkleValue, MerkleNode};
-use merkle::nibble::{self, NibbleVec, NibbleSlice, Nibble};
 
 macro_rules! empty_nodes {
-    () => (
-        [MerkleValue::Empty, MerkleValue::Empty,
-         MerkleValue::Empty, MerkleValue::Empty,
-         MerkleValue::Empty, MerkleValue::Empty,
-         MerkleValue::Empty, MerkleValue::Empty,
-         MerkleValue::Empty, MerkleValue::Empty,
-         MerkleValue::Empty, MerkleValue::Empty,
-         MerkleValue::Empty, MerkleValue::Empty,
-         MerkleValue::Empty, MerkleValue::Empty]
-    )
+    () => {
+        [
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+        ]
+    };
 }
 
 macro_rules! empty_trie_hash {
-    () => {
-        {
-            use std::str::FromStr;
+    () => {{
+        use std::str::FromStr;
 
-            H256::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421").unwrap()
-        }
-    }
+        H256::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
+            .unwrap()
+    }};
 }
 
-pub mod merkle;
-pub mod gc;
-mod ops;
-mod memory;
-mod mutable;
 mod cache;
+pub mod gc;
+mod memory;
+pub mod merkle;
+mod mutable;
+mod ops;
 
-use ops::{insert, delete, build, get};
 use cache::Cache;
+use ops::{build, delete, get, insert};
 
 pub use memory::*;
 pub use mutable::*;
@@ -163,7 +173,10 @@ pub fn empty_trie_hash() -> H256 {
 
 /// Insert to a merkle trie. Return the new root hash and the changes.
 pub fn insert<D: DatabaseHandle>(
-    root: H256, database: &D, key: &[u8], value: &[u8]
+    root: H256,
+    database: &D,
+    key: &[u8],
+    value: &[u8],
 ) -> (H256, Change) {
     let mut change = Change::default();
     let nibble = nibble::from_key(key);
@@ -184,9 +197,7 @@ pub fn insert<D: DatabaseHandle>(
 
 /// Insert to an empty merkle trie. Return the new root hash and the
 /// changes.
-pub fn insert_empty<D: DatabaseHandle>(
-    key: &[u8], value: &[u8]
-) -> (H256, Change) {
+pub fn insert_empty<D: DatabaseHandle>(key: &[u8], value: &[u8]) -> (H256, Change) {
     let mut change = Change::default();
     let nibble = nibble::from_key(key);
 
@@ -200,14 +211,12 @@ pub fn insert_empty<D: DatabaseHandle>(
 
 /// Delete a key from a markle trie. Return the new root hash and the
 /// changes.
-pub fn delete<D: DatabaseHandle>(
-    root: H256, database: &D, key: &[u8]
-) -> (H256, Change) {
+pub fn delete<D: DatabaseHandle>(root: H256, database: &D, key: &[u8]) -> (H256, Change) {
     let mut change = Change::default();
     let nibble = nibble::from_key(key);
 
     let (new, subchange) = if root == empty_trie_hash!() {
-        return (root, change)
+        return (root, change);
     } else {
         let old = MerkleNode::decode(&Rlp::new(database.get(root)));
         change.remove_raw(root);
@@ -221,10 +230,8 @@ pub fn delete<D: DatabaseHandle>(
 
             let hash = H256::from(Keccak256::digest(&rlp::encode(&new).to_vec()).as_slice());
             (hash, change)
-        },
-        None => {
-            (empty_trie_hash!(), change)
-        },
+        }
+        None => (empty_trie_hash!(), change),
     }
 }
 
@@ -252,7 +259,9 @@ pub fn build(map: &HashMap<Vec<u8>, Vec<u8>>) -> (H256, Change) {
 
 /// Get a value given the root hash and the database.
 pub fn get<'a, 'b, D: DatabaseHandle>(
-    root: H256, database: &'a D, key: &'b [u8]
+    root: H256,
+    database: &'a D,
+    key: &'b [u8],
 ) -> Option<&'a [u8]> {
     if root == empty_trie_hash!() {
         None

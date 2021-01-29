@@ -1,27 +1,52 @@
 //! Merkle nibble types.
 
-use rlp::{RlpStream, Encodable, Decodable, Rlp, Prototype};
-use std::ops::Deref;
+use rlp::{Decodable, Encodable, Prototype, Rlp, RlpStream};
 use std::cmp::min;
-use std::hash::{Hash, Hasher};
 use std::fmt::{self, Debug, Formatter};
+use std::hash::{Hash, Hasher};
+use std::ops::Deref;
 
 /// Represents a nibble. A 16-variant value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Nibble {
-    N0, N1, N2, N3, N4, N5, N6, N7,
-    N8, N9, N10, N11, N12, N13, N14, N15,
+    N0,
+    N1,
+    N2,
+    N3,
+    N4,
+    N5,
+    N6,
+    N7,
+    N8,
+    N9,
+    N10,
+    N11,
+    N12,
+    N13,
+    N14,
+    N15,
 }
 
 impl From<usize> for Nibble {
     fn from(val: usize) -> Nibble {
         match val {
-            0 => Nibble::N0, 1 => Nibble::N1, 2 => Nibble::N2, 3 =>
-            Nibble::N3, 4 => Nibble::N4, 5 => Nibble::N5, 6 =>
-            Nibble::N6, 7 => Nibble::N7, 8 => Nibble::N8, 9 =>
-            Nibble::N9, 10 => Nibble::N10, 11 => Nibble::N11, 12 =>
-            Nibble::N12, 13 => Nibble::N13, 14 => Nibble::N14, 15 =>
-            Nibble::N15, _ => panic!(),
+            0 => Nibble::N0,
+            1 => Nibble::N1,
+            2 => Nibble::N2,
+            3 => Nibble::N3,
+            4 => Nibble::N4,
+            5 => Nibble::N5,
+            6 => Nibble::N6,
+            7 => Nibble::N7,
+            8 => Nibble::N8,
+            9 => Nibble::N9,
+            10 => Nibble::N10,
+            11 => Nibble::N11,
+            12 => Nibble::N12,
+            13 => Nibble::N13,
+            14 => Nibble::N14,
+            15 => Nibble::N15,
+            _ => panic!(),
         }
     }
 }
@@ -29,11 +54,21 @@ impl From<usize> for Nibble {
 impl Into<usize> for Nibble {
     fn into(self) -> usize {
         match self {
-            Nibble::N0 => 0, Nibble::N1 => 1, Nibble::N2 => 2,
-            Nibble::N3 => 3, Nibble::N4 => 4, Nibble::N5 => 5,
-            Nibble::N6 => 6, Nibble::N7 => 7, Nibble::N8 => 8,
-            Nibble::N9 => 9, Nibble::N10 => 10, Nibble::N11 => 11,
-            Nibble::N12 => 12, Nibble::N13 => 13, Nibble::N14 => 14,
+            Nibble::N0 => 0,
+            Nibble::N1 => 1,
+            Nibble::N2 => 2,
+            Nibble::N3 => 3,
+            Nibble::N4 => 4,
+            Nibble::N5 => 5,
+            Nibble::N6 => 6,
+            Nibble::N7 => 7,
+            Nibble::N8 => 8,
+            Nibble::N9 => 9,
+            Nibble::N10 => 10,
+            Nibble::N11 => 11,
+            Nibble::N12 => 12,
+            Nibble::N13 => 13,
+            Nibble::N14 => 14,
             Nibble::N15 => 15,
         }
     }
@@ -42,12 +77,23 @@ impl Into<usize> for Nibble {
 impl From<u8> for Nibble {
     fn from(val: u8) -> Nibble {
         match val {
-            0 => Nibble::N0, 1 => Nibble::N1, 2 => Nibble::N2, 3 =>
-            Nibble::N3, 4 => Nibble::N4, 5 => Nibble::N5, 6 =>
-            Nibble::N6, 7 => Nibble::N7, 8 => Nibble::N8, 9 =>
-            Nibble::N9, 10 => Nibble::N10, 11 => Nibble::N11, 12 =>
-            Nibble::N12, 13 => Nibble::N13, 14 => Nibble::N14, 15 =>
-            Nibble::N15, _ => panic!(),
+            0 => Nibble::N0,
+            1 => Nibble::N1,
+            2 => Nibble::N2,
+            3 => Nibble::N3,
+            4 => Nibble::N4,
+            5 => Nibble::N5,
+            6 => Nibble::N6,
+            7 => Nibble::N7,
+            8 => Nibble::N8,
+            9 => Nibble::N9,
+            10 => Nibble::N10,
+            11 => Nibble::N11,
+            12 => Nibble::N12,
+            13 => Nibble::N13,
+            14 => Nibble::N14,
+            15 => Nibble::N15,
+            _ => panic!(),
         }
     }
 }
@@ -55,11 +101,21 @@ impl From<u8> for Nibble {
 impl Into<u8> for Nibble {
     fn into(self) -> u8 {
         match self {
-            Nibble::N0 => 0, Nibble::N1 => 1, Nibble::N2 => 2,
-            Nibble::N3 => 3, Nibble::N4 => 4, Nibble::N5 => 5,
-            Nibble::N6 => 6, Nibble::N7 => 7, Nibble::N8 => 8,
-            Nibble::N9 => 9, Nibble::N10 => 10, Nibble::N11 => 11,
-            Nibble::N12 => 12, Nibble::N13 => 13, Nibble::N14 => 14,
+            Nibble::N0 => 0,
+            Nibble::N1 => 1,
+            Nibble::N2 => 2,
+            Nibble::N3 => 3,
+            Nibble::N4 => 4,
+            Nibble::N5 => 5,
+            Nibble::N6 => 6,
+            Nibble::N7 => 7,
+            Nibble::N8 => 8,
+            Nibble::N9 => 9,
+            Nibble::N10 => 10,
+            Nibble::N11 => 11,
+            Nibble::N12 => 12,
+            Nibble::N13 => 13,
+            Nibble::N14 => 14,
             Nibble::N15 => 15,
         }
     }
@@ -69,7 +125,7 @@ impl Into<u8> for Nibble {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NibbleType {
     Leaf,
-    Extension
+    Extension,
 }
 
 /// A nibble vector.
@@ -81,8 +137,9 @@ pub type NibbleSlice<'a> = &'a [Nibble];
 pub fn from_key(key: &[u8]) -> NibbleVec {
     let mut vec = NibbleVec::new();
 
-    for i in 0..(key.len()*2) {
-        if i & 1 == 0 { // even
+    for i in 0..(key.len() * 2) {
+        if i & 1 == 0 {
+            // even
             vec.push(((key[i / 2] & 0xf0) >> 4).into());
         } else {
             vec.push((key[i / 2] & 0x0f).into());
@@ -97,7 +154,8 @@ pub fn into_key(nibble: NibbleSlice) -> Vec<u8> {
     let mut ret = Vec::new();
 
     for i in 0..nibble.len() {
-        if i & 1 == 0 { // even
+        if i & 1 == 0 {
+            // even
             let value: u8 = nibble[i].into();
             ret.push(value << 4);
         } else {
@@ -114,28 +172,41 @@ pub fn decode(rlp: &Rlp) -> (NibbleVec, NibbleType) {
     let mut vec = NibbleVec::new();
 
     let data = rlp.data();
-    let start_odd = if data[0] & 0b00010000 == 0b00010000 { true } else { false };
+    let start_odd = if data[0] & 0b00010000 == 0b00010000 {
+        true
+    } else {
+        false
+    };
     let start_index = if start_odd { 1 } else { 2 };
     let is_leaf = data[0] & 0b00100000 == 0b00100000;
 
     let len = data.len() * 2;
 
     for i in start_index..len {
-        if i & 1 == 0 { // even
+        if i & 1 == 0 {
+            // even
             vec.push(((data[i / 2] & 0xf0) >> 4).into());
         } else {
             vec.push((data[i / 2] & 0x0f).into());
         }
     }
 
-    (vec, if is_leaf { NibbleType::Leaf } else { NibbleType::Extension })
+    (
+        vec,
+        if is_leaf {
+            NibbleType::Leaf
+        } else {
+            NibbleType::Extension
+        },
+    )
 }
 
 /// Encode a nibble into the given RLP stream.
 pub fn encode(vec: NibbleSlice, typ: NibbleType, s: &mut RlpStream) {
     let mut ret: Vec<u8> = Vec::new();
 
-    if vec.len() & 1 == 0 { // even
+    if vec.len() & 1 == 0 {
+        // even
         ret.push(0b00000000);
 
         for i in 0..vec.len() {
@@ -165,7 +236,7 @@ pub fn encode(vec: NibbleSlice, typ: NibbleType, s: &mut RlpStream) {
 
     ret[0] |= match typ {
         NibbleType::Leaf => 0b00100000,
-        NibbleType::Extension => 0b00000000
+        NibbleType::Extension => 0b00000000,
     };
 
     s.append(&ret);
@@ -188,7 +259,8 @@ pub fn common<'a, 'b>(a: NibbleSlice<'a>, b: NibbleSlice<'b>) -> NibbleSlice<'a>
 
 /// Common prefix for two nibbles. Return the sub nibbles.
 pub fn common_with_sub<'a, 'b>(
-    a: NibbleSlice<'a>, b: NibbleSlice<'b>
+    a: NibbleSlice<'a>,
+    b: NibbleSlice<'b>,
 ) -> (NibbleSlice<'a>, NibbleVec, NibbleVec) {
     let common = common(a, b);
     let asub = a[common.len()..].into();
@@ -198,7 +270,7 @@ pub fn common_with_sub<'a, 'b>(
 }
 
 /// Common prefix for all provided nibbles.
-pub fn common_all<'a, T: Iterator<Item=NibbleSlice<'a>>>(mut iter: T) -> NibbleSlice<'a> {
+pub fn common_all<'a, T: Iterator<Item = NibbleSlice<'a>>>(mut iter: T) -> NibbleSlice<'a> {
     let first = match iter.next() {
         Some(val) => val,
         None => return &[],

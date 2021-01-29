@@ -1,5 +1,5 @@
 use bigint::H256;
-use {Change, TrieMut, DatabaseHandle, get, insert, delete};
+use {delete, get, insert, Change, DatabaseHandle, TrieMut};
 
 pub trait ItemCounter {
     fn increase(&mut self, key: H256) -> usize;
@@ -31,7 +31,7 @@ impl<D: DatabaseMut, C: ItemCounter> TrieCollection<D, C> {
         DatabaseTrieMut {
             database: &self.database,
             change: Change::default(),
-            root: root
+            root: root,
         }
     }
 

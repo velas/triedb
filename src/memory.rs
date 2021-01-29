@@ -1,7 +1,8 @@
 use bigint::H256;
-use {DatabaseHandle, Change, insert, delete, build, get,
-     TrieMut, FixedTrieMut, FixedSecureTrieMut,
-     AnyTrieMut, AnySecureTrieMut, SecureTrieMut};
+use {
+    build, delete, get, insert, AnySecureTrieMut, AnyTrieMut, Change, DatabaseHandle,
+    FixedSecureTrieMut, FixedTrieMut, SecureTrieMut, TrieMut,
+};
 
 use std::collections::HashMap;
 
@@ -97,30 +98,50 @@ impl MemoryTrieMut {
 
 #[cfg(test)]
 mod tests {
-    use {TrieMut};
     use super::MemoryTrieMut;
     use merkle::MerkleNode;
     use rlp::Rlp;
+    use TrieMut;
 
+    use bigint::H256;
+    use std::cell::UnsafeCell;
     use std::collections::HashMap;
     use std::str::FromStr;
-    use std::cell::UnsafeCell;
-    use bigint::H256;
 
     #[test]
     fn trie_middle_leaf() {
         let mut map = HashMap::new();
-        map.insert("key1aa".as_bytes().into(), "0123456789012345678901234567890123456789xxx".as_bytes().into());
-        map.insert("key1".as_bytes().into(), "0123456789012345678901234567890123456789Very_Long".as_bytes().into());
+        map.insert(
+            "key1aa".as_bytes().into(),
+            "0123456789012345678901234567890123456789xxx"
+                .as_bytes()
+                .into(),
+        );
+        map.insert(
+            "key1".as_bytes().into(),
+            "0123456789012345678901234567890123456789Very_Long"
+                .as_bytes()
+                .into(),
+        );
         map.insert("key2bb".as_bytes().into(), "aval3".as_bytes().into());
         map.insert("key2".as_bytes().into(), "short".as_bytes().into());
         map.insert("key3cc".as_bytes().into(), "aval3".as_bytes().into());
-        map.insert("key3".as_bytes().into(), "1234567890123456789012345678901".as_bytes().into());
+        map.insert(
+            "key3".as_bytes().into(),
+            "1234567890123456789012345678901".as_bytes().into(),
+        );
 
         let mut btrie = MemoryTrieMut::build(&map);
 
-        assert_eq!(btrie.root(), H256::from_str("0xcb65032e2f76c48b82b5c24b3db8f670ce73982869d38cd39a624f23d62a9e89").unwrap());
-        assert_eq!(btrie.get("key2bb".as_bytes()), Some("aval3".as_bytes().into()));
+        assert_eq!(
+            btrie.root(),
+            H256::from_str("0xcb65032e2f76c48b82b5c24b3db8f670ce73982869d38cd39a624f23d62a9e89")
+                .unwrap()
+        );
+        assert_eq!(
+            btrie.get("key2bb".as_bytes()),
+            Some("aval3".as_bytes().into())
+        );
         assert_eq!(btrie.get("key2bbb".as_bytes()), None);
 
         let mut mtrie = MemoryTrieMut::default();

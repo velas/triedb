@@ -1,7 +1,7 @@
-use super::nibble::{self, Nibble, NibbleVec, NibbleSlice, NibbleType};
+use super::nibble::{self, Nibble, NibbleSlice, NibbleType, NibbleVec};
 
-use rlp::{self, RlpStream, Encodable, Decodable, Rlp, Prototype};
 use bigint::H256;
+use rlp::{self, Decodable, Encodable, Prototype, Rlp, RlpStream};
 use std::borrow::Borrow;
 
 /// Represents a merkle node.
@@ -19,23 +19,31 @@ impl<'a> MerkleNode<'a> {
             Prototype::List(2) => {
                 let (nibble, typ) = nibble::decode(&rlp.at(0));
                 match typ {
-                    NibbleType::Leaf => {
-                        MerkleNode::Leaf(nibble, rlp.at(1).data())
-                    },
+                    NibbleType::Leaf => MerkleNode::Leaf(nibble, rlp.at(1).data()),
                     NibbleType::Extension => {
                         MerkleNode::Extension(nibble, MerkleValue::decode(&rlp.at(1)))
-                    },
+                    }
                 }
-            },
+            }
             Prototype::List(17) => {
-                let mut nodes = [MerkleValue::Empty, MerkleValue::Empty,
-                                 MerkleValue::Empty, MerkleValue::Empty,
-                                 MerkleValue::Empty, MerkleValue::Empty,
-                                 MerkleValue::Empty, MerkleValue::Empty,
-                                 MerkleValue::Empty, MerkleValue::Empty,
-                                 MerkleValue::Empty, MerkleValue::Empty,
-                                 MerkleValue::Empty, MerkleValue::Empty,
-                                 MerkleValue::Empty, MerkleValue::Empty];
+                let mut nodes = [
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                ];
                 for i in 0..16 {
                     nodes[i] = MerkleValue::decode(&rlp.at(i));
                 }
@@ -45,7 +53,7 @@ impl<'a> MerkleNode<'a> {
                     Some(rlp.at(16).data())
                 };
                 MerkleNode::Branch(nodes, value)
-            },
+            }
             _ => panic!(),
         }
     }
@@ -61,24 +69,34 @@ impl<'a> Clone for MerkleNode<'a> {
         match self {
             &MerkleNode::Leaf(ref nibble, ref value) => {
                 MerkleNode::Leaf(nibble.clone(), value.clone())
-            },
+            }
             &MerkleNode::Extension(ref nibble, ref value) => {
                 MerkleNode::Extension(nibble.clone(), value.clone())
-            },
+            }
             &MerkleNode::Branch(ref nodes, ref additional) => {
-                let mut cloned_nodes = [MerkleValue::Empty, MerkleValue::Empty,
-                                        MerkleValue::Empty, MerkleValue::Empty,
-                                        MerkleValue::Empty, MerkleValue::Empty,
-                                        MerkleValue::Empty, MerkleValue::Empty,
-                                        MerkleValue::Empty, MerkleValue::Empty,
-                                        MerkleValue::Empty, MerkleValue::Empty,
-                                        MerkleValue::Empty, MerkleValue::Empty,
-                                        MerkleValue::Empty, MerkleValue::Empty];
+                let mut cloned_nodes = [
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                    MerkleValue::Empty,
+                ];
                 for i in 0..16 {
                     cloned_nodes[i] = nodes[i].clone();
                 }
                 MerkleNode::Branch(cloned_nodes, additional.clone())
-            },
+            }
         }
     }
 }
@@ -90,20 +108,24 @@ impl<'a> Encodable for MerkleNode<'a> {
                 s.begin_list(2);
                 nibble::encode(nibble, NibbleType::Leaf, s);
                 value.rlp_append(s);
-            },
+            }
             &MerkleNode::Extension(ref nibble, ref value) => {
                 s.begin_list(2);
                 nibble::encode(nibble, NibbleType::Extension, s);
                 value.rlp_append(s);
-            },
+            }
             &MerkleNode::Branch(ref nodes, ref value) => {
                 s.begin_list(17);
                 for i in 0..16 {
                     nodes[i].rlp_append(s);
                 }
                 match value {
-                    &Some(ref value) => { value.rlp_append(s); },
-                    &None => { s.append_empty_data(); },
+                    &Some(ref value) => {
+                        value.rlp_append(s);
+                    }
+                    &None => {
+                        s.append_empty_data();
+                    }
                 }
             }
         }
@@ -142,26 +164,26 @@ impl<'a> Encodable for MerkleValue<'a> {
         match self {
             &MerkleValue::Empty => {
                 s.append_empty_data();
-            },
+            }
             &MerkleValue::Full(ref node) => {
                 debug_assert!(node.inlinable());
                 let node: &MerkleNode = node.borrow();
                 s.append(node);
-            },
+            }
             &MerkleValue::Hash(ref hash) => {
                 s.append(hash);
-            },
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::MerkleNode;
     use hexutil::read_hex;
+    use merkle::nibble::{self, Nibble, NibbleSlice, NibbleVec};
     use rlp::{self, Rlp};
     use sha3::{Digest, Keccak256};
-    use merkle::nibble::{self, NibbleVec, NibbleSlice, Nibble};
-    use super::MerkleNode;
 
     #[test]
     fn encode_decode() {

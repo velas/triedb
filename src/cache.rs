@@ -1,8 +1,8 @@
 use super::merkle::MerkleNode;
 use bigint::H256;
 use rlp::Rlp;
-use std::collections::HashMap;
 use std::cell::{RefCell, UnsafeCell};
+use std::collections::HashMap;
 
 pub struct Cache {
     cache: UnsafeCell<Vec<Vec<u8>>>,
@@ -13,7 +13,7 @@ impl Cache {
     pub fn new() -> Cache {
         Cache {
             cache: UnsafeCell::new(Vec::new()),
-            map: RefCell::new(HashMap::new())
+            map: RefCell::new(HashMap::new()),
         }
     }
 
