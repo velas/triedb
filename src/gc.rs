@@ -1,5 +1,6 @@
-use bigint::H256;
-use {delete, get, insert, Change, DatabaseHandle, TrieMut};
+use primitive_types::H256;
+
+use crate::{delete, get, insert, Change, DatabaseHandle, TrieMut};
 
 pub trait ItemCounter {
     fn increase(&mut self, key: H256) -> usize;

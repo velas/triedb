@@ -1,62 +1,31 @@
 //! Merkle trie implementation for Ethereum.
 
-extern crate bigint;
-#[cfg(test)]
-extern crate hexutil;
-extern crate rlp;
-extern crate sha3;
-
-use bigint::H256;
-use merkle::nibble::{self, Nibble, NibbleSlice, NibbleVec};
-use merkle::{MerkleNode, MerkleValue};
-use rlp::Rlp;
-use sha3::{Digest, Keccak256};
 use std::collections::{HashMap, HashSet};
 
-macro_rules! empty_nodes {
-    () => {
-        [
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-        ]
-    };
-}
+use primitive_types::H256;
+use rlp::Rlp;
+use sha3::{Digest, Keccak256};
 
-macro_rules! empty_trie_hash {
-    () => {{
-        use std::str::FromStr;
+use merkle::{
+    nibble::{self, Nibble, NibbleSlice, NibbleVec},
+    MerkleNode, MerkleValue,
+};
 
-        H256::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
-            .unwrap()
-    }};
-}
+pub mod gc;
+pub mod merkle;
+pub use memory::*;
+pub use mutable::*;
 
 mod cache;
-pub mod gc;
+mod error;
 mod memory;
-pub mod merkle;
 mod mutable;
 mod ops;
 
 use cache::Cache;
 use ops::{build, delete, get, insert};
 
-pub use memory::*;
-pub use mutable::*;
+type Result<T> = std::result::Result<T, error::Error>;
 
 pub trait CachedDatabaseHandle {
     fn get(&self, key: H256) -> Vec<u8>;
@@ -119,7 +88,7 @@ impl Change {
     /// Change to add a new node.
     pub fn add_node<'a, 'b, 'c>(&'a mut self, node: &'c MerkleNode<'b>) {
         let subnode = rlp::encode(node).to_vec();
-        let hash = H256::from(Keccak256::digest(&subnode).as_slice());
+        let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
         self.add_raw(hash, subnode);
     }
 
@@ -129,7 +98,7 @@ impl Change {
             MerkleValue::Full(Box::new(node.clone()))
         } else {
             let subnode = rlp::encode(node).to_vec();
-            let hash = H256::from(Keccak256::digest(&subnode).as_slice());
+            let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
             self.add_raw(hash, subnode);
             MerkleValue::Hash(hash)
         }
@@ -148,7 +117,7 @@ impl Change {
             false
         } else {
             let subnode = rlp::encode(node).to_vec();
-            let hash = H256::from(Keccak256::digest(&subnode).as_slice());
+            let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
             self.remove_raw(hash);
             true
         }
@@ -184,14 +153,15 @@ pub fn insert<D: DatabaseHandle>(
     let (new, subchange) = if root == empty_trie_hash!() {
         insert::insert_by_empty(nibble, value)
     } else {
-        let old = MerkleNode::decode(&Rlp::new(database.get(root)));
+        let old =
+            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
         change.remove_raw(root);
         insert::insert_by_node(old, nibble, value, database)
     };
     change.merge(&subchange);
     change.add_node(&new);
 
-    let hash = H256::from(Keccak256::digest(&rlp::encode(&new).to_vec()).as_slice());
+    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new).to_vec()).as_slice());
     (hash, change)
 }
 
@@ -205,7 +175,7 @@ pub fn insert_empty<D: DatabaseHandle>(key: &[u8], value: &[u8]) -> (H256, Chang
     change.merge(&subchange);
     change.add_node(&new);
 
-    let hash = H256::from(Keccak256::digest(&rlp::encode(&new).to_vec()).as_slice());
+    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new).to_vec()).as_slice());
     (hash, change)
 }
 
@@ -218,7 +188,8 @@ pub fn delete<D: DatabaseHandle>(root: H256, database: &D, key: &[u8]) -> (H256,
     let (new, subchange) = if root == empty_trie_hash!() {
         return (root, change);
     } else {
-        let old = MerkleNode::decode(&Rlp::new(database.get(root)));
+        let old =
+            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
         change.remove_raw(root);
         delete::delete_by_node(old, nibble, database)
     };
@@ -228,7 +199,7 @@ pub fn delete<D: DatabaseHandle>(root: H256, database: &D, key: &[u8]) -> (H256,
         Some(new) => {
             change.add_node(&new);
 
-            let hash = H256::from(Keccak256::digest(&rlp::encode(&new).to_vec()).as_slice());
+            let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new).to_vec()).as_slice());
             (hash, change)
         }
         None => (empty_trie_hash!(), change),
@@ -253,7 +224,7 @@ pub fn build(map: &HashMap<Vec<u8>, Vec<u8>>) -> (H256, Change) {
     change.merge(&subchange);
     change.add_node(&node);
 
-    let hash = H256::from(Keccak256::digest(&rlp::encode(&node).to_vec()).as_slice());
+    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&node).to_vec()).as_slice());
     (hash, change)
 }
 
@@ -267,7 +238,42 @@ pub fn get<'a, 'b, D: DatabaseHandle>(
         None
     } else {
         let nibble = nibble::from_key(key);
-        let node = MerkleNode::decode(&Rlp::new(database.get(root)));
+        let node =
+            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
         get::get_by_node(node, nibble, database)
     }
+}
+
+#[macro_export]
+macro_rules! empty_nodes {
+    () => {
+        [
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+            MerkleValue::Empty,
+        ]
+    };
+}
+
+#[macro_export]
+macro_rules! empty_trie_hash {
+    () => {{
+        use std::str::FromStr;
+
+        H256::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
+            .unwrap()
+    }};
 }

@@ -1,8 +1,10 @@
-use super::nibble::{self, Nibble, NibbleSlice, NibbleType, NibbleVec};
-
-use bigint::H256;
-use rlp::{self, Decodable, Encodable, Prototype, Rlp, RlpStream};
 use std::borrow::Borrow;
+
+use primitive_types::H256;
+use rlp::{self, Decodable, Encodable, Prototype, Rlp, RlpStream};
+
+use super::nibble::{self, Nibble, NibbleSlice, NibbleType, NibbleVec};
+use crate::Result;
 
 /// Represents a merkle node.
 #[derive(Debug, PartialEq, Eq)]
@@ -14,14 +16,14 @@ pub enum MerkleNode<'a> {
 
 impl<'a> MerkleNode<'a> {
     /// Given a RLP, decode it to a merkle node.
-    pub fn decode(rlp: &Rlp<'a>) -> Self {
-        match rlp.prototype() {
+    pub fn decode(rlp: &Rlp<'a>) -> Result<Self> {
+        let node = match rlp.prototype()? {
             Prototype::List(2) => {
-                let (nibble, typ) = nibble::decode(&rlp.at(0));
+                let (nibble, typ) = nibble::decode(&rlp.at(0)?)?;
                 match typ {
-                    NibbleType::Leaf => MerkleNode::Leaf(nibble, rlp.at(1).data()),
+                    NibbleType::Leaf => MerkleNode::Leaf(nibble, rlp.at(1)?.data()?),
                     NibbleType::Extension => {
-                        MerkleNode::Extension(nibble, MerkleValue::decode(&rlp.at(1)))
+                        MerkleNode::Extension(nibble, MerkleValue::decode(&rlp.at(1)?)?)
                     }
                 }
             }
@@ -45,17 +47,18 @@ impl<'a> MerkleNode<'a> {
                     MerkleValue::Empty,
                 ];
                 for i in 0..16 {
-                    nodes[i] = MerkleValue::decode(&rlp.at(i));
+                    nodes[i] = MerkleValue::decode(&rlp.at(i)?)?;
                 }
-                let value = if rlp.at(16).is_empty() {
+                let value = if rlp.at(16)?.is_empty() {
                     None
                 } else {
-                    Some(rlp.at(16).data())
+                    Some(rlp.at(16)?.data()?)
                 };
                 MerkleNode::Branch(nodes, value)
             }
             _ => panic!(),
-        }
+        };
+        Ok(node)
     }
 
     /// Whether the node can be inlined to a merkle value.
@@ -142,20 +145,20 @@ pub enum MerkleValue<'a> {
 
 impl<'a> MerkleValue<'a> {
     /// Given a RLP, decode it to a merkle value.
-    pub fn decode(rlp: &Rlp<'a>) -> Self {
+    pub fn decode(rlp: &Rlp<'a>) -> Result<Self> {
         if rlp.is_empty() {
-            return MerkleValue::Empty;
+            return Ok(MerkleValue::Empty);
         }
 
         if rlp.size() == 32 {
-            return MerkleValue::Hash(rlp.as_val());
+            return Ok(MerkleValue::Hash(rlp.as_val()?));
         }
 
         if rlp.size() < 32 {
-            return MerkleValue::Full(Box::new(MerkleNode::decode(rlp)));
+            return Ok(MerkleValue::Full(Box::new(MerkleNode::decode(rlp)?)));
         }
 
-        panic!();
+        panic!(); // TODO: convert into Err(Error)
     }
 }
 

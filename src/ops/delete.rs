@@ -1,8 +1,12 @@
-use merkle::nibble::{self, Nibble, NibbleSlice, NibbleVec};
-use merkle::{MerkleNode, MerkleValue};
-use {Change, DatabaseHandle};
-
 use rlp::{self, Rlp};
+
+use crate::{
+    merkle::{
+        nibble::{self, Nibble, NibbleSlice, NibbleVec},
+        {MerkleNode, MerkleValue},
+    },
+    {Change, DatabaseHandle},
+};
 
 fn find_and_remove_child<'a, D: DatabaseHandle>(
     merkle: MerkleValue<'a>,
@@ -14,7 +18,8 @@ fn find_and_remove_child<'a, D: DatabaseHandle>(
         MerkleValue::Empty => panic!(),
         MerkleValue::Full(ref sub_node) => sub_node.as_ref().clone(),
         MerkleValue::Hash(h) => {
-            let sub_node = MerkleNode::decode(&Rlp::new(database.get(h)));
+            let sub_node =
+                MerkleNode::decode(&Rlp::new(database.get(h))).expect("Unable to decode value");
             change.remove_raw(h);
             sub_node
         }
@@ -122,7 +127,8 @@ pub fn delete_by_child<'a, D: DatabaseHandle>(
             }
         }
         MerkleValue::Hash(h) => {
-            let sub_node = MerkleNode::decode(&Rlp::new(database.get(h)));
+            let sub_node = MerkleNode::decode(&Rlp::new(database.get(h)))
+                .expect("Unable to decode Node value");
             change.remove_raw(h);
             let (new_node, subchange) = delete_by_node(sub_node, nibble, database);
             change.merge(&subchange);

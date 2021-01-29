@@ -1,8 +1,8 @@
-use bigint::H256;
+use std::marker::PhantomData;
+
+use primitive_types::H256;
 use rlp::{self, Rlp};
 use sha3::{Digest, Keccak256};
-
-use std::marker::PhantomData;
 
 /// Represents a trie that is mutable.
 pub trait TrieMut {
@@ -63,7 +63,7 @@ impl<T: TrieMut> AnyTrieMut<T> {
         let value = self.0.get(&key);
 
         match value {
-            Some(value) => Some(rlp::decode(&value)),
+            Some(value) => Some(rlp::decode(&value).expect("Unable to decode value")),
             None => None,
         }
     }
@@ -204,7 +204,7 @@ impl<T: TrieMut> AnySecureTrieMut<T> {
         let value = self.0.get(&key);
 
         match value {
-            Some(value) => Some(rlp::decode(&value)),
+            Some(value) => Some(rlp::decode(&value).expect("Unable to decode value")),
             None => None,
         }
     }

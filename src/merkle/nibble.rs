@@ -1,10 +1,15 @@
 //! Merkle nibble types.
 
+use std::{
+    cmp::min,
+    fmt::{self, Debug, Formatter},
+    hash::{Hash, Hasher},
+    ops::Deref,
+};
+
 use rlp::{Decodable, Encodable, Prototype, Rlp, RlpStream};
-use std::cmp::min;
-use std::fmt::{self, Debug, Formatter};
-use std::hash::{Hash, Hasher};
-use std::ops::Deref;
+
+use crate::Result;
 
 /// Represents a nibble. A 16-variant value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -168,10 +173,10 @@ pub fn into_key(nibble: NibbleSlice) -> Vec<u8> {
 }
 
 /// Decode a nibble from RLP.
-pub fn decode(rlp: &Rlp) -> (NibbleVec, NibbleType) {
+pub fn decode(rlp: &Rlp) -> Result<(NibbleVec, NibbleType)> {
     let mut vec = NibbleVec::new();
 
-    let data = rlp.data();
+    let data = rlp.data()?;
     let start_odd = if data[0] & 0b00010000 == 0b00010000 {
         true
     } else {
@@ -191,14 +196,14 @@ pub fn decode(rlp: &Rlp) -> (NibbleVec, NibbleType) {
         }
     }
 
-    (
+    Ok((
         vec,
         if is_leaf {
             NibbleType::Leaf
         } else {
             NibbleType::Extension
         },
-    )
+    ))
 }
 
 /// Encode a nibble into the given RLP stream.

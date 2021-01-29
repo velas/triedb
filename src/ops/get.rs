@@ -1,8 +1,12 @@
-use merkle::nibble::{self, Nibble, NibbleSlice, NibbleVec};
-use merkle::{MerkleNode, MerkleValue};
-use {Change, DatabaseHandle};
-
 use rlp::{self, Rlp};
+
+use crate::{
+    merkle::{
+        nibble::{self, Nibble, NibbleSlice, NibbleVec},
+        MerkleNode, MerkleValue,
+    },
+    Change, DatabaseHandle,
+};
 
 pub fn get_by_value<'a, D: DatabaseHandle>(
     merkle: MerkleValue<'a>,
@@ -13,7 +17,8 @@ pub fn get_by_value<'a, D: DatabaseHandle>(
         MerkleValue::Empty => None,
         MerkleValue::Full(subnode) => get_by_node(subnode.as_ref().clone(), nibble, database),
         MerkleValue::Hash(h) => {
-            let subnode = MerkleNode::decode(&Rlp::new(database.get(h)));
+            let subnode = MerkleNode::decode(&Rlp::new(database.get(h)))
+                .expect("Unable to decode Node value");
             get_by_node(subnode, nibble, database)
         }
     }

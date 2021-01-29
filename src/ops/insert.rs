@@ -1,8 +1,13 @@
-use merkle::nibble::{self, Nibble, NibbleSlice, NibbleVec};
-use merkle::{MerkleNode, MerkleValue};
-use {Change, DatabaseHandle};
-
 use rlp::{self, Rlp};
+
+use crate::{
+    empty_nodes,
+    merkle::{
+        nibble::{self, Nibble, NibbleSlice, NibbleVec},
+        MerkleNode, MerkleValue,
+    },
+    Change, DatabaseHandle,
+};
 
 fn value_and_leaf_branch<'a>(
     anibble: NibbleVec,
@@ -92,7 +97,8 @@ pub fn insert_by_value<'a, D: DatabaseHandle>(
             change.add_value(&new_node)
         }
         MerkleValue::Hash(h) => {
-            let sub_node = MerkleNode::decode(&Rlp::new(database.get(h)));
+            let sub_node = MerkleNode::decode(&Rlp::new(database.get(h)))
+                .expect("Unable to decide Node value");
             change.remove_raw(h);
             let (new_node, subchange) = insert_by_node(sub_node, nibble, value, database);
             change.merge(&subchange);

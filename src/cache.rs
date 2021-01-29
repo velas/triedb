@@ -1,8 +1,9 @@
-use super::merkle::MerkleNode;
-use bigint::H256;
-use rlp::Rlp;
 use std::cell::{RefCell, UnsafeCell};
 use std::collections::HashMap;
+
+use super::merkle::MerkleNode;
+use primitive_types::H256;
+use rlp::Rlp;
 
 pub struct Cache {
     cache: UnsafeCell<Vec<Vec<u8>>>,

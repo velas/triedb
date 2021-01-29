@@ -1,10 +1,11 @@
-use bigint::H256;
-use {
-    build, delete, get, insert, AnySecureTrieMut, AnyTrieMut, Change, DatabaseHandle,
-    FixedSecureTrieMut, FixedTrieMut, SecureTrieMut, TrieMut,
-};
+use primitive_types::H256;
 
 use std::collections::HashMap;
+
+use crate::{
+    build, delete, empty_trie_hash, get, insert, AnySecureTrieMut, AnyTrieMut, Change,
+    DatabaseHandle, FixedSecureTrieMut, FixedTrieMut, SecureTrieMut, TrieMut,
+};
 
 impl<'a> DatabaseHandle for &'a HashMap<H256, Vec<u8>> {
     fn get(&self, hash: H256) -> &[u8] {
