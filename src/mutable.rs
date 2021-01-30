@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use primitive_types::H256;
-use rlp::{self, Rlp};
 use sha3::{Digest, Keccak256};
 
 /// Represents a trie that is mutable.

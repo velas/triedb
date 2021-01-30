@@ -1,9 +1,9 @@
 use std::borrow::Borrow;
 
 use primitive_types::H256;
-use rlp::{self, Decodable, Encodable, Prototype, Rlp, RlpStream};
+use rlp::{self, Encodable, Prototype, Rlp, RlpStream};
 
-use super::nibble::{self, Nibble, NibbleSlice, NibbleType, NibbleVec};
+use super::nibble::{self, NibbleType, NibbleVec};
 use crate::Result;
 
 /// Represents a merkle node.

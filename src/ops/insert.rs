@@ -3,7 +3,7 @@ use rlp::{self, Rlp};
 use crate::{
     empty_nodes,
     merkle::{
-        nibble::{self, Nibble, NibbleSlice, NibbleVec},
+        nibble::{self, NibbleVec},
         MerkleNode, MerkleValue,
     },
     Change, DatabaseHandle,

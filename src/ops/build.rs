@@ -1,14 +1,12 @@
 use std::collections::HashMap;
 
-use rlp::{self, Rlp};
-
 use crate::{
     empty_nodes,
     merkle::{
-        nibble::{self, Nibble, NibbleSlice, NibbleVec},
+        nibble::{self, Nibble, NibbleVec},
         MerkleNode, MerkleValue,
     },
-    {Change, DatabaseHandle},
+    Change,
 };
 
 fn make_submap<'a, 'b: 'a, T: Iterator<Item = (&'a NibbleVec, &'a &'b [u8])>>(

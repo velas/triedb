@@ -1,11 +1,8 @@
 use rlp::{self, Rlp};
 
 use crate::{
-    merkle::{
-        nibble::{self, Nibble, NibbleSlice, NibbleVec},
-        MerkleNode, MerkleValue,
-    },
-    Change, DatabaseHandle,
+    merkle::{nibble::NibbleVec, MerkleNode, MerkleValue},
+    DatabaseHandle,
 };
 
 pub fn get_by_value<'a, D: DatabaseHandle>(

@@ -2,10 +2,10 @@ use rlp::{self, Rlp};
 
 use crate::{
     merkle::{
-        nibble::{self, Nibble, NibbleSlice, NibbleVec},
-        {MerkleNode, MerkleValue},
+        nibble::{Nibble, NibbleVec},
+        MerkleNode, MerkleValue,
     },
-    {Change, DatabaseHandle},
+    Change, DatabaseHandle,
 };
 
 fn find_and_remove_child<'a, D: DatabaseHandle>(

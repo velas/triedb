@@ -1,9 +1,9 @@
-use std::cell::{RefCell, UnsafeCell};
-use std::collections::HashMap;
+use std::{
+    cell::{RefCell, UnsafeCell},
+    collections::HashMap,
+};
 
-use super::merkle::MerkleNode;
 use primitive_types::H256;
-use rlp::Rlp;
 
 pub struct Cache {
     cache: UnsafeCell<Vec<Vec<u8>>>,
@@ -28,7 +28,7 @@ impl Cache {
 
     pub fn get<'a>(&'a self, key: H256) -> Option<&'a [u8]> {
         let cache = unsafe { &mut *self.cache.get() };
-        let mut map = self.map.borrow_mut();
+        let map = self.map.borrow_mut();
         match map.get(&key) {
             Some(index) => Some(&cache[*index]),
             None => None,
@@ -36,7 +36,7 @@ impl Cache {
     }
 
     pub fn contains_key(&self, key: H256) -> bool {
-        let mut map = self.map.borrow_mut();
+        let map = self.map.borrow_mut();
         map.contains_key(&key)
     }
 }

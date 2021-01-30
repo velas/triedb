@@ -1,13 +1,8 @@
 //! Merkle nibble types.
 
-use std::{
-    cmp::min,
-    fmt::{self, Debug, Formatter},
-    hash::{Hash, Hasher},
-    ops::Deref,
-};
+use std::{cmp::min, hash::Hash};
 
-use rlp::{Decodable, Encodable, Prototype, Rlp, RlpStream};
+use rlp::{Rlp, RlpStream};
 
 use crate::Result;
 

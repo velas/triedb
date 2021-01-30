@@ -6,10 +6,7 @@ use primitive_types::H256;
 use rlp::Rlp;
 use sha3::{Digest, Keccak256};
 
-use merkle::{
-    nibble::{self, Nibble, NibbleSlice, NibbleVec},
-    MerkleNode, MerkleValue,
-};
+use merkle::{nibble, MerkleNode, MerkleValue};
 
 pub mod gc;
 pub mod merkle;
