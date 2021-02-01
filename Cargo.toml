@@ -1,13 +1,13 @@
 [package]
-name = "trie"
+name = "triedb"
 version = "0.5.0"
 edition = "2018"
 license = "Apache-2.0"
 description = "Lightweight Ethereum world state storage."
-repository = "https://github.com/hrls/trie"
+repository = "https://github.com/hrls/triedb"
 
 [lib]
-name = "trie"
+name = "triedb"
 
 [dependencies]
 sha3 = "0.6"
