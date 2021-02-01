@@ -172,11 +172,7 @@ pub fn decode(rlp: &Rlp) -> Result<(NibbleVec, NibbleType)> {
     let mut vec = NibbleVec::new();
 
     let data = rlp.data()?;
-    let start_odd = if data[0] & 0b00010000 == 0b00010000 {
-        true
-    } else {
-        false
-    };
+    let start_odd = data[0] & 0b00010000 == 0b00010000;
     let start_index = if start_odd { 1 } else { 2 };
     let is_leaf = data[0] & 0b00100000 == 0b00100000;
 
@@ -209,26 +205,26 @@ pub fn encode(vec: NibbleSlice, typ: NibbleType, s: &mut RlpStream) {
         // even
         ret.push(0b00000000);
 
-        for i in 0..vec.len() {
+        for (i, val) in vec.iter().enumerate() {
             if i & 1 == 0 {
-                let v: u8 = vec[i].into();
+                let v: u8 = (*val).into();
                 ret.push(v << 4);
             } else {
                 let end = ret.len() - 1;
-                let v: u8 = vec[i].into();
+                let v: u8 = (*val).into();
                 ret[end] |= v;
             }
         }
     } else {
         ret.push(0b00010000);
 
-        for i in 0..vec.len() {
+        for (i, val) in vec.iter().enumerate() {
             if i & 1 == 0 {
                 let end = ret.len() - 1;
-                let v: u8 = vec[i].into();
+                let v: u8 = (*val).into();
                 ret[end] |= v;
             } else {
-                let v: u8 = vec[i].into();
+                let v: u8 = (*val).into();
                 ret.push(v << 4);
             }
         }

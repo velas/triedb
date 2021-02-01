@@ -28,11 +28,11 @@ impl<D: DatabaseMut, C: ItemCounter> TrieCollection<D, C> {
         Self { database, counter }
     }
 
-    pub fn trie_for<'a>(&'a self, root: H256) -> DatabaseTrieMut<'a, D> {
+    pub fn trie_for(&self, root: H256) -> DatabaseTrieMut<'_, D> {
         DatabaseTrieMut {
             database: &self.database,
             change: Change::default(),
-            root: root,
+            root,
         }
     }
 

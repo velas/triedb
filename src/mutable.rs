@@ -27,6 +27,7 @@ impl<T: TrieMut + Default> Default for AnyTrieMut<T> {
 
 impl<T: TrieMut> AnyTrieMut<T> {
     /// Into the underlying TrieMut object.
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_trie(self) -> T {
         self.0
     }
@@ -85,6 +86,7 @@ impl<T: TrieMut + Default, K: rlp::Encodable, V: rlp::Encodable + rlp::Decodable
 
 impl<T: TrieMut, K: rlp::Encodable, V: rlp::Encodable + rlp::Decodable> FixedTrieMut<T, K, V> {
     /// Into the underlying TrieMut object.
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_trie(self) -> T {
         self.0.to_trie()
     }
@@ -127,6 +129,7 @@ impl<T: TrieMut + Default> Default for SecureTrieMut<T> {
 
 impl<T: TrieMut> SecureTrieMut<T> {
     /// Into the underlying TrieMut object.
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_trie(self) -> T {
         self.0
     }
@@ -174,6 +177,7 @@ impl<T: TrieMut + Default> Default for AnySecureTrieMut<T> {
 
 impl<T: TrieMut> AnySecureTrieMut<T> {
     /// Into the underlying TrieMut object.
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_trie(self) -> T {
         self.0.to_trie()
     }
@@ -227,6 +231,7 @@ impl<T: TrieMut + Default, K: AsRef<[u8]>, V: rlp::Encodable + rlp::Decodable> D
 
 impl<T: TrieMut, K: AsRef<[u8]>, V: rlp::Encodable + rlp::Decodable> FixedSecureTrieMut<T, K, V> {
     /// Into the underlying TrieMut object.
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_trie(self) -> T {
         self.0.to_trie()
     }

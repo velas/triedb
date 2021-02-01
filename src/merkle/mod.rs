@@ -3,4 +3,4 @@
 pub mod nibble;
 mod node;
 
-pub use self::node::{MerkleNode, MerkleValue};
+pub use self::node::{empty_nodes, MerkleNode, MerkleValue};

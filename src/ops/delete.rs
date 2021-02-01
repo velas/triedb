@@ -28,24 +28,22 @@ fn find_and_remove_child<'a, D: DatabaseHandle>(
     (node, change)
 }
 
-fn collapse_extension<'a>(
-    node_nibble: NibbleVec,
-    subnode: MerkleNode<'a>,
-) -> (MerkleNode<'a>, Change) {
+fn collapse_extension(
+    mut node_nibble: NibbleVec,
+    subnode: MerkleNode<'_>,
+) -> (MerkleNode<'_>, Change) {
     let mut change = Change::default();
 
     let node = match subnode {
         MerkleNode::Leaf(mut sub_nibble, sub_value) => {
-            let mut new_sub_nibble = node_nibble.clone();
-            new_sub_nibble.append(&mut sub_nibble);
-            MerkleNode::Leaf(new_sub_nibble, sub_value)
+            node_nibble.append(&mut sub_nibble);
+            MerkleNode::Leaf(node_nibble, sub_value)
         }
         MerkleNode::Extension(mut sub_nibble, sub_value) => {
             debug_assert!(sub_value != MerkleValue::Empty);
 
-            let mut new_sub_nibble = node_nibble.clone();
-            new_sub_nibble.append(&mut sub_nibble);
-            MerkleNode::Extension(new_sub_nibble, sub_value)
+            node_nibble.append(&mut sub_nibble);
+            MerkleNode::Extension(node_nibble, sub_value)
         }
         branch => {
             let subvalue = change.add_value(&branch);
@@ -78,9 +76,9 @@ fn collapse_branch<'a, D: DatabaseHandle>(
             MerkleNode::Leaf(NibbleVec::new(), node_additional.unwrap()),
         1 /* value in node_nodes */ => {
             let (subindex, subvalue) = node_nodes.iter().enumerate()
-                .filter(|&(_, v)| v != &MerkleValue::Empty).next()
+                .find(|&(_, v)| v != &MerkleValue::Empty)
                 .map(|(i, v)| (i, v.clone())).unwrap();
-            let subnibble: Nibble = subindex.into();
+            let subnibble =  Nibble::from(subindex);
 
             let (subnode, subchange) = find_and_remove_child(subvalue, database);
             change.merge(&subchange);
@@ -179,7 +177,7 @@ pub fn delete_by_node<'a, D: DatabaseHandle>(
         MerkleNode::Branch(mut node_nodes, mut node_additional) => {
             let needs_collapse;
 
-            if nibble.len() == 0 {
+            if nibble.is_empty() {
                 node_additional = None;
                 needs_collapse = true;
             } else {

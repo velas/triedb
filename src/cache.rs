@@ -18,7 +18,7 @@ impl Cache {
         }
     }
 
-    pub fn insert<'a>(&'a self, key: H256, value: Vec<u8>) -> &'a [u8] {
+    pub fn insert(&self, key: H256, value: Vec<u8>) -> &[u8] {
         let cache = unsafe { &mut *self.cache.get() };
         let index = cache.len();
         self.map.borrow_mut().insert(key, index);
@@ -26,7 +26,7 @@ impl Cache {
         &cache[index]
     }
 
-    pub fn get<'a>(&'a self, key: H256) -> Option<&'a [u8]> {
+    pub fn get(&self, key: H256) -> Option<&[u8]> {
         let cache = unsafe { &mut *self.cache.get() };
         let map = self.map.borrow_mut();
         match map.get(&key) {

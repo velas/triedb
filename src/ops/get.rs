@@ -42,7 +42,7 @@ pub fn get_by_node<'a, D: DatabaseHandle>(
             }
         }
         MerkleNode::Branch(node_nodes, node_additional) => {
-            if nibble.len() == 0 {
+            if nibble.is_empty() {
                 node_additional
             } else {
                 let ni: usize = nibble[0].into();

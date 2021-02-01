@@ -1,6 +1,6 @@
-use primitive_types::H256;
-
 use std::collections::HashMap;
+
+use primitive_types::H256;
 
 use crate::{
     build, delete, empty_trie_hash, get, insert, AnySecureTrieMut, AnyTrieMut, Change,
@@ -99,14 +99,7 @@ impl MemoryTrieMut {
 
 #[cfg(test)]
 mod tests {
-    use super::MemoryTrieMut;
-    use merkle::MerkleNode;
-    use rlp::Rlp;
-    use TrieMut;
-
-    use bigint::H256;
-    use std::cell::UnsafeCell;
-    use std::collections::HashMap;
+    use super::*;
     use std::str::FromStr;
 
     #[test]
@@ -132,7 +125,7 @@ mod tests {
             "1234567890123456789012345678901".as_bytes().into(),
         );
 
-        let mut btrie = MemoryTrieMut::build(&map);
+        let btrie = MemoryTrieMut::build(&map);
 
         assert_eq!(
             btrie.root(),
@@ -157,11 +150,11 @@ mod tests {
 
         assert_eq!(btrie.database, mtrie.database);
 
-        for (key, value) in &map {
+        for key in map.keys() {
             mtrie.delete(key);
         }
 
-        assert!(mtrie.database.len() == 0);
+        assert!(mtrie.database.is_empty());
         assert!(mtrie.root == empty_trie_hash!());
     }
 

@@ -55,7 +55,7 @@ impl<D: CachedDatabaseHandle> DatabaseHandle for CachedHandle<D> {
 /// An immutable database handle.
 pub trait DatabaseHandle {
     /// Get a raw value from the database.
-    fn get<'a>(&'a self, key: H256) -> &'a [u8];
+    fn get(&self, key: H256) -> &[u8];
 }
 
 /// Change for a merkle trie operation.
@@ -83,7 +83,7 @@ impl Change {
     }
 
     /// Change to add a new node.
-    pub fn add_node<'a, 'b, 'c>(&'a mut self, node: &'c MerkleNode<'b>) {
+    pub fn add_node(&mut self, node: &MerkleNode<'_>) {
         let subnode = rlp::encode(node).to_vec();
         let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
         self.add_raw(hash, subnode);
@@ -109,7 +109,7 @@ impl Change {
 
     /// Change to remove a node. Return whether there's any node being
     /// removed.
-    pub fn remove_node<'a, 'b, 'c>(&'a mut self, node: &'c MerkleNode<'b>) -> bool {
+    pub fn remove_node(&mut self, node: &MerkleNode<'_>) -> bool {
         if node.inlinable() {
             false
         } else {
@@ -208,7 +208,7 @@ pub fn delete<D: DatabaseHandle>(root: H256, database: &D, key: &[u8]) -> (H256,
 pub fn build(map: &HashMap<Vec<u8>, Vec<u8>>) -> (H256, Change) {
     let mut change = Change::default();
 
-    if map.len() == 0 {
+    if map.is_empty() {
         return (empty_trie_hash!(), change);
     }
 
@@ -241,30 +241,7 @@ pub fn get<'a, 'b, D: DatabaseHandle>(
     }
 }
 
-#[macro_export]
-macro_rules! empty_nodes {
-    () => {
-        [
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-            MerkleValue::Empty,
-        ]
-    };
-}
-
+#[doc(hidden)]
 #[macro_export]
 macro_rules! empty_trie_hash {
     () => {{

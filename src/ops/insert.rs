@@ -1,8 +1,8 @@
 use rlp::{self, Rlp};
 
 use crate::{
-    empty_nodes,
     merkle::{
+        empty_nodes,
         nibble::{self, NibbleVec},
         MerkleNode, MerkleValue,
     },
@@ -15,23 +15,23 @@ fn value_and_leaf_branch<'a>(
     bnibble: NibbleVec,
     bvalue: &'a [u8],
 ) -> (MerkleNode<'a>, Change) {
-    debug_assert!(anibble.len() > 0);
+    debug_assert!(!anibble.is_empty());
 
     let mut change = Change::default();
     let mut additional = None;
-    let mut nodes = empty_nodes!();
+    let mut nodes: [MerkleValue<'_>; 16] = empty_nodes();
 
     let ai: usize = anibble[0].into();
     let asub: NibbleVec = anibble[1..].into();
 
-    if asub.len() > 0 {
+    if !asub.is_empty() {
         let ext_value = change.add_value(&MerkleNode::Extension(asub, avalue));
         nodes[ai] = ext_value;
     } else {
         nodes[ai] = avalue;
     }
 
-    if bnibble.len() == 0 {
+    if bnibble.is_empty() {
         additional = Some(bvalue);
     } else {
         let bi: usize = bnibble[0].into();
@@ -52,14 +52,14 @@ fn two_leaf_branch<'a>(
     bnibble: NibbleVec,
     bvalue: &'a [u8],
 ) -> (MerkleNode<'a>, Change) {
-    debug_assert!(bnibble.len() == 0 || !anibble.starts_with(&bnibble));
-    debug_assert!(anibble.len() == 0 || !bnibble.starts_with(&anibble));
+    debug_assert!(bnibble.is_empty() || !anibble.starts_with(&bnibble));
+    debug_assert!(anibble.is_empty() || !bnibble.starts_with(&anibble));
 
     let mut change = Change::default();
     let mut additional = None;
-    let mut nodes = empty_nodes!();
+    let mut nodes: [MerkleValue<'_>; 16] = empty_nodes();
 
-    if anibble.len() == 0 {
+    if anibble.is_empty() {
         additional = Some(avalue);
     } else {
         let ai: usize = anibble[0].into();
@@ -68,7 +68,7 @@ fn two_leaf_branch<'a>(
         nodes[ai] = avalue;
     }
 
-    if bnibble.len() == 0 {
+    if bnibble.is_empty() {
         additional = Some(bvalue);
     } else {
         let bi: usize = bnibble[0].into();
@@ -128,7 +128,7 @@ pub fn insert_by_node<'a, D: DatabaseHandle>(
                 let (branch, subchange) =
                     two_leaf_branch(node_nibble_sub, node_value, nibble_sub, value);
                 change.merge(&subchange);
-                if common.len() > 0 {
+                if !common.is_empty() {
                     MerkleNode::Extension(common.into(), change.add_value(&branch))
                 } else {
                     branch
@@ -153,7 +153,7 @@ pub fn insert_by_node<'a, D: DatabaseHandle>(
                 let (branch, subchange) =
                     value_and_leaf_branch(node_nibble_sub, node_value.clone(), nibble_sub, value);
                 change.merge(&subchange);
-                if common.len() > 0 {
+                if !common.is_empty() {
                     MerkleNode::Extension(common.into(), change.add_value(&branch))
                 } else {
                     branch
@@ -162,7 +162,7 @@ pub fn insert_by_node<'a, D: DatabaseHandle>(
         }
         MerkleNode::Branch(ref node_nodes, ref node_additional) => {
             let mut nodes = node_nodes.clone();
-            if nibble.len() == 0 {
+            if nibble.is_empty() {
                 MerkleNode::Branch(nodes, Some(value))
             } else {
                 let ni: usize = nibble[0].into();
@@ -171,7 +171,7 @@ pub fn insert_by_node<'a, D: DatabaseHandle>(
                 change.merge(&subchange);
 
                 nodes[ni] = new;
-                MerkleNode::Branch(nodes, node_additional.clone())
+                MerkleNode::Branch(nodes, *node_additional)
             }
         }
     };
@@ -179,7 +179,7 @@ pub fn insert_by_node<'a, D: DatabaseHandle>(
     (new, change)
 }
 
-pub fn insert_by_empty<'a>(nibble: NibbleVec, value: &'a [u8]) -> (MerkleNode<'a>, Change) {
+pub fn insert_by_empty(nibble: NibbleVec, value: &[u8]) -> (MerkleNode<'_>, Change) {
     let new = MerkleNode::Leaf(nibble, value);
     (new, Change::default())
 }
