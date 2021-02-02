@@ -1,17 +1,18 @@
-extern crate trie;
-extern crate bigint;
-extern crate parity_rocksdb as rocksdb;
+use primitive_types::H256;
+use rocksdb::DB;
 
-use bigint::H256;
-use trie::{CachedDatabaseHandle, CachedHandle, Change, DatabaseHandle, TrieMut, get, insert, delete};
-use rocksdb::{DB, Writable};
+use triedb::{
+    delete, get, insert, CachedDatabaseHandle, CachedHandle, Change, DatabaseHandle, TrieMut,
+};
 
 pub struct RocksDatabaseHandle<'a>(&'a DB);
 
 impl<'a> CachedDatabaseHandle for RocksDatabaseHandle<'a> {
     fn get(&self, key: H256) -> Vec<u8> {
-        let value = self.0.get(key.as_ref()).unwrap().unwrap();
-        value.as_ref().into()
+        self.0
+            .get(key.as_ref())
+            .expect("Error on reading database")
+            .expect("Value not found in database")
     }
 }
 
@@ -72,13 +73,13 @@ impl<'a> TrieMut for RocksMemoryTrieMut<'a> {
 impl<'a> RocksMemoryTrieMut<'a> {
     fn clear_cache(&mut self) {
         if !self.cached {
-            self.handle = RocksHandle::new(RocksDatabaseHandle::new(self.db.clone()));
+            self.handle = RocksHandle::new(RocksDatabaseHandle::new(self.db));
         }
     }
 
     pub fn new(db: &'a DB, root: H256, cached: bool) -> Self {
         Self {
-            handle: RocksHandle::new(RocksDatabaseHandle::new(db.clone())),
+            handle: RocksHandle::new(RocksDatabaseHandle::new(db)),
             change: Change::default(),
             root,
             db,
@@ -86,8 +87,12 @@ impl<'a> RocksMemoryTrieMut<'a> {
         }
     }
 
-    pub fn new_cached(db: &'a DB, root: H256) -> Self { Self::new(db, root, true) }
-    pub fn new_uncached(db: &'a DB, root: H256) -> Self { Self::new(db, root, false) }
+    pub fn new_cached(db: &'a DB, root: H256) -> Self {
+        Self::new(db, root, true)
+    }
+    pub fn new_uncached(db: &'a DB, root: H256) -> Self {
+        Self::new(db, root, false)
+    }
 
     pub fn apply(self) -> Result<(), String> {
         for (key, value) in self.change.adds {

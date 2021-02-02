@@ -1,16 +1,17 @@
 [package]
-name = "etcommon-trie-rocksdb"
-version = "0.4.0"
+name = "triedb-rocksdb"
+version = "0.5.0"
+edition = "2018"
 license = "Apache-2.0"
-authors = ["Wei Tang <hi@that.world>"]
-description = "Rocksdb adaptor for trie."
-repository = "https://github.com/ethereumproject/etcommon-rs"
-keywords = ["ethereum"]
+description = "RocksDB adaptor for TrieDB."
+repository = "https://github.com/hrls/triedb/rocksdb"
 
 [lib]
-name = "trie_rocksdb"
+name = "triedb_rocksdb"
 
 [dependencies]
-etcommon-trie = { version = "0.4", path = ".." }
-etcommon-bigint = { version = "0.2", path = "../../bigint" }
-parity-rocksdb = "0.5.0"
+primitive-types = "0.9.0"
+
+rocksdb = { version = "0.15.0", default-features = false }
+
+triedb = { path = ".." }
