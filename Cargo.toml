@@ -9,11 +9,16 @@ repository = "https://github.com/hrls/triedb"
 [lib]
 name = "triedb"
 
+[features]
+default = []
+rocksdb = ["rocksdb_lib"]
+
 [dependencies]
 sha3 = "0.6"
 rlp = "0.5.0"
-primitive-types = { version = "0.9.0", features = ["rlp"] }
 thiserror = "1.0.23"
+primitive-types = { version = "0.9.0", features = ["rlp"] }
+rocksdb_lib = { package = "rocksdb", version = "0.15.0", default-features = false, optional = true }
 
 [dev-dependencies]
 etcommon-hexutil = "0.2"

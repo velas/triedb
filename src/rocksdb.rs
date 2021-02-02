@@ -1,7 +1,9 @@
-use primitive_types::H256;
-use rocksdb::DB;
+//! RocksDB adaptor for TrieDB.
 
-use triedb::{
+use primitive_types::H256;
+use rocksdb_lib::DB;
+
+use crate::{
     delete, get, insert, CachedDatabaseHandle, CachedHandle, Change, DatabaseHandle, TrieMut,
 };
 

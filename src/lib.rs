@@ -13,6 +13,9 @@ pub mod merkle;
 pub use memory::*;
 pub use mutable::*;
 
+#[cfg(feature = "rocksdb")]
+pub mod rocksdb;
+
 mod cache;
 mod error;
 mod memory;
