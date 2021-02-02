@@ -16,14 +16,8 @@ pub trait TrieMut {
 }
 
 /// Represents a mutable trie that is operated on any RLP values.
-#[derive(Clone, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct AnyTrieMut<T: TrieMut>(T);
-
-impl<T: TrieMut + Default> Default for AnyTrieMut<T> {
-    fn default() -> Self {
-        AnyTrieMut::new(T::default())
-    }
-}
 
 impl<T: TrieMut> AnyTrieMut<T> {
     /// Into the underlying TrieMut object.
