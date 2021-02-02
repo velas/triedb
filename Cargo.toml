@@ -14,11 +14,11 @@ default = []
 rocksdb = ["rocksdb_lib"]
 
 [dependencies]
-sha3 = "0.6"
+sha3 = "0.9.1"
 rlp = "0.5.0"
 thiserror = "1.0.23"
 primitive-types = { version = "0.9.0", features = ["rlp"] }
 rocksdb_lib = { package = "rocksdb", version = "0.15.0", default-features = false, optional = true }
 
 [dev-dependencies]
-etcommon-hexutil = "0.2"
+etcommon-hexutil = "0.2.4"
