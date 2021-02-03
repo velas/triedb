@@ -4,14 +4,8 @@ use primitive_types::H256;
 
 use crate::{
     build, delete, empty_trie_hash, get, insert, AnySecureTrieMut, AnyTrieMut, Change,
-    DatabaseHandle, FixedSecureTrieMut, FixedTrieMut, SecureTrieMut, TrieMut,
+    FixedSecureTrieMut, FixedTrieMut, SecureTrieMut, TrieMut,
 };
-
-impl<'a> DatabaseHandle for &'a HashMap<H256, Vec<u8>> {
-    fn get(&self, hash: H256) -> &[u8] {
-        HashMap::get(self, &hash).unwrap()
-    }
-}
 
 /// A memory-backed trie.
 #[derive(Clone, Debug)]

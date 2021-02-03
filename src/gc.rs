@@ -80,3 +80,66 @@ impl<'a, D: DatabaseMut> TrieMut for DatabaseTrieMut<'a, D> {
         get(self.root, &self.database, key).map(|v| v.into())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{hash_map::Entry, HashMap};
+
+    use quickcheck::TestResult;
+    use quickcheck_macros::quickcheck;
+
+    use super::*;
+    use crate::impls::tests::{Data, K};
+
+    impl ItemCounter for HashMap<H256, usize> {
+        fn increase(&mut self, key: H256) -> usize {
+            let count = self.entry(key).or_insert(0);
+            *count += 1;
+            *count
+        }
+
+        fn decrease(&mut self, key: H256) -> usize {
+            match self.entry(key) {
+                Entry::Vacant(_) => 0,
+                Entry::Occupied(entry) if *entry.get() <= 1 => {
+                    entry.remove();
+                    0
+                }
+                Entry::Occupied(mut entry) => {
+                    *entry.get_mut() -= 1;
+                    *entry.get()
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn it_internal_checks_hashmap_as_gc_counter() {
+        let mut m = HashMap::<H256, usize>::new();
+        let k = H256::random();
+        assert_eq!(m.decrease(k), 0);
+        assert_eq!(m.increase(k), 1);
+        assert_eq!(m.decrease(k), 0);
+        assert_eq!(m.increase(k), 1);
+        assert_eq!(m.increase(k), 2);
+        assert_eq!(m.decrease(k), 1);
+        assert_eq!(m.decrease(k), 0);
+    }
+
+    #[quickcheck]
+    fn it_handles_several_roots_via_gc(kvs_1: HashMap<K, Data>, kvs_2: HashMap<K, Data>) {
+        let mut collection = TrieCollection::new(HashMap::new(), HashMap::new());
+
+        let mut trie_1 = collection.trie_for(crate::empty_trie_hash());
+        for (k, data) in kvs_1.iter() {
+            trie_1.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
+        }
+        // reads before apply
+        for k in kvs_1.keys() {
+            assert_eq!(
+                kvs_1[k],
+                bincode::deserialize(&trie_1.get(&k.to_bytes()).unwrap()).unwrap()
+            );
+        }
+    }
+}

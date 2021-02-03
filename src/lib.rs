@@ -18,6 +18,7 @@ pub mod rocksdb;
 
 mod cache;
 mod error;
+mod impls;
 mod memory;
 mod mutable;
 mod ops;
@@ -62,20 +63,12 @@ pub trait DatabaseHandle {
 }
 
 /// Change for a merkle trie operation.
+#[derive(Default)]
 pub struct Change {
     /// Additions to the database.
     pub adds: HashMap<H256, Vec<u8>>,
     /// Removals to the database.
     pub removes: HashSet<H256>,
-}
-
-impl Default for Change {
-    fn default() -> Self {
-        Change {
-            adds: HashMap::new(),
-            removes: HashSet::new(),
-        }
-    }
 }
 
 impl Change {

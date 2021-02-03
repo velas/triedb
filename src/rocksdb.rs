@@ -92,11 +92,12 @@ impl<'a> RocksMemoryTrieMut<'a> {
     pub fn new_cached(db: &'a DB, root: H256) -> Self {
         Self::new(db, root, true)
     }
+
     pub fn new_uncached(db: &'a DB, root: H256) -> Self {
         Self::new(db, root, false)
     }
 
-    pub fn apply(self) -> Result<(), String> {
+    pub fn apply(self) -> Result<H256, String> {
         for (key, value) in self.change.adds {
             self.db.put(key.as_ref(), &value)?;
         }
@@ -105,6 +106,106 @@ impl<'a> RocksMemoryTrieMut<'a> {
             self.db.delete(key.as_ref())?;
         }
 
-        Ok(())
+        Ok(self.root)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use quickcheck::{Arbitrary, Gen, TestResult};
+    use quickcheck_macros::quickcheck;
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::impls::tests::{Data, K};
+
+    #[quickcheck]
+    fn qc_reads_the_same_as_inserts(kvs: HashMap<K, Data>) {
+        let dir = tempdir().unwrap();
+
+        let db = DB::open_default(&dir).unwrap();
+
+        let mut triedb = RocksMemoryTrieMut::new_uncached(&db, crate::empty_trie_hash());
+        for (k, data) in kvs.iter() {
+            triedb.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
+        }
+
+        // reads before apply
+        for k in kvs.keys() {
+            assert_eq!(
+                kvs[k],
+                bincode::deserialize(&triedb.get(&k.to_bytes()).unwrap()).unwrap()
+            );
+        }
+
+        // reads after apply
+        let root = triedb.apply().unwrap();
+        let triedb = RocksMemoryTrieMut::new_uncached(&db, root);
+        for k in kvs.keys() {
+            assert_eq!(
+                kvs[k],
+                bincode::deserialize(&triedb.get(&k.to_bytes()).unwrap()).unwrap()
+            );
+        }
+        drop(triedb);
+        drop(db);
+
+        // close and re-open database
+        let db = DB::open_default(&dir).unwrap();
+
+        let triedb = RocksMemoryTrieMut::new_uncached(&db, root);
+        for k in kvs.keys() {
+            assert_eq!(
+                kvs[k],
+                bincode::deserialize(&triedb.get(&k.to_bytes()).unwrap()).unwrap()
+            );
+        }
+    }
+
+    #[quickcheck]
+    fn qc_reads_the_same_with_overriden_keys(
+        kvs_1: HashMap<K, Data>,
+        kvs_2: HashMap<K, Data>,
+    ) -> TestResult {
+        let keys_1: HashSet<K> = kvs_1.keys().copied().collect();
+        let keys_2: HashSet<K> = kvs_2.keys().copied().collect();
+
+        // TODO: save intersection and filter iteration for root_2 and keys_1
+        if keys_1.intersection(&keys_2).count() == 0 {
+            return TestResult::discard();
+        }
+
+        let dir = tempdir().unwrap();
+
+        let db = DB::open_default(&dir).unwrap();
+
+        let mut triedb = RocksMemoryTrieMut::new_uncached(&db, crate::empty_trie_hash());
+        for (k, data) in kvs_1.iter() {
+            triedb.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
+        }
+        let root_1 = triedb.apply().unwrap();
+
+        let mut triedb = RocksMemoryTrieMut::new_uncached(&db, root_1);
+        for (k, data) in kvs_2.iter() {
+            triedb.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
+        }
+        let root_2 = triedb.apply().unwrap();
+
+        assert_ne!(root_1, root_2);
+
+        let triedb = RocksMemoryTrieMut::new_uncached(&db, root_2);
+        for (k, data) in kvs_2
+            .iter()
+            .chain(kvs_1.iter().filter(|(k, _)| !kvs_2.contains_key(k)))
+        {
+            assert_eq!(
+                data,
+                &bincode::deserialize::<Data>(&triedb.get(&k.to_bytes()).unwrap()).unwrap()
+            );
+        }
+
+        TestResult::passed()
     }
 }
