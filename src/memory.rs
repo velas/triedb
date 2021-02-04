@@ -50,21 +50,21 @@ impl TrieMut for MemoryTrieMut {
     }
 
     fn insert(&mut self, key: &[u8], value: &[u8]) {
-        let (new_root, change) = insert(self.root, &&self.database, key, value);
+        let (new_root, change) = insert(self.root, &self.database, key, value);
 
         self.apply_change(change);
         self.root = new_root;
     }
 
     fn delete(&mut self, key: &[u8]) {
-        let (new_root, change) = delete(self.root, &&self.database, key);
+        let (new_root, change) = delete(self.root, &self.database, key);
 
         self.apply_change(change);
         self.root = new_root;
     }
 
     fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        get(self.root, &&self.database, key).map(|v| v.into())
+        get(self.root, &self.database, key).map(|v| v.into())
     }
 }
 

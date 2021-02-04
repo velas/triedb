@@ -114,7 +114,7 @@ impl<'a> RocksMemoryTrieMut<'a> {
 mod tests {
     use std::collections::{HashMap, HashSet};
 
-    use quickcheck::{Arbitrary, Gen, TestResult};
+    use quickcheck::TestResult;
     use quickcheck_macros::quickcheck;
     use tempfile::tempdir;
 

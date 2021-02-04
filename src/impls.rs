@@ -2,19 +2,21 @@ use std::collections::HashMap;
 
 use primitive_types::H256;
 
-use crate::gc::DatabaseMut;
+use crate::{gc::DatabaseMut, DatabaseHandle};
+
+impl DatabaseHandle for HashMap<H256, Vec<u8>> {
+    fn get(&self, key: H256) -> &[u8] {
+        self.get(&key)
+            .unwrap_or_else(|| panic!("Key {} not found", key))
+    }
+}
 
 impl DatabaseMut for HashMap<H256, Vec<u8>> {
-    fn get(&self, key: H256) -> &[u8] {
-        // self.entry(key).or_default().as_ref()
-        // self.get(&key).unwrap()
-
-        HashMap::get(self, &key).unwrap_or_else(|| panic!("Key {} not found", key))
-    }
-
     fn set(&mut self, key: H256, value: Option<&[u8]>) {
         if let Some(value) = value {
             self.insert(key, value.to_vec());
+        } else {
+            self.remove(&key);
         }
     }
 }
