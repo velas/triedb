@@ -5,10 +5,10 @@ use crate::{
         nibble::{Nibble, NibbleVec},
         MerkleNode, MerkleValue,
     },
-    Change, DatabaseHandle,
+    Change, Database,
 };
 
-fn find_and_remove_child<'a, D: DatabaseHandle>(
+fn find_and_remove_child<'a, D: Database>(
     merkle: MerkleValue<'a>,
     database: &'a D,
 ) -> (MerkleNode<'a>, Change) {
@@ -61,7 +61,7 @@ fn nonempty_node_count<'a, 'b>(
     additional.iter().count() + nodes.iter().filter(|v| v != &&MerkleValue::Empty).count()
 }
 
-fn collapse_branch<'a, D: DatabaseHandle>(
+fn collapse_branch<'a, D: Database>(
     node_nodes: [MerkleValue<'a>; 16],
     node_additional: Option<&'a [u8]>,
     database: &'a D,
@@ -107,7 +107,7 @@ fn collapse_branch<'a, D: DatabaseHandle>(
     (node, change)
 }
 
-pub fn delete_by_child<'a, D: DatabaseHandle>(
+pub fn delete_by_child<'a, D: Database>(
     merkle: MerkleValue<'a>,
     nibble: NibbleVec,
     database: &'a D,
@@ -140,7 +140,7 @@ pub fn delete_by_child<'a, D: DatabaseHandle>(
     (new, change)
 }
 
-pub fn delete_by_node<'a, D: DatabaseHandle>(
+pub fn delete_by_node<'a, D: Database>(
     node: MerkleNode<'a>,
     nibble: NibbleVec,
     database: &'a D,

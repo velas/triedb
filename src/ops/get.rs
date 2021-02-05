@@ -2,10 +2,10 @@ use rlp::{self, Rlp};
 
 use crate::{
     merkle::{nibble::NibbleVec, MerkleNode, MerkleValue},
-    DatabaseHandle,
+    Database,
 };
 
-pub fn get_by_value<'a, D: DatabaseHandle>(
+pub fn get_by_value<'a, D: Database>(
     merkle: MerkleValue<'a>,
     nibble: NibbleVec,
     database: &'a D,
@@ -21,7 +21,7 @@ pub fn get_by_value<'a, D: DatabaseHandle>(
     }
 }
 
-pub fn get_by_node<'a, D: DatabaseHandle>(
+pub fn get_by_node<'a, D: Database>(
     node: MerkleNode<'a>,
     nibble: NibbleVec,
     database: &'a D,

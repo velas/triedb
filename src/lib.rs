@@ -46,7 +46,7 @@ impl<D: CachedDatabaseHandle> CachedHandle<D> {
     }
 }
 
-impl<D: CachedDatabaseHandle> DatabaseHandle for CachedHandle<D> {
+impl<D: CachedDatabaseHandle> Database for CachedHandle<D> {
     fn get(&self, key: H256) -> &[u8] {
         if !self.cache.contains_key(key) {
             self.cache.insert(key, self.db.get(key))
@@ -57,7 +57,7 @@ impl<D: CachedDatabaseHandle> DatabaseHandle for CachedHandle<D> {
 }
 
 /// An immutable database handle.
-pub trait DatabaseHandle {
+pub trait Database {
     /// Get a raw value from the database.
     fn get(&self, key: H256) -> &[u8];
 }
@@ -134,12 +134,7 @@ pub fn empty_trie_hash() -> H256 {
 }
 
 /// Insert to a merkle trie. Return the new root hash and the changes.
-pub fn insert<D: DatabaseHandle>(
-    root: H256,
-    database: &D,
-    key: &[u8],
-    value: &[u8],
-) -> (H256, Change) {
+pub fn insert<D: Database>(root: H256, database: &D, key: &[u8], value: &[u8]) -> (H256, Change) {
     let mut change = Change::default();
     let nibble = nibble::from_key(key);
 
@@ -160,7 +155,7 @@ pub fn insert<D: DatabaseHandle>(
 
 /// Insert to an empty merkle trie. Return the new root hash and the
 /// changes.
-pub fn insert_empty<D: DatabaseHandle>(key: &[u8], value: &[u8]) -> (H256, Change) {
+pub fn insert_empty<D: Database>(key: &[u8], value: &[u8]) -> (H256, Change) {
     let mut change = Change::default();
     let nibble = nibble::from_key(key);
 
@@ -174,7 +169,7 @@ pub fn insert_empty<D: DatabaseHandle>(key: &[u8], value: &[u8]) -> (H256, Chang
 
 /// Delete a key from a markle trie. Return the new root hash and the
 /// changes.
-pub fn delete<D: DatabaseHandle>(root: H256, database: &D, key: &[u8]) -> (H256, Change) {
+pub fn delete<D: Database>(root: H256, database: &D, key: &[u8]) -> (H256, Change) {
     let mut change = Change::default();
     let nibble = nibble::from_key(key);
 
@@ -222,11 +217,7 @@ pub fn build(map: &HashMap<Vec<u8>, Vec<u8>>) -> (H256, Change) {
 }
 
 /// Get a value given the root hash and the database.
-pub fn get<'a, 'b, D: DatabaseHandle>(
-    root: H256,
-    database: &'a D,
-    key: &'b [u8],
-) -> Option<&'a [u8]> {
+pub fn get<'a, 'b, D: Database>(root: H256, database: &'a D, key: &'b [u8]) -> Option<&'a [u8]> {
     if root == empty_trie_hash!() {
         None
     } else {

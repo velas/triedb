@@ -6,7 +6,7 @@ use crate::{
         nibble::{self, NibbleVec},
         MerkleNode, MerkleValue,
     },
-    Change, DatabaseHandle,
+    Change, Database,
 };
 
 fn value_and_leaf_branch<'a>(
@@ -80,7 +80,7 @@ fn two_leaf_branch<'a>(
     (MerkleNode::Branch(nodes, additional), change)
 }
 
-pub fn insert_by_value<'a, D: DatabaseHandle>(
+pub fn insert_by_value<'a, D: Database>(
     merkle: MerkleValue<'a>,
     nibble: NibbleVec,
     value: &'a [u8],
@@ -109,7 +109,7 @@ pub fn insert_by_value<'a, D: DatabaseHandle>(
     (new, change)
 }
 
-pub fn insert_by_node<'a, D: DatabaseHandle>(
+pub fn insert_by_node<'a, D: Database>(
     node: MerkleNode<'a>,
     nibble: NibbleVec,
     value: &'a [u8],

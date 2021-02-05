@@ -3,9 +3,7 @@
 use primitive_types::H256;
 use rocksdb_lib::DB;
 
-use crate::{
-    delete, get, insert, CachedDatabaseHandle, CachedHandle, Change, DatabaseHandle, TrieMut,
-};
+use crate::{delete, get, insert, CachedDatabaseHandle, CachedHandle, Change, Database, TrieMut};
 
 pub struct RocksDatabaseHandle<'a>(&'a DB);
 
@@ -34,7 +32,7 @@ pub struct RocksMemoryTrieMut<'a> {
     cached: bool,
 }
 
-impl<'a, 'b> DatabaseHandle for &'b RocksMemoryTrieMut<'a> {
+impl<'a, 'b> Database for &'b RocksMemoryTrieMut<'a> {
     fn get(&self, key: H256) -> &[u8] {
         if self.change.adds.contains_key(&key) {
             self.change.adds.get(&key).unwrap()
