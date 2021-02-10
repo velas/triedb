@@ -5,6 +5,47 @@ use std::{
 
 use primitive_types::H256;
 
+use crate::{CachedDatabaseHandle, Database};
+
+#[derive(Debug)]
+pub struct CachedHandle<D> {
+    pub db: D,
+    cache: Cache,
+}
+
+impl<D: Clone> Clone for CachedHandle<D> {
+    fn clone(&self) -> Self {
+        Self {
+            db: self.db.clone(),
+            cache: Cache::new(),
+        }
+    }
+}
+
+impl<D: CachedDatabaseHandle> CachedHandle<D> {
+    pub fn new(db: D) -> Self {
+        Self {
+            db,
+            cache: Cache::new(),
+        }
+    }
+
+    pub fn clear_cache(&mut self) {
+        self.cache = Cache::new();
+    }
+}
+
+impl<D: CachedDatabaseHandle> Database for CachedHandle<D> {
+    fn get(&self, key: H256) -> &[u8] {
+        if !self.cache.contains_key(key) {
+            self.cache.insert(key, self.db.get(key))
+        } else {
+            self.cache.get(key).unwrap()
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Cache {
     cache: UnsafeCell<Vec<Vec<u8>>>,
     map: RefCell<HashMap<H256, usize>>,

@@ -123,7 +123,7 @@ mod tests {
 
         assert_eq!(
             btrie.root(),
-            H256::from_str("0xcb65032e2f76c48b82b5c24b3db8f670ce73982869d38cd39a624f23d62a9e89")
+            H256::from_str("cb65032e2f76c48b82b5c24b3db8f670ce73982869d38cd39a624f23d62a9e89")
                 .unwrap()
         );
         assert_eq!(

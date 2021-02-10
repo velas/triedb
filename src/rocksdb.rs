@@ -1,38 +1,41 @@
 //! RocksDB adaptor for TrieDB.
 
+use std::borrow::Borrow;
+
 use primitive_types::H256;
 use rocksdb_lib::DB;
 
-use crate::{delete, get, insert, CachedDatabaseHandle, CachedHandle, Change, Database, TrieMut};
+use crate::{cache::CachedHandle, CachedDatabaseHandle, Change, Database, TrieMut};
 
-pub struct RocksDatabaseHandle<'a>(&'a DB);
+#[derive(Debug, Clone)]
+pub struct RocksDatabaseHandle<D>(D);
 
-impl<'a> CachedDatabaseHandle for RocksDatabaseHandle<'a> {
+impl<D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandle<D> {
     fn get(&self, key: H256) -> Vec<u8> {
         self.0
+            .borrow()
             .get(key.as_ref())
             .expect("Error on reading database")
             .expect("Value not found in database")
     }
 }
 
-impl<'a> RocksDatabaseHandle<'a> {
-    pub fn new(db: &'a DB) -> Self {
+impl<D> RocksDatabaseHandle<D> {
+    pub fn new(db: D) -> Self {
         RocksDatabaseHandle(db)
     }
 }
 
-pub type RocksHandle<'a> = CachedHandle<RocksDatabaseHandle<'a>>;
+pub type RocksHandle<D> = CachedHandle<RocksDatabaseHandle<D>>;
 
-pub struct RocksMemoryTrieMut<'a> {
-    handle: RocksHandle<'a>,
-    change: Change,
+#[derive(Debug, Clone)]
+pub struct RocksMemoryTrieMut<D: Borrow<DB>> {
     root: H256,
-    db: &'a DB,
-    cached: bool,
+    change: Change,
+    handle: RocksHandle<D>,
 }
 
-impl<'a, 'b> Database for &'b RocksMemoryTrieMut<'a> {
+impl<D: Borrow<DB>> Database for RocksMemoryTrieMut<D> {
     fn get(&self, key: H256) -> &[u8] {
         if self.change.adds.contains_key(&key) {
             self.change.adds.get(&key).unwrap()
@@ -42,7 +45,8 @@ impl<'a, 'b> Database for &'b RocksMemoryTrieMut<'a> {
     }
 }
 
-impl<'a> TrieMut for RocksMemoryTrieMut<'a> {
+// TODO: D: Database
+impl<D: Borrow<DB>> TrieMut for RocksMemoryTrieMut<D> {
     fn root(&self) -> H256 {
         self.root
     }
@@ -50,7 +54,7 @@ impl<'a> TrieMut for RocksMemoryTrieMut<'a> {
     fn insert(&mut self, key: &[u8], value: &[u8]) {
         self.clear_cache();
 
-        let (new_root, change) = insert(self.root, &&*self, key, value);
+        let (new_root, change) = crate::insert(self.root, self, key, value);
 
         self.change.merge(&change);
         self.root = new_root;
@@ -59,49 +63,39 @@ impl<'a> TrieMut for RocksMemoryTrieMut<'a> {
     fn delete(&mut self, key: &[u8]) {
         self.clear_cache();
 
-        let (new_root, change) = delete(self.root, &&*self, key);
+        let (new_root, change) = crate::delete(self.root, self, key);
 
         self.change.merge(&change);
         self.root = new_root;
     }
 
     fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        get(self.root, &self, key).map(|v| v.into())
+        crate::get(self.root, self, key).map(|v| v.into())
     }
 }
 
-impl<'a> RocksMemoryTrieMut<'a> {
-    fn clear_cache(&mut self) {
-        if !self.cached {
-            self.handle = RocksHandle::new(RocksDatabaseHandle::new(self.db));
-        }
-    }
-
-    pub fn new(db: &'a DB, root: H256, cached: bool) -> Self {
+impl<D: Borrow<DB>> RocksMemoryTrieMut<D> {
+    pub fn new(db: D, root: H256) -> Self {
         Self {
-            handle: RocksHandle::new(RocksDatabaseHandle::new(db)),
-            change: Change::default(),
             root,
-            db,
-            cached,
+            change: Change::default(),
+            handle: RocksHandle::new(RocksDatabaseHandle::new(db)),
         }
     }
 
-    pub fn new_cached(db: &'a DB, root: H256) -> Self {
-        Self::new(db, root, true)
-    }
-
-    pub fn new_uncached(db: &'a DB, root: H256) -> Self {
-        Self::new(db, root, false)
+    pub fn clear_cache(&mut self) {
+        self.handle.clear_cache();
     }
 
     pub fn apply(self) -> Result<H256, String> {
+        let db = self.handle.db.0.borrow();
+
         for (key, value) in self.change.adds {
-            self.db.put(key.as_ref(), &value)?;
+            db.put(key.as_ref(), &value)?;
         }
 
         for key in self.change.removes {
-            self.db.delete(key.as_ref())?;
+            db.delete(key.as_ref())?;
         }
 
         Ok(self.root)
@@ -125,7 +119,7 @@ mod tests {
 
         let db = DB::open_default(&dir).unwrap();
 
-        let mut triedb = RocksMemoryTrieMut::new_uncached(&db, crate::empty_trie_hash());
+        let mut triedb = RocksMemoryTrieMut::new(&db, crate::empty_trie_hash());
         for (k, data) in kvs.iter() {
             triedb.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
         }
@@ -134,17 +128,17 @@ mod tests {
         for k in kvs.keys() {
             assert_eq!(
                 kvs[k],
-                bincode::deserialize(&triedb.get(&k.to_bytes()).unwrap()).unwrap()
+                bincode::deserialize(&TrieMut::get(&triedb, &k.to_bytes()).unwrap()).unwrap()
             );
         }
 
         // reads after apply
         let root = triedb.apply().unwrap();
-        let triedb = RocksMemoryTrieMut::new_uncached(&db, root);
+        let triedb = RocksMemoryTrieMut::new(&db, root);
         for k in kvs.keys() {
             assert_eq!(
                 kvs[k],
-                bincode::deserialize(&triedb.get(&k.to_bytes()).unwrap()).unwrap()
+                bincode::deserialize(&TrieMut::get(&triedb, &k.to_bytes()).unwrap()).unwrap()
             );
         }
         drop(triedb);
@@ -153,11 +147,11 @@ mod tests {
         // close and re-open database
         let db = DB::open_default(&dir).unwrap();
 
-        let triedb = RocksMemoryTrieMut::new_uncached(&db, root);
+        let triedb = RocksMemoryTrieMut::new(&db, root);
         for k in kvs.keys() {
             assert_eq!(
                 kvs[k],
-                bincode::deserialize(&triedb.get(&k.to_bytes()).unwrap()).unwrap()
+                bincode::deserialize(&TrieMut::get(&triedb, &k.to_bytes()).unwrap()).unwrap()
             );
         }
     }
@@ -179,13 +173,13 @@ mod tests {
 
         let db = DB::open_default(&dir).unwrap();
 
-        let mut triedb = RocksMemoryTrieMut::new_uncached(&db, crate::empty_trie_hash());
+        let mut triedb = RocksMemoryTrieMut::new(&db, crate::empty_trie_hash());
         for (k, data) in kvs_1.iter() {
             triedb.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
         }
         let root_1 = triedb.apply().unwrap();
 
-        let mut triedb = RocksMemoryTrieMut::new_uncached(&db, root_1);
+        let mut triedb = RocksMemoryTrieMut::new(&db, root_1);
         for (k, data) in kvs_2.iter() {
             triedb.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
         }
@@ -193,14 +187,15 @@ mod tests {
 
         assert_ne!(root_1, root_2);
 
-        let triedb = RocksMemoryTrieMut::new_uncached(&db, root_2);
+        let triedb = RocksMemoryTrieMut::new(&db, root_2);
         for (k, data) in kvs_2
             .iter()
             .chain(kvs_1.iter().filter(|(k, _)| !kvs_2.contains_key(k)))
         {
             assert_eq!(
                 data,
-                &bincode::deserialize::<Data>(&triedb.get(&k.to_bytes()).unwrap()).unwrap()
+                &bincode::deserialize::<Data>(&TrieMut::get(&triedb, &k.to_bytes()).unwrap())
+                    .unwrap()
             );
         }
 

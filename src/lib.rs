@@ -23,37 +23,12 @@ mod memory;
 mod mutable;
 mod ops;
 
-use cache::Cache;
 use ops::{build, delete, get, insert};
 
 type Result<T> = std::result::Result<T, error::Error>;
 
 pub trait CachedDatabaseHandle {
     fn get(&self, key: H256) -> Vec<u8>;
-}
-
-pub struct CachedHandle<D: CachedDatabaseHandle> {
-    db: D,
-    cache: Cache,
-}
-
-impl<D: CachedDatabaseHandle> CachedHandle<D> {
-    pub fn new(db: D) -> Self {
-        Self {
-            db,
-            cache: Cache::new(),
-        }
-    }
-}
-
-impl<D: CachedDatabaseHandle> Database for CachedHandle<D> {
-    fn get(&self, key: H256) -> &[u8] {
-        if !self.cache.contains_key(key) {
-            self.cache.insert(key, self.db.get(key))
-        } else {
-            self.cache.get(key).unwrap()
-        }
-    }
 }
 
 /// An immutable database handle.
@@ -63,7 +38,7 @@ pub trait Database {
 }
 
 /// Change for a merkle trie operation.
-#[derive(Default)]
+#[derive(Default, Debug, Clone)]
 pub struct Change {
     /// Additions to the database.
     pub adds: HashMap<H256, Vec<u8>>,
@@ -234,7 +209,6 @@ macro_rules! empty_trie_hash {
     () => {{
         use std::str::FromStr;
 
-        H256::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
-            .unwrap()
+        H256::from_str("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421").unwrap()
     }};
 }
