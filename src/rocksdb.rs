@@ -5,20 +5,12 @@ use std::borrow::Borrow;
 use primitive_types::H256;
 use rocksdb_lib::DB;
 
-use crate::{cache::CachedHandle, CachedDatabaseHandle, Change, Database, TrieMut};
+use crate::{
+    cache::CachedHandle, gc::DatabaseMut, CachedDatabaseHandle, Change, Database, TrieMut,
+};
 
 #[derive(Debug, Clone)]
 pub struct RocksDatabaseHandle<D>(D);
-
-impl<D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandle<D> {
-    fn get(&self, key: H256) -> Vec<u8> {
-        self.0
-            .borrow()
-            .get(key.as_ref())
-            .expect("Error on reading database")
-            .expect("Value not found in database")
-    }
-}
 
 impl<D> RocksDatabaseHandle<D> {
     pub fn new(db: D) -> Self {
@@ -26,7 +18,30 @@ impl<D> RocksDatabaseHandle<D> {
     }
 }
 
+impl<D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandle<D> {
+    fn get(&self, key: H256) -> Vec<u8> {
+        self.0
+            .borrow()
+            .get(key.as_ref())
+            .expect("Error on reading database")
+            .unwrap_or_else(|| panic!("Value for {} not found in database", key))
+    }
+}
+
 pub type RocksHandle<D> = CachedHandle<RocksDatabaseHandle<D>>;
+
+impl<D: Borrow<DB>> DatabaseMut for RocksHandle<D> {
+    fn set(&mut self, key: H256, value: Option<&[u8]>) {
+        self.clear_cache();
+        let db = self.db.0.borrow();
+        if let Some(value) = value {
+            db.put(key, value)
+                .expect("Unable to put value into database");
+        } else {
+            db.delete(key).expect("Unable to delete key from database");
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct RocksMemoryTrieMut<D: Borrow<DB>> {

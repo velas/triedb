@@ -65,21 +65,31 @@ impl<'a, D: Database> TrieMut for DatabaseTrieMut<'a, D> {
     }
 
     fn insert(&mut self, key: &[u8], value: &[u8]) {
-        let (new_root, change) = insert(self.root, self.database, key, value);
+        let (new_root, change) = insert(self.root, self, key, value);
 
         self.change.merge(&change);
         self.root = new_root;
     }
 
     fn delete(&mut self, key: &[u8]) {
-        let (new_root, change) = delete(self.root, self.database, key);
+        let (new_root, change) = delete(self.root, self, key);
 
         self.change.merge(&change);
         self.root = new_root;
     }
 
     fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        get(self.root, self.database, key).map(|v| v.into())
+        get(self.root, self, key).map(|v| v.into())
+    }
+}
+
+impl<'a, D: Database> Database for DatabaseTrieMut<'a, D> {
+    fn get(&self, key: H256) -> &[u8] {
+        if let Some(bytes) = self.change.adds.get(&key) {
+            bytes
+        } else {
+            self.database.get(key)
+        }
     }
 }
 
@@ -161,10 +171,9 @@ mod tests {
         assert_eq!(collection.counter.increase(root), 2);
 
         let mut trie = collection.trie_for(root);
-        assert_eq!(trie.get(key), Some(value.to_vec()));
+        assert_eq!(TrieMut::get(&trie, key), Some(value.to_vec()));
         trie.insert(key, another_value);
-        // TODO: uncomment when lookup respects keys in change
-        // assert_eq!(trie.get(key), Some(another_value.to_vec()));
+        assert_eq!(TrieMut::get(&trie, key), Some(another_value.to_vec()));
         let patch = trie.into_patch();
         assert_eq!(collection.counter.get(&patch.root), None);
         let another_root = collection.apply(patch);
@@ -172,15 +181,18 @@ mod tests {
 
         // first root is alive
         assert_eq!(collection.counter.get(&root), Some(&1));
-        assert_eq!(collection.trie_for(root).get(key), Some(value.to_vec()));
         assert_eq!(
-            collection.trie_for(another_root).get(key),
+            TrieMut::get(&collection.trie_for(root), key),
+            Some(value.to_vec())
+        );
+        assert_eq!(
+            TrieMut::get(&collection.trie_for(another_root), key),
             Some(another_value.to_vec())
         );
 
         assert_eq!(collection.counter.decrease(root), 0);
         assert_eq!(
-            collection.trie_for(another_root).get(key),
+            TrieMut::get(&collection.trie_for(another_root), key),
             Some(another_value.to_vec())
         );
     }
@@ -212,7 +224,7 @@ mod tests {
         for k in kvs_1.keys() {
             assert_eq!(
                 kvs_1[k],
-                bincode::deserialize(&trie.get(&k.to_bytes()).unwrap()).unwrap()
+                bincode::deserialize(&TrieMut::get(&trie, &k.to_bytes()).unwrap()).unwrap()
             );
         }
 
@@ -235,7 +247,7 @@ mod tests {
         for k in kvs_2.keys() {
             assert_eq!(
                 kvs_2[k],
-                bincode::deserialize(&trie.get(&k.to_bytes()).unwrap()).unwrap()
+                bincode::deserialize(&TrieMut::get(&trie, &k.to_bytes()).unwrap()).unwrap()
             );
         }
 
