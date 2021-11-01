@@ -70,12 +70,12 @@ impl TrieMut for MemoryTrieMut {
 
 impl MemoryTrieMut {
     fn apply_change(&mut self, change: Change) {
-        for add in change.adds {
-            self.database.insert(add.0, add.1);
-        }
-
         for remove in change.removes {
             self.database.remove(&remove);
+        }
+
+        for add in change.adds {
+            self.database.insert(add.0, add.1);
         }
     }
 

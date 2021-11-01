@@ -105,12 +105,12 @@ impl<D: Borrow<DB>> RocksMemoryTrieMut<D> {
     pub fn apply(self) -> Result<H256, String> {
         let db = self.handle.db.0.borrow();
 
-        for (key, value) in self.change.adds {
-            db.put(key.as_ref(), &value)?;
-        }
-
         for key in self.change.removes {
             db.delete(key.as_ref())?;
+        }
+
+        for (key, value) in self.change.adds {
+            db.put(key.as_ref(), &value)?;
         }
 
         Ok(self.root)
