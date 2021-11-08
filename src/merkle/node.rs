@@ -45,6 +45,21 @@ impl<'a> MerkleNode<'a> {
         Ok(node)
     }
 
+    pub fn refs(&self) -> Vec<H256> {
+        let mut refs = Vec::new();
+        match self {
+            MerkleNode::Extension(_n, v) => {
+                v.get_ref().map(|h| refs.push(h));
+            }
+            MerkleNode::Branch(values, _) => {
+                for v in values {
+                    v.get_ref().map(|h| refs.push(h));
+                }
+            }
+            MerkleNode::Leaf(..) => {} // no refs
+        };
+        refs
+    }
     /// Whether the node can be inlined to a merkle value.
     pub fn inlinable(&self) -> bool {
         rlp::encode(self).to_vec().len() < 32
@@ -119,6 +134,13 @@ impl<'a> MerkleValue<'a> {
         }
 
         panic!(); // TODO: convert into Err(Error)
+    }
+    fn get_ref(&self) -> Option<H256> {
+        if let MerkleValue::Hash(h) = self {
+            Some(*h)
+        } else {
+            None
+        }
     }
 }
 

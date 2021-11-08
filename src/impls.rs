@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use primitive_types::H256;
 
-use crate::{gc::DatabaseMut, Database};
+use crate::{ Database, DatabaseMut,  ValueType};
 
 impl Database for HashMap<H256, Vec<u8>> {
     fn get(&self, key: H256) -> &[u8] {
@@ -12,8 +12,8 @@ impl Database for HashMap<H256, Vec<u8>> {
 }
 
 impl DatabaseMut for HashMap<H256, Vec<u8>> {
-    fn set(&mut self, key: H256, value: Option<&[u8]>) {
-        if let Some(value) = value {
+    fn set(&mut self, key: H256, value: ValueType) {
+        if let ValueType::Added(value) = value {
             self.insert(key, value.to_vec());
         } else {
             self.remove(&key);

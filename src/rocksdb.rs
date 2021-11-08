@@ -1,12 +1,12 @@
 //! RocksDB adaptor for TrieDB.
 
-use std::borrow::Borrow;
+use std::{borrow::Borrow, collections::HashMap};
 
 use primitive_types::H256;
 use rocksdb_lib::DB;
 
 use crate::{
-    cache::CachedHandle, gc::DatabaseMut, CachedDatabaseHandle, Change, Database, TrieMut,
+    cache::CachedHandle, CachedDatabaseHandle, Change, Database, DatabaseMut, TrieMut, ValueChange,
 };
 
 #[derive(Debug, Clone)]
@@ -43,19 +43,35 @@ impl<D: Borrow<DB>> DatabaseMut for RocksHandle<D> {
     }
 }
 
+
 #[derive(Debug, Clone)]
 pub struct RocksMemoryTrieMut<D: Borrow<DB>> {
     root: H256,
-    change: Change,
+    overlay: HashMap<H256, ValueType>,
     handle: RocksHandle<D>,
+}
+
+impl<D: Borrow<DB>> RocksMemoryTrieMut<D> {
+    fn merge_change(&mut self, change: Change) {
+        for change in change.change_list {
+            match change {
+                ValueChange::Add { key, rlp, .. } => {
+                    debug_assert!(self.overlay.insert(key, ValueType::Added(rlp)).is_none());
+                }
+                ValueChange::Remove { key, .. } => {
+                    debug_assert!(self.overlay.remove(&key).is_some());
+                }
+            }
+        }
+    }
 }
 
 impl<D: Borrow<DB>> Database for RocksMemoryTrieMut<D> {
     fn get(&self, key: H256) -> &[u8] {
-        if self.change.adds.contains_key(&key) {
-            self.change.adds.get(&key).unwrap()
-        } else {
-            self.handle.get(key)
+        match self.overlay.get(&key) {
+            Some(ValueType::Added(data)) => &data,
+            Some(ValueType::Removed) => &[],
+            None => self.handle.get(key),
         }
     }
 }
@@ -71,7 +87,7 @@ impl<D: Borrow<DB>> TrieMut for RocksMemoryTrieMut<D> {
 
         let (new_root, change) = crate::insert(self.root, self, key, value);
 
-        self.change.merge(&change);
+        self.merge_change(change);
         self.root = new_root;
     }
 
@@ -80,7 +96,7 @@ impl<D: Borrow<DB>> TrieMut for RocksMemoryTrieMut<D> {
 
         let (new_root, change) = crate::delete(self.root, self, key);
 
-        self.change.merge(&change);
+        self.merge_change(change);
         self.root = new_root;
     }
 
@@ -93,7 +109,7 @@ impl<D: Borrow<DB>> RocksMemoryTrieMut<D> {
     pub fn new(db: D, root: H256) -> Self {
         Self {
             root,
-            change: Change::default(),
+            overlay: Default::default(),
             handle: RocksHandle::new(RocksDatabaseHandle::new(db)),
         }
     }
@@ -105,14 +121,12 @@ impl<D: Borrow<DB>> RocksMemoryTrieMut<D> {
     pub fn apply(self) -> Result<H256, String> {
         let db = self.handle.db.0.borrow();
 
-        for (key, value) in self.change.adds {
-            db.put(key.as_ref(), &value)?;
+        for (key, value) in self.overlay {
+            match value {
+                ValueType::Added(value) => db.put(key.as_ref(), &value)?,
+                ValueType::Removed => db.delete(key.as_ref())?,
+            }
         }
-
-        for key in self.change.removes {
-            db.delete(key.as_ref())?;
-        }
-
         Ok(self.root)
     }
 }

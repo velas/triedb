@@ -8,20 +8,32 @@ use sha3::{Digest, Keccak256};
 
 use merkle::{nibble, MerkleNode, MerkleValue};
 
-pub mod gc;
+#[doc(hidden)]
+#[macro_export]
+macro_rules! empty_trie_hash {
+    () => {{
+        use std::str::FromStr;
+
+        H256::from_str("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421").unwrap()
+    }};
+}
+// pub mod gc;
 pub mod merkle;
+pub use database::*;
 pub use memory::*;
 pub use mutable::*;
 
-#[cfg(feature = "rocksdb")]
-pub mod rocksdb;
+// #[cfg(feature = "rocksdb")]
+// pub mod rocksdb;
 
-mod cache;
+// mod cache;
+mod database;
 mod error;
 mod impls;
 mod memory;
 mod mutable;
 mod ops;
+mod trie;
 
 use ops::{build, delete, get, insert};
 
@@ -31,51 +43,35 @@ pub trait CachedDatabaseHandle {
     fn get(&self, key: H256) -> Vec<u8>;
 }
 
-/// An immutable database handle.
-pub trait Database {
-    /// Get a raw value from the database.
-    fn get(&self, key: H256) -> &[u8];
+#[derive(Debug, Clone)]
+pub enum ValueChange {
+    Add { key: H256, rlp: Vec<u8> },
+    Remove { key: H256 },
 }
-
 /// Change for a merkle trie operation.
 #[derive(Default, Debug, Clone)]
 pub struct Change {
-    /// Additions to the database.
-    pub adds: HashMap<H256, Vec<u8>>,
-    /// Removals to the database.
-    pub removes: HashSet<H256>,
+    change_list: Vec<ValueChange>,
 }
 
 impl Change {
     /// Change to add a new raw value.
-    pub fn add_raw(&mut self, key: H256, value: Vec<u8>) {
-        self.adds.insert(key, value);
-        self.removes.remove(&key);
-    }
-
-    /// Change to add a new node.
-    pub fn add_node(&mut self, node: &MerkleNode<'_>) {
-        let subnode = rlp::encode(node).to_vec();
-        let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
-        self.add_raw(hash, subnode);
-    }
-
-    /// Change to add a new node, and return the value added.
-    pub fn add_value<'a, 'b, 'c>(&'a mut self, node: &'c MerkleNode<'b>) -> MerkleValue<'b> {
-        if node.inlinable() {
-            MerkleValue::Full(Box::new(node.clone()))
-        } else {
-            let subnode = rlp::encode(node).to_vec();
-            let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
-            self.add_raw(hash, subnode);
-            MerkleValue::Hash(hash)
-        }
+    fn add_raw(&mut self, key: H256, value: Vec<u8>) {
+        self.change_list.push(ValueChange::Add { key, rlp: value })
     }
 
     /// Change to remove a raw key.
-    pub fn remove_raw(&mut self, key: H256) {
-        self.adds.remove(&key);
-        self.removes.insert(key);
+    fn remove_raw(&mut self, key: H256) {
+        self.change_list.push(ValueChange::Remove { key })
+    }
+
+    /// Change to add a new node.
+    pub fn add_node(&mut self, node: &MerkleNode<'_>) -> H256 {
+        let subnode = rlp::encode(node).to_vec();
+        let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
+
+        self.add_raw(hash, subnode);
+        hash
     }
 
     /// Change to remove a node. Return whether there's any node being
@@ -91,14 +87,19 @@ impl Change {
         }
     }
 
+    /// Change to add a new node, and return the value added.
+    pub fn add_value<'a, 'b, 'c>(&'a mut self, node: &'c MerkleNode<'b>) -> MerkleValue<'b> {
+        if node.inlinable() {
+            MerkleValue::Full(Box::new(node.clone()))
+        } else {
+            MerkleValue::Hash(self.add_node(node))
+        }
+    }
+
     /// Merge another change to this change.
     pub fn merge(&mut self, other: &Change) {
-        for (key, value) in &other.adds {
-            self.add_raw(*key, value.clone());
-        }
-
-        for v in &other.removes {
-            self.remove_raw(*v);
+        for change in &other.change_list {
+            self.change_list.push(change.clone())
         }
     }
 }
@@ -118,7 +119,7 @@ pub fn insert<D: Database>(root: H256, database: &D, key: &[u8], value: &[u8]) -
     } else {
         let old =
             MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
-        change.remove_raw(root);
+        change.remove_node(&old);
         insert::insert_by_node(old, nibble, value, database)
     };
     change.merge(&subchange);
@@ -153,7 +154,7 @@ pub fn delete<D: Database>(root: H256, database: &D, key: &[u8]) -> (H256, Chang
     } else {
         let old =
             MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
-        change.remove_raw(root);
+        change.remove_node(&old);
         delete::delete_by_node(old, nibble, database)
     };
     change.merge(&subchange);
@@ -201,16 +202,6 @@ pub fn get<'a, 'b, D: Database>(root: H256, database: &'a D, key: &'b [u8]) -> O
             MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
         get::get_by_node(node, nibble, database)
     }
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! empty_trie_hash {
-    () => {{
-        use std::str::FromStr;
-
-        H256::from_str("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421").unwrap()
-    }};
 }
 
 #[cfg(test)]

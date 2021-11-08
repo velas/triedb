@@ -4,7 +4,7 @@ use primitive_types::H256;
 
 use crate::{
     build, delete, empty_trie_hash, get, insert, AnySecureTrieMut, AnyTrieMut, Change,
-    FixedSecureTrieMut, FixedTrieMut, SecureTrieMut, TrieMut,
+    FixedSecureTrieMut, FixedTrieMut, SecureTrieMut, TrieMut, ValueChange,
 };
 
 /// A memory-backed trie.
@@ -70,12 +70,15 @@ impl TrieMut for MemoryTrieMut {
 
 impl MemoryTrieMut {
     fn apply_change(&mut self, change: Change) {
-        for add in change.adds {
-            self.database.insert(add.0, add.1);
-        }
-
-        for remove in change.removes {
-            self.database.remove(&remove);
+        for change in dbg!(change.change_list) {
+            match change {
+                ValueChange::Add { key, rlp, .. } => {
+                    self.database.insert(key, rlp);
+                }
+                ValueChange::Remove { key, .. } => {
+                    self.database.remove(&key);
+                }
+            }
         }
     }
 
@@ -93,12 +96,14 @@ impl MemoryTrieMut {
 
 #[cfg(test)]
 mod tests {
+    use crate::trie::{typed::TypedTrieHandle, TrieHandle};
+
     use super::*;
     use std::str::FromStr;
 
     #[test]
     fn trie_middle_leaf() {
-        let mut map = HashMap::new();
+        let mut map: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
         map.insert(
             "key1aa".as_bytes().into(),
             "0123456789012345678901234567890123456789xxx"
@@ -119,7 +124,7 @@ mod tests {
             "1234567890123456789012345678901".as_bytes().into(),
         );
 
-        let btrie = MemoryTrieMut::build(&map);
+        let btrie = TrieHandle::<HashMap<H256, Vec<u8>>>::build(&map);
 
         assert_eq!(
             btrie.root(),
@@ -132,24 +137,24 @@ mod tests {
         );
         assert_eq!(btrie.get("key2bbb".as_bytes()), None);
 
-        let mut mtrie = MemoryTrieMut::default();
+        let mut mtrie = TrieHandle::new(HashMap::<H256, Vec<u8>>::new(), empty_trie_hash!());
         for (key, value) in &map {
             mtrie.insert(key, value);
         }
 
-        assert_eq!(btrie.database, mtrie.database);
+        assert_eq!(btrie.inner(), mtrie.inner());
 
         mtrie.insert("key2bbb".as_bytes(), "aval4".as_bytes());
         mtrie.delete("key2bbb".as_bytes());
 
-        assert_eq!(btrie.database, mtrie.database);
+        assert_eq!(btrie.inner(), mtrie.inner());
 
         for key in map.keys() {
-            mtrie.delete(key);
+            mtrie.delete(&key);
         }
 
-        assert!(mtrie.database.is_empty());
-        assert!(mtrie.root == empty_trie_hash!());
+        assert!(dbg!(mtrie.inner()).is_empty());
+        assert!(mtrie.root() == empty_trie_hash!());
     }
 
     #[test]

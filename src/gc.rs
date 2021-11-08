@@ -1,14 +1,12 @@
+use std::collections::HashSet;
+
 use primitive_types::H256;
 
-use crate::{delete, get, insert, Change, Database, TrieMut};
+use crate::{delete, get, insert, Change, Database, DatabaseMut, TrieMut, ValueChange};
 
 pub trait ItemCounter {
     fn increase(&mut self, key: H256) -> usize;
     fn decrease(&mut self, key: H256) -> usize;
-}
-
-pub trait DatabaseMut: Database {
-    fn set(&mut self, key: H256, value: Option<&[u8]>);
 }
 
 pub struct TrieCollection<D: DatabaseMut, C: ItemCounter> {
@@ -29,20 +27,28 @@ impl<D: DatabaseMut, C: ItemCounter> TrieCollection<D, C> {
         }
     }
 
-    pub fn apply(&mut self, DatabaseTrieMutPatch { root, change }: DatabaseTrieMutPatch) -> H256 {
-        for (key, value) in change.adds {
-            self.database.set(key, Some(&value));
-            self.counter.increase(key);
-        }
-
-        for key in change.removes {
-            let r = self.counter.decrease(key);
-            if r == 0 {
-                self.database.set(key, None);
+    pub fn apply(&mut self, change: Change) -> HashSet<H256> {
+        let mut removed = HashSet::new();
+        for change in change.change_list {
+            match change {
+                ValueChange::Add { key, rlp, refs } => {
+                    self.database.set(key, Some(&rlp));
+                    for key_ref in refs {
+                        let _r = self.counter.increase(key);
+                    }
+                }
+                ValueChange::Remove { key, refs } => {
+                    self.database.set(key, None);
+                    for key_ref in refs {
+                        let r = self.counter.decrease(key);
+                        if r == 0 {
+                            removed.insert(key);
+                        }
+                    }
+                }
             }
         }
-
-        root
+        removed
     }
 }
 
