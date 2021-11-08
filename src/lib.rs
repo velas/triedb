@@ -74,17 +74,11 @@ impl Change {
         hash
     }
 
-    /// Change to remove a node. Return whether there's any node being
-    /// removed.
-    pub fn remove_node(&mut self, node: &MerkleNode<'_>) -> bool {
-        if node.inlinable() {
-            false
-        } else {
-            let subnode = rlp::encode(node).to_vec();
-            let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
-            self.remove_raw(hash);
-            true
-        }
+    /// Mark node as removed.
+    pub fn remove_node(&mut self, node: &MerkleNode<'_>) {
+        let subnode = rlp::encode(node).to_vec();
+        let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
+        self.remove_raw(hash);
     }
 
     /// Change to add a new node, and return the value added.

@@ -11,16 +11,17 @@ name = "triedb"
 
 [features]
 default = []
-rocksdb = ["rocksdb_lib"]
+# rocksdb = ["rocksdb_lib"]
 
 [dependencies]
 sha3 = "0.9.1"
 rlp = "0.5.0"
 primitive-types = { version = "0.8.0", features = ["rlp"] }
 thiserror = "1.0.23"
-rocksdb_lib = { package = "rocksdb", version = "0.16.0", default-features = false, optional = true }
+rocksdb_lib = { package = "rocksdb", version = "0.17.0", default-features = false } # , optional = true
 
 [dev-dependencies]
+hex-literal="0.3"
 bincode = "1.3.1"
 etcommon-hexutil = "0.2.4"
 quickcheck = "1.0.3"

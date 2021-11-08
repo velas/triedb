@@ -70,7 +70,7 @@ impl TrieMut for MemoryTrieMut {
 
 impl MemoryTrieMut {
     fn apply_change(&mut self, change: Change) {
-        for change in dbg!(change.change_list) {
+        for change in change.change_list {
             match change {
                 ValueChange::Add { key, rlp, .. } => {
                     self.database.insert(key, rlp);
@@ -96,7 +96,8 @@ impl MemoryTrieMut {
 
 #[cfg(test)]
 mod tests {
-    use crate::trie::{typed::TypedTrieHandle, TrieHandle};
+
+    use crate::trie::TrieHandle;
 
     use super::*;
     use std::str::FromStr;
