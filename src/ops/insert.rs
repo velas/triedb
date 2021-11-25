@@ -90,7 +90,7 @@ pub fn insert_by_value<'a, D: Database>(
 
     let new = match merkle {
         MerkleValue::Empty => change.add_value(&MerkleNode::Leaf(nibble, value)),
-        MerkleValue::Full(ref sub_node) => {
+        MerkleValue::Full(sub_node) => {
             let (new_node, subchange) =
                 insert_by_node(sub_node.as_ref().clone(), nibble, value, database);
             change.merge(&subchange);
@@ -118,8 +118,8 @@ pub fn insert_by_node<'a, D: Database>(
     let mut change = Change::default();
 
     let new = match node {
-        MerkleNode::Leaf(ref node_nibble, ref node_value) => {
-            if node_nibble == &nibble {
+        MerkleNode::Leaf(node_nibble, node_value) => {
+            if node_nibble == nibble {
                 MerkleNode::Leaf(nibble, value)
             } else {
                 let (common, nibble_sub, node_nibble_sub) =
@@ -135,23 +135,23 @@ pub fn insert_by_node<'a, D: Database>(
                 }
             }
         }
-        MerkleNode::Extension(ref node_nibble, ref node_value) => {
-            if nibble.starts_with(node_nibble) {
+        MerkleNode::Extension(node_nibble, node_value) => {
+            if nibble.starts_with(&node_nibble) {
                 let (subvalue, subchange) = insert_by_value(
-                    node_value.clone(),
+                    node_value,
                     nibble[node_nibble.len()..].into(),
                     value,
                     database,
                 );
                 change.merge(&subchange);
 
-                MerkleNode::Extension(node_nibble.clone(), subvalue)
+                MerkleNode::Extension(node_nibble, subvalue)
             } else {
                 let (common, nibble_sub, node_nibble_sub) =
                     nibble::common_with_sub(&nibble, &node_nibble);
 
                 let (branch, subchange) =
-                    value_and_leaf_branch(node_nibble_sub, node_value.clone(), nibble_sub, value);
+                    value_and_leaf_branch(node_nibble_sub, node_value, nibble_sub, value);
                 change.merge(&subchange);
                 if !common.is_empty() {
                     MerkleNode::Extension(common.into(), change.add_value(&branch))
@@ -160,18 +160,17 @@ pub fn insert_by_node<'a, D: Database>(
                 }
             }
         }
-        MerkleNode::Branch(ref node_nodes, ref node_additional) => {
-            let mut nodes = node_nodes.clone();
+        MerkleNode::Branch(mut node_nodes, node_additional) => {
             if nibble.is_empty() {
-                MerkleNode::Branch(nodes, Some(value))
+                MerkleNode::Branch(node_nodes, Some(value))
             } else {
                 let ni: usize = nibble[0].into();
-                let prev = nodes[ni].clone();
+                let prev = node_nodes[ni].clone();
                 let (new, subchange) = insert_by_value(prev, nibble[1..].into(), value, database);
                 change.merge(&subchange);
 
-                nodes[ni] = new;
-                MerkleNode::Branch(nodes, *node_additional)
+                node_nodes[ni] = new;
+                MerkleNode::Branch(node_nodes, node_additional)
             }
         }
     };
