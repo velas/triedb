@@ -8,8 +8,9 @@ use crate::Result;
 
 /// Represents a nibble. A 16-variant value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum Nibble {
-    N0,
+    N0 = 0,
     N1,
     N2,
     N3,
@@ -51,26 +52,9 @@ impl From<usize> for Nibble {
     }
 }
 
-impl Into<usize> for Nibble {
-    fn into(self) -> usize {
-        match self {
-            Nibble::N0 => 0,
-            Nibble::N1 => 1,
-            Nibble::N2 => 2,
-            Nibble::N3 => 3,
-            Nibble::N4 => 4,
-            Nibble::N5 => 5,
-            Nibble::N6 => 6,
-            Nibble::N7 => 7,
-            Nibble::N8 => 8,
-            Nibble::N9 => 9,
-            Nibble::N10 => 10,
-            Nibble::N11 => 11,
-            Nibble::N12 => 12,
-            Nibble::N13 => 13,
-            Nibble::N14 => 14,
-            Nibble::N15 => 15,
-        }
+impl From<Nibble> for usize {
+    fn from(nibble: Nibble) -> usize {
+        nibble as usize
     }
 }
 
@@ -98,26 +82,9 @@ impl From<u8> for Nibble {
     }
 }
 
-impl Into<u8> for Nibble {
-    fn into(self) -> u8 {
-        match self {
-            Nibble::N0 => 0,
-            Nibble::N1 => 1,
-            Nibble::N2 => 2,
-            Nibble::N3 => 3,
-            Nibble::N4 => 4,
-            Nibble::N5 => 5,
-            Nibble::N6 => 6,
-            Nibble::N7 => 7,
-            Nibble::N8 => 8,
-            Nibble::N9 => 9,
-            Nibble::N10 => 10,
-            Nibble::N11 => 11,
-            Nibble::N12 => 12,
-            Nibble::N13 => 13,
-            Nibble::N14 => 14,
-            Nibble::N15 => 15,
-        }
+impl From<Nibble> for u8 {
+    fn from(nibble: Nibble) -> u8 {
+        nibble as u8
     }
 }
 
@@ -154,12 +121,11 @@ pub fn into_key(nibble: NibbleSlice) -> Vec<u8> {
     let mut ret = Vec::new();
 
     for i in 0..nibble.len() {
+        let value: u8 = nibble[i].into();
         if i & 1 == 0 {
             // even
-            let value: u8 = nibble[i].into();
             ret.push(value << 4);
         } else {
-            let value: u8 = nibble[i].into();
             ret[i / 2] |= value;
         }
     }

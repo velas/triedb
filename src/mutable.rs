@@ -54,12 +54,9 @@ impl<T: TrieMut> AnyTrieMut<T> {
     /// Get a value in the trie.
     pub fn get<K: rlp::Encodable, V: rlp::Decodable>(&self, key: &K) -> Option<V> {
         let key = rlp::encode(key).to_vec();
-        let value = self.0.get(&key);
-
-        match value {
-            Some(value) => Some(rlp::decode(&value).expect("Unable to decode value")),
-            None => None,
-        }
+        self.0
+            .get(&key)
+            .map(|value| rlp::decode(&value).expect("Unable to decode value"))
     }
 }
 
@@ -198,12 +195,9 @@ impl<T: TrieMut> AnySecureTrieMut<T> {
 
     /// Get a value in the trie.
     pub fn get<K: AsRef<[u8]>, V: rlp::Decodable>(&self, key: &K) -> Option<V> {
-        let value = self.0.get(&key);
-
-        match value {
-            Some(value) => Some(rlp::decode(&value).expect("Unable to decode value")),
-            None => None,
-        }
+        self.0
+            .get(&key)
+            .map(|value| rlp::decode(&value).expect("Unable to decode value"))
     }
 }
 

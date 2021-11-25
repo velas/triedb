@@ -38,9 +38,9 @@ impl Default for MemoryTrieMut {
     }
 }
 
-impl Into<HashMap<H256, Vec<u8>>> for MemoryTrieMut {
-    fn into(self) -> HashMap<H256, Vec<u8>> {
-        self.database
+impl From<MemoryTrieMut> for HashMap<H256, Vec<u8>> {
+    fn from(trie: MemoryTrieMut) -> HashMap<H256, Vec<u8>> {
+        trie.database
     }
 }
 
