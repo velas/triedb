@@ -49,6 +49,22 @@ impl<'a> MerkleNode<'a> {
     pub fn inlinable(&self) -> bool {
         rlp::encode(self).to_vec().len() < 32
     }
+
+    pub fn childs(&self) -> Vec<H256> {
+        match self {
+            Self::Extension(_, MerkleValue::Hash(h)) => {
+                vec![*h]
+            }
+            Self::Branch(childs, ..) => childs
+                .iter()
+                .filter_map(|child| match child {
+                    MerkleValue::Hash(h) => Some(*h),
+                    _ => None,
+                })
+                .collect(),
+            Self::Extension(..) | Self::Leaf(..) => Default::default(),
+        }
+    }
 }
 
 impl<'a> Clone for MerkleNode<'a> {

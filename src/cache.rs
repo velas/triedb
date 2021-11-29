@@ -7,7 +7,7 @@ use primitive_types::H256;
 
 use crate::{CachedDatabaseHandle, Database};
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct CachedHandle<D> {
     pub db: D,
     cache: Cache,
@@ -45,7 +45,7 @@ impl<D: CachedDatabaseHandle> Database for CachedHandle<D> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct Cache {
     cache: UnsafeCell<Vec<Vec<u8>>>,
     map: RefCell<HashMap<H256, usize>>,

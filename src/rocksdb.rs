@@ -30,18 +30,18 @@ impl<D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandle<D> {
 
 pub type RocksHandle<D> = CachedHandle<RocksDatabaseHandle<D>>;
 
-impl<D: Borrow<DB>> DatabaseMut for RocksHandle<D> {
-    fn set(&mut self, key: H256, value: Option<&[u8]>) {
-        self.clear_cache();
-        let db = self.db.0.borrow();
-        if let Some(value) = value {
-            db.put(key, value)
-                .expect("Unable to put value into database");
-        } else {
-            db.delete(key).expect("Unable to delete key from database");
-        }
-    }
-}
+// impl<D: Borrow<DB>> DatabaseMut for RocksHandle<D> {
+//     fn set(&mut self, key: H256, value: Option<&[u8]>) {
+//         self.clear_cache();
+//         let db = self.db.0.borrow();
+//         if let Some(value) = value {
+//             db.put(key, value)
+//                 .expect("Unable to put value into database");
+//         } else {
+//             db.delete(key).expect("Unable to delete key from database");
+//         }
+//     }
+// }
 
 #[derive(Debug, Clone)]
 pub struct RocksMemoryTrieMut<D: Borrow<DB>> {
