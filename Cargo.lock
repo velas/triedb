@@ -12,6 +12,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.51"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b26702f315f53b6071259e15dd9d64528213b44d61de1ec926eca7715d62203"
+
+[[package]]
 name = "arrayvec"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -313,8 +319,7 @@ dependencies = [
 [[package]]
 name = "librocksdb-sys"
 version = "6.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c309a9d2470844aceb9a4a098cf5286154d20596868b75a6b36357d2bb9ca25d"
+source = "git+https://github.com/velas/rust-rocksdb?branch=transaction#7e4a299e831f07fd237db951bf631bc708cb9ce5"
 dependencies = [
  "bindgen",
  "cc",
@@ -546,9 +551,8 @@ dependencies = [
 
 [[package]]
 name = "rocksdb"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c749134fda8bfc90d0de643d59bfc841dcb3ac8a1062e12b6754bd60235c48b3"
+version = "0.17.0"
+source = "git+https://github.com/velas/rust-rocksdb?branch=transaction#7e4a299e831f07fd237db951bf631bc708cb9ce5"
 dependencies = [
  "libc",
  "librocksdb-sys",
@@ -668,6 +672,7 @@ dependencies = [
 name = "triedb"
 version = "0.5.0"
 dependencies = [
+ "anyhow",
  "bincode",
  "dashmap",
  "derivative",

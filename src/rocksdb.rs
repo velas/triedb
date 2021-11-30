@@ -7,13 +7,17 @@ use crate::merkle::MerkleNode;
 use log::*;
 use primitive_types::H256;
 use rlp::Rlp;
-use rocksdb_lib::{ColumnFamily, MergeOperands, WriteBatch, DB};
+use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB, Transaction};
+
+type DB = OptimisticTransactionDB;
 
 use crate::{
     cache::CachedHandle,
     gc::{DbCounter, ReachableHashes},
     CachedDatabaseHandle, Change, Database, TrieMut,
 };
+
+const EXCLUSIVE: bool = true;
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -39,19 +43,38 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
     }
 
     // mark counter as zero, to make write batch conflict
-    pub fn remove_counter(&self, b: &mut WriteBatch, key: H256) {
+    pub fn remove_counter(
+        &self,
+        b: &mut Transaction<DB>,
+        key: H256,
+    ) -> Result<(), rocksdb_lib::Error> {
         if let Some(counter_cf) = self.counter_cf {
-            b.put_cf(counter_cf, key, serialize_counter(0))
+            b.put_cf(counter_cf, key, serialize_counter(0))?
         }
+        Ok(())
     }
-    pub fn increase(&self, b: &mut WriteBatch, key: H256) {
+    pub fn increase(&self, b: &mut Transaction<DB>, key: H256) -> Result<(), rocksdb_lib::Error> {
         if let Some(counter_cf) = self.counter_cf {
-            b.merge_cf(counter_cf, key, serialize_counter(1))
+            b.merge_cf(counter_cf, &key.as_ref(), &&serialize_counter(1))?
         }
+        Ok(())
     }
-    pub fn decrease(&self, b: &mut WriteBatch, key: H256) {
+    pub fn decrease(&self, b: &mut Transaction<DB>, key: H256) -> Result<(), rocksdb_lib::Error> {
         if let Some(counter_cf) = self.counter_cf {
-            b.merge_cf(counter_cf, key, serialize_counter(-1))
+            b.merge_cf(counter_cf, &key.as_ref(), &&serialize_counter(-1))?
+        }
+        Ok(())
+    }
+    pub fn get_counter_in_tx(
+        &self,
+        b: &mut Transaction<DB>,
+        key: H256,
+    ) -> Result<i64, rocksdb_lib::Error> {
+        if let Some(counter_cf) = self.counter_cf {
+            b.get_for_update_cf(counter_cf, key.as_ref(), EXCLUSIVE)
+                .map(|s| s.map(|s| deserialize_counter(&s)).unwrap_or_default())
+        } else {
+            Ok(2) // report two, to make sure that after decrement there still will be atleast one reference
         }
     }
 }
@@ -59,13 +82,14 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
 pub fn merge_counter(
     key: &[u8],
     existing_val: Option<&[u8]>,
-    operands: &mut MergeOperands,
+    operands: &MergeOperands,
 ) -> Option<Vec<u8>> {
     let mut val = existing_val.map(deserialize_counter).unwrap_or_default();
     assert_eq!(key.len(), 32);
-    for op in operands {
+    for op in operands.iter() {
         let diff = deserialize_counter(op);
-        assert!(diff == -1 || diff == 1);
+        // this assertion is incorrect because rocks can merge multiple values into one.
+        // assert!(diff == -1 || diff == 1);
         val += diff;
     }
     Some(serialize_counter(val).to_vec())
@@ -80,10 +104,6 @@ fn deserialize_counter(counter: &[u8]) -> i64 {
     i64::from_le_bytes(bytes)
 }
 
-fn write_opts() -> rocksdb_lib::WriteOptions {
-    Default::default()
-}
-
 impl<'a, D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandle<'a, D> {
     fn get(&self, key: H256) -> Vec<u8> {
         self.db
@@ -94,44 +114,63 @@ impl<'a, D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandle<'a, D> {
     }
 }
 
+macro_rules! retry {
+    {$($tokens:tt)*} => {
+        let mut retry = move || -> Result<_, anyhow::Error> {
+            let result = { $($tokens)* };
+            Ok(result)
+        };
+        const NUM_RETRY: usize = 3;
+        let mut e = None; //use option because rust think that this variable can be uninit
+        for _ in 0..NUM_RETRY {
+            e = Some(retry());
+            match e.as_ref().unwrap() {
+                Ok(_) => break,
+                Err(e) => log::warn!("Error during transaction execution {}", e)
+
+            }
+        }
+        e.unwrap()
+         .expect(&format!("Failed to retry operation for {} times", NUM_RETRY))
+
+    };
+}
 pub type RocksHandle<'a, D> = CachedHandle<RocksDatabaseHandle<'a, D>>;
 
 impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
     // Insert value into db.
     // Check if value exist before, if not exist, increment child counter.
-    fn gc_insert_node<F>(&self, key: H256, value: &[u8], child_extractor: F)
+    fn gc_insert_node<F>(&self, key: H256, value: &[u8], mut child_extractor: F)
     where
         F: FnMut(&[u8]) -> Vec<H256>,
     {
-        let db = self.db.db.borrow();
-        let mut write_batch = WriteBatch::default();
-        if db.get(key.as_ref()).unwrap().is_none() {
-            let rlp = Rlp::new(&value);
-            let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-            trace!("inserting node {}=>{:?}", key, node);
-            for hash in ReachableHashes::collect(&node, child_extractor).childs() {
-                self.db.increase(&mut write_batch, hash);
-            }
+        retry! {
+            let db = self.db.db.borrow();
+            let mut tx = db.transaction();
+            // let mut write_batch = WriteBatch::default();
+            if tx
+                .get_for_update(key.as_ref(), EXCLUSIVE)
+                .map_err(|e| anyhow::format_err!("Cannot get key {}", e))?
+                .is_none()
+            {
+                let rlp = Rlp::new(&value);
+                let node = MerkleNode::decode(&rlp)?;
+                trace!("inserting node {}=>{:?}", key, node);
+                for hash in ReachableHashes::collect(&node, &mut child_extractor).childs() {
+                    self.db.increase(&mut tx, hash)?;
+                }
 
-            write_batch.put(key.as_ref(), value);
-            db.write_opt(write_batch, &write_opts())
-                .expect("Cannot write batch to db");
+                tx.put(key.as_ref(), value)?;
+                tx.commit()?;
+            }
         }
     }
     fn gc_count(&self, key: H256) -> usize {
-        if let Some(counter_cf) = self.db.counter_cf {
-            let val: i64 = self
-                .db
-                .db
-                .borrow()
-                .get_cf(counter_cf, key.as_ref())
-                .expect("Cannot request counter")
-                .map(|s| deserialize_counter(&s))
-                .unwrap_or_default();
-            val as usize
-        } else {
-            2 // report two, to make sure that after decrement there still will be atleast one reference
-        }
+        let db = self.db.db.borrow();
+        let mut tx = db.transaction();
+        self.db
+            .get_counter_in_tx(&mut tx, key)
+            .expect("Cannot read value") as usize
     }
 
     // atomic operation:
@@ -140,55 +179,54 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
     // 3. find all childs
     // 4. decrease child counters
     // 5. return list of childs with counter == 0
-    fn gc_try_cleanup_node<F>(&self, key: H256, child_extractor: F) -> Vec<H256>
+    fn gc_try_cleanup_node<F>(&self, key: H256, mut child_extractor: F) -> Vec<H256>
     where
         F: FnMut(&[u8]) -> Vec<H256>,
     {
         let db = self.db.db.borrow();
-        let mut nodes = vec![];
-
-        if let Some(value) = db.get(key.as_ref()).unwrap() {
-            let mut write_batch = WriteBatch::default();
-            if self.gc_count(key) != 0 {
-                return vec![];
-            }
-            write_batch.delete(key.as_ref());
-            // mark counter as zero to rise conflict during apply write batch, if counter was increased.
-            self.db.remove_counter(&mut write_batch, key);
-
-            let rlp = Rlp::new(&value);
-            let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-            for hash in ReachableHashes::collect(&node, child_extractor).childs() {
-                if self.gc_count(hash) <= 1 {
-                    nodes.push(hash);
+        if self.db.counter_cf.is_none() {
+            return vec![];
+        };
+        retry! {
+            let mut nodes = vec![];
+            //TODO: retry
+            if let Some(value) = db.get(key.as_ref())? {
+                let mut tx = db.transaction();
+                let count = self.db.get_counter_in_tx(&mut tx, key)?;
+                if count > 0 {
+                    return Ok(vec![]);
                 }
-                self.db.decrease(&mut write_batch, hash);
-            }
+                tx.delete(&key.as_ref())?;
+                self.db.remove_counter(&mut tx, key)?;
 
-            db.write_opt(write_batch, &write_opts())
-                .expect("Cannot write batch to db");
+                let rlp = Rlp::new(&value);
+                let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                for hash in ReachableHashes::collect(&node, &mut child_extractor).childs() {
+                    let child_count = self.db.get_counter_in_tx(&mut tx, hash)?;
+                    if child_count <= 1 {
+                        nodes.push(hash);
+                    }
+                    self.db.decrease(&mut tx, hash)?;
+                }
+
+                tx.commit()?;
+            }
+            nodes
         }
-        nodes
     }
 
     fn gc_pin_root(&self, key: H256) {
-        let mut write_batch = WriteBatch::default();
-        self.db.increase(&mut write_batch, key);
-        self.db
-            .db
-            .borrow()
-            .write_opt(write_batch, &write_opts())
-            .expect("cannot write batch")
+        let db = self.db.db.borrow();
+        let mut tx = db.transaction();
+        self.db.increase(&mut tx, key).expect("cannot write batch");
+        tx.commit().expect("cannot write batch");
     }
 
     fn gc_unpin_root(&self, key: H256) -> bool {
-        let mut write_batch = WriteBatch::default();
-        self.db.decrease(&mut write_batch, key);
-        self.db
-            .db
-            .borrow()
-            .write_opt(write_batch, &write_opts())
-            .expect("cannot write batch");
+        let db = self.db.db.borrow();
+        let mut tx = db.transaction();
+        self.db.decrease(&mut tx, key).expect("cannot write batch");
+        tx.commit().expect("cannot write batch");
         self.gc_count(key) == 0
     }
 }

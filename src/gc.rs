@@ -9,7 +9,6 @@ use derivative::Derivative;
 use log::*;
 use primitive_types::H256;
 use rlp::Rlp;
-use std::collections::HashMap;
 
 #[derive(Derivative)]
 #[derivative(Debug)]
