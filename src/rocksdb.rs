@@ -9,7 +9,11 @@ use primitive_types::H256;
 use rlp::Rlp;
 use rocksdb_lib::{ColumnFamily, MergeOperands, WriteBatch, DB};
 
-use crate::{cache::CachedHandle, gc::DbCounter, CachedDatabaseHandle, Change, Database, TrieMut};
+use crate::{
+    cache::CachedHandle,
+    gc::{DbCounter, ReachableHashes},
+    CachedDatabaseHandle, Change, Database, TrieMut,
+};
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -17,23 +21,38 @@ pub struct RocksDatabaseHandle<'a, D> {
     db: D,
 
     #[derivative(Debug = "ignore")]
-    counter_cf: &'a ColumnFamily,
+    counter_cf: Option<&'a ColumnFamily>,
 }
 
 impl<'a, D> RocksDatabaseHandle<'a, D> {
     pub fn new(db: D, counter_cf: &'a ColumnFamily) -> Self {
-        RocksDatabaseHandle { db, counter_cf }
+        RocksDatabaseHandle {
+            db,
+            counter_cf: counter_cf.into(),
+        }
+    }
+    pub fn without_counter(db: D) -> Self {
+        RocksDatabaseHandle {
+            db,
+            counter_cf: None,
+        }
     }
 
     // mark counter as zero, to make write batch conflict
     pub fn remove_counter(&self, b: &mut WriteBatch, key: H256) {
-        b.put_cf(&self.counter_cf, key, serialize_counter(0))
+        if let Some(counter_cf) = self.counter_cf {
+            b.put_cf(counter_cf, key, serialize_counter(0))
+        }
     }
     pub fn increase(&self, b: &mut WriteBatch, key: H256) {
-        b.merge_cf(&self.counter_cf, key, serialize_counter(1))
+        if let Some(counter_cf) = self.counter_cf {
+            b.merge_cf(counter_cf, key, serialize_counter(1))
+        }
     }
     pub fn decrease(&self, b: &mut WriteBatch, key: H256) {
-        b.merge_cf(&self.counter_cf, key, serialize_counter(-1))
+        if let Some(counter_cf) = self.counter_cf {
+            b.merge_cf(counter_cf, key, serialize_counter(-1))
+        }
     }
 }
 
@@ -80,14 +99,17 @@ pub type RocksHandle<'a, D> = CachedHandle<RocksDatabaseHandle<'a, D>>;
 impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
     // Insert value into db.
     // Check if value exist before, if not exist, increment child counter.
-    fn gc_insert_node(&self, key: H256, value: &[u8]) {
+    fn gc_insert_node<F>(&self, key: H256, value: &[u8], child_extractor: F)
+    where
+        F: FnMut(&[u8]) -> Vec<H256>,
+    {
         let db = self.db.db.borrow();
         let mut write_batch = WriteBatch::default();
         if db.get(key.as_ref()).unwrap().is_none() {
             let rlp = Rlp::new(&value);
             let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
             trace!("inserting node {}=>{:?}", key, node);
-            for hash in node.childs() {
+            for hash in ReachableHashes::collect(&node, child_extractor).childs() {
                 self.db.increase(&mut write_batch, hash);
             }
 
@@ -97,15 +119,19 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
         }
     }
     fn gc_count(&self, key: H256) -> usize {
-        let val: i64 = self
-            .db
-            .db
-            .borrow()
-            .get_cf(&self.db.counter_cf, key.as_ref())
-            .expect("Cannot request counter")
-            .map(|s| deserialize_counter(&s))
-            .unwrap_or_default();
-        val as usize
+        if let Some(counter_cf) = self.db.counter_cf {
+            let val: i64 = self
+                .db
+                .db
+                .borrow()
+                .get_cf(counter_cf, key.as_ref())
+                .expect("Cannot request counter")
+                .map(|s| deserialize_counter(&s))
+                .unwrap_or_default();
+            val as usize
+        } else {
+            2 // report two, to make sure that after decrement there still will be atleast one reference
+        }
     }
 
     // atomic operation:
@@ -114,7 +140,10 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
     // 3. find all childs
     // 4. decrease child counters
     // 5. return list of childs with counter == 0
-    fn gc_try_cleanup_node(&self, key: H256) -> Vec<H256> {
+    fn gc_try_cleanup_node<F>(&self, key: H256, child_extractor: F) -> Vec<H256>
+    where
+        F: FnMut(&[u8]) -> Vec<H256>,
+    {
         let db = self.db.db.borrow();
         let mut nodes = vec![];
 
@@ -129,8 +158,8 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
 
             let rlp = Rlp::new(&value);
             let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-            for hash in node.childs() {
-                if self.gc_count(hash) == 1 {
+            for hash in ReachableHashes::collect(&node, child_extractor).childs() {
+                if self.gc_count(hash) <= 1 {
                     nodes.push(hash);
                 }
                 self.db.decrease(&mut write_batch, hash);
@@ -219,11 +248,28 @@ impl<'a, D: Borrow<DB>> RocksMemoryTrieMut<'a, D> {
         }
     }
 
+    pub fn without_counter(db: D, root: H256) -> Self {
+        Self {
+            root,
+            change: Change::default(),
+            handle: RocksHandle::new(RocksDatabaseHandle::without_counter(db)),
+        }
+    }
+
     pub fn clear_cache(&mut self) {
         self.handle.clear_cache();
     }
 
-    pub fn apply(self) -> Result<H256, String> {
+    /// Apply changes to database
+    /// Explicitly ask for setting ignore_gc flag.
+    /// This will make sure
+    pub fn apply(self, ignore_gc: bool) -> Result<H256, String> {
+        if ignore_gc == self.handle.db.counter_cf.is_some() {
+            return Err(String::from(
+                "Gc settings for apply function differ from RocksdbHandle creation",
+            ));
+        }
+
         let db = self.handle.db.db.borrow();
 
         for key in self.change.removes {
@@ -254,6 +300,10 @@ mod tests {
     use super::*;
     use crate::impls::tests::{Data, K};
 
+    fn no_childs(_: &[u8]) -> Vec<H256> {
+        vec![]
+    }
+
     fn default_opts() -> Options {
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -274,7 +324,7 @@ mod tests {
         let db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
 
         let cf = db.cf_handle("counter").unwrap();
-        let mut triedb = RocksMemoryTrieMut::new(&db, crate::empty_trie_hash(), cf);
+        let mut triedb = RocksMemoryTrieMut::without_counter(&db, crate::empty_trie_hash());
         for (k, data) in kvs.iter() {
             triedb.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
         }
@@ -288,7 +338,7 @@ mod tests {
         }
 
         // reads after apply
-        let root = triedb.apply().unwrap();
+        let root = triedb.apply(true).unwrap();
         let triedb = RocksMemoryTrieMut::new(&db, root, cf);
         for k in kvs.keys() {
             assert_eq!(
@@ -339,17 +389,18 @@ mod tests {
         for (k, data) in kvs_1.iter() {
             triedb.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
         }
-        let root_1 = triedb.apply().unwrap();
+        let root_1 = triedb.apply(false).unwrap();
 
         let mut triedb = RocksMemoryTrieMut::new(&db, root_1, cf);
         for (k, data) in kvs_2.iter() {
             triedb.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
         }
-        let root_2 = triedb.apply().unwrap();
+        let root_2 = triedb.apply(false).unwrap();
 
         assert_ne!(root_1, root_2);
 
-        let triedb = RocksMemoryTrieMut::new(&db, root_2, cf);
+        // can read data from bd without counting references
+        let triedb = RocksMemoryTrieMut::without_counter(&db, root_2);
         for (k, data) in kvs_2
             .iter()
             .chain(kvs_1.iter().filter(|(k, _)| !kvs_2.contains_key(k)))
@@ -392,7 +443,7 @@ mod tests {
         trie.insert(key3, value3);
         let patch = trie.into_patch();
         assert_eq!(collection.database.gc_count(patch.root), 0);
-        let root = collection.apply_increase(patch);
+        let root = collection.apply_increase(patch, no_childs);
         assert_eq!(collection.database.gc_count(root), 0);
 
         // mark root for pass GC
@@ -404,7 +455,7 @@ mod tests {
         let node = collection.database.get(root);
         let rlp = Rlp::new(&node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-        let childs = node.childs();
+        let childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(childs.len(), 2); // "bb..", "ffaa", check test doc comments
 
         for child in &childs {
@@ -421,7 +472,7 @@ mod tests {
         let patch = trie.into_patch();
 
         assert_eq!(collection.database.gc_count(patch.root), 0);
-        let another_root = collection.apply_increase(patch);
+        let another_root = collection.apply_increase(patch, no_childs);
         assert_eq!(collection.database.gc_count(another_root), 0);
 
         // mark root for pass GC
@@ -431,7 +482,7 @@ mod tests {
         let node = collection.database.get(another_root);
         let rlp = Rlp::new(&node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-        let another_root_childs = node.childs();
+        let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(another_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
 
         let first_set: BTreeSet<_> = childs.into_iter().collect();
@@ -464,14 +515,14 @@ mod tests {
 
         let patch = trie.into_patch();
 
-        let latest_root = collection.apply_increase(patch);
+        let latest_root = collection.apply_increase(patch, no_childs);
 
         collection.database.gc_pin_root(latest_root);
 
         let node = collection.database.get(latest_root);
         let rlp = Rlp::new(&node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-        let latest_root_childs = node.childs();
+        let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(latest_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
 
         let latest_set: BTreeSet<_> = latest_root_childs.into_iter().collect();
@@ -497,12 +548,12 @@ mod tests {
 
         assert!(collection.database.gc_unpin_root(root));
 
-        let mut elems = collection.database.gc_cleanup_layer(&[root]);
+        let mut elems = collection.database.gc_cleanup_layer(&[root], no_childs);
         assert_eq!(elems.len(), 1);
         while !elems.is_empty() {
             // perform additional check, that all removed elements should be also removed from db.
             let cloned_elems = elems.clone();
-            elems = collection.database.gc_cleanup_layer(&elems);
+            elems = collection.database.gc_cleanup_layer(&elems, no_childs);
             for child in cloned_elems {
                 assert!(collection.database.db.db.get(&child).unwrap().is_none());
             }
@@ -557,7 +608,7 @@ mod tests {
             trie.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
 
             let patch = trie.into_patch();
-            root = collection.apply_increase(patch);
+            root = collection.apply_increase(patch, no_childs);
 
             if !roots.insert(root) {
                 collection.database.gc_pin_root(root);
@@ -569,9 +620,11 @@ mod tests {
             if stale_root == root {
                 continue;
             }
-            let mut elems = collection.database.gc_cleanup_layer(&[stale_root]);
+            let mut elems = collection
+                .database
+                .gc_cleanup_layer(&[stale_root], no_childs);
             while !elems.is_empty() {
-                elems = collection.database.gc_cleanup_layer(&elems);
+                elems = collection.database.gc_cleanup_layer(&elems, no_childs);
             }
         }
 
@@ -588,7 +641,7 @@ mod tests {
             let mut trie = collection.trie_for(root);
             trie.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
             let patch = trie.into_patch();
-            root = collection.apply_increase(patch);
+            root = collection.apply_increase(patch, no_childs);
         }
 
         let trie = collection.trie_for(root);

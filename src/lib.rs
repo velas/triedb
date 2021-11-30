@@ -93,12 +93,12 @@ impl Change {
 
     /// Merge another change to this change.
     pub fn merge(&mut self, other: &Change) {
-        for (key, value) in &other.adds {
-            self.add_raw(*key, value.clone());
-        }
-
         for v in &other.removes {
             self.remove_raw(*v);
+        }
+
+        for (key, value) in &other.adds {
+            self.add_raw(*key, value.clone());
         }
     }
 }

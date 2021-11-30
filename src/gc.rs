@@ -1,10 +1,73 @@
-use crate::{delete, get, insert, Change, Database, TrieMut};
+use crate::merkle::MerkleValue;
+use crate::{
+    cache::CachedHandle, delete, get, insert, CachedDatabaseHandle, Change, Database, TrieMut,
+};
+
+use crate::MerkleNode;
+use dashmap::{mapref::entry::Entry, DashMap};
+use derivative::Derivative;
+use log::*;
 use primitive_types::H256;
+use rlp::Rlp;
+use std::collections::HashMap;
+
+#[derive(Derivative)]
+#[derivative(Debug)]
+pub struct ReachableHashes<F> {
+    childs: Vec<H256>,
+    #[derivative(Debug = "ignore")]
+    child_extractor: F,
+}
+
+impl<F> ReachableHashes<F>
+where
+    F: FnMut(&[u8]) -> Vec<H256>,
+{
+    pub fn collect(merkle_node: &MerkleNode, child_extractor: F) -> Self {
+        let mut this = Self {
+            childs: Default::default(),
+            child_extractor,
+        };
+        this.process_node(merkle_node);
+        this
+    }
+
+    fn process_node(&mut self, merkle_node: &MerkleNode) {
+        match merkle_node {
+            MerkleNode::Leaf(_, d) => self.childs.extend_from_slice(&(self.child_extractor)(*d)),
+            MerkleNode::Extension(_, merkle_value) => {
+                self.process_value(merkle_value);
+            }
+            MerkleNode::Branch(merkle_values, data) => {
+                if let Some(d) = data {
+                    self.childs.extend_from_slice(&(self.child_extractor)(*d))
+                }
+                for merkle_value in merkle_values {
+                    self.process_value(merkle_value);
+                }
+            }
+        }
+    }
+
+    fn process_value(&mut self, merkle_value: &MerkleValue) {
+        match merkle_value {
+            MerkleValue::Empty => {}
+            MerkleValue::Full(merkle_node) => self.process_node(merkle_node),
+            MerkleValue::Hash(hash) => self.childs.push(*hash),
+        }
+    }
+
+    pub fn childs(self) -> Vec<H256> {
+        self.childs
+    }
+}
 
 pub trait DbCounter {
     // Insert value into db.
     // Check if value exist before, if not exist, increment child counter.
-    fn gc_insert_node(&self, key: H256, value: &[u8]);
+    fn gc_insert_node<F>(&self, key: H256, value: &[u8], child_extractor: F)
+    where
+        F: FnMut(&[u8]) -> Vec<H256>;
 
     // atomic operation:
     // 1. check if key counter didn't increment in other thread.
@@ -12,7 +75,9 @@ pub trait DbCounter {
     // 3. find all childs
     // 4. decrease child counters
     // 5. return list of childs with counter == 0
-    fn gc_try_cleanup_node(&self, key: H256) -> Vec<H256>;
+    fn gc_try_cleanup_node<F>(&self, key: H256, child_extractor: F) -> Vec<H256>
+    where
+        F: FnMut(&[u8]) -> Vec<H256>;
 
     // increase root link count
     fn gc_pin_root(&self, root: H256);
@@ -31,10 +96,13 @@ pub trait DbCounter {
     // 1. checks if removes counter == 0.
     // 2. if it == 0 remove from database, and decrement child counters.
     // 3. return list of childs with counter == 0
-    fn gc_cleanup_layer(&mut self, removes: &[H256]) -> Vec<H256> {
+    fn gc_cleanup_layer<F>(&mut self, removes: &[H256], mut child_extractor: F) -> Vec<H256>
+    where
+        F: FnMut(&[u8]) -> Vec<H256>,
+    {
         let mut result = Vec::new();
         for remove in removes {
-            result.extend_from_slice(&self.gc_try_cleanup_node(*remove))
+            result.extend_from_slice(&self.gc_try_cleanup_node(*remove, &mut child_extractor))
         }
         result
     }
@@ -58,19 +126,17 @@ impl<D: DbCounter> TrieCollection<D> {
     }
 
     // Apply changes and only increase child counters
-    pub fn apply_increase(
+    pub fn apply_increase<F>(
         &mut self,
         DatabaseTrieMutPatch { root, change }: DatabaseTrieMutPatch,
-    ) -> H256 {
+        mut child_extractor: F,
+    ) -> H256
+    where
+        F: FnMut(&[u8]) -> Vec<H256>,
+    {
         for (key, value) in change.adds {
-            self.database.gc_insert_node(key, &value);
-            // self.database.set(key, Some(&value));
-            // let rlp = Rlp::new(&value);
-            // let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-
-            // for hash in node.childs() {
-            //     self.counter.increase(hash); // TODO: pass count as argument
-            // }
+            self.database
+                .gc_insert_node(key, &value, &mut child_extractor);
         }
         root
     }
@@ -82,6 +148,7 @@ pub struct DatabaseTrieMut<'a, D> {
     root: H256,
 }
 
+#[derive(Default)]
 pub struct DatabaseTrieMutPatch {
     pub root: H256,
     pub change: Change,
@@ -130,122 +197,125 @@ impl<'a, D> DatabaseTrieMut<'a, D> {
     }
 }
 
+#[derive(Default)]
+pub struct MapWithCounter {
+    counter: DashMap<H256, usize>,
+    data: DashMap<H256, Vec<u8>>,
+}
+impl MapWithCounter {
+    fn increase(&self, key: H256) -> usize {
+        self.counter
+            .entry(key)
+            .and_modify(|count| {
+                *count += 1;
+            })
+            .or_insert(1);
+        trace!("{} count++ is {}", key, *self.counter.get(&key).unwrap());
+        *self.counter.get(&key).unwrap()
+    }
+    fn decrease(&self, key: H256) -> usize {
+        let count = match self.counter.entry(key) {
+            Entry::Vacant(_) => unreachable!(),
+            Entry::Occupied(entry) if *entry.get() <= 1 => {
+                entry.remove();
+                0
+            }
+            Entry::Occupied(mut entry) => {
+                *entry.get_mut() -= 1;
+                *entry.get()
+            }
+        };
+        trace!("{} count-- is {}", key, count);
+        count
+    }
+}
+
+pub type MapWithCounterCached = CachedHandle<MapWithCounter>;
+
+impl DbCounter for MapWithCounterCached {
+    // Insert value into db.
+    // Check if value exist before, if not exist, increment child counter.
+    fn gc_insert_node<F>(&self, key: H256, value: &[u8], child_extractor: F)
+    where
+        F: FnMut(&[u8]) -> Vec<H256>,
+    {
+        match self.db.data.entry(key) {
+            Entry::Occupied(_) => {}
+            Entry::Vacant(v) => {
+                let rlp = Rlp::new(&value);
+                let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                trace!("inserting node {}=>{:?}", key, node);
+                for hash in ReachableHashes::collect(&node, child_extractor).childs() {
+                    self.db.increase(hash);
+                }
+                v.insert(value.to_vec());
+            }
+        };
+    }
+    fn gc_count(&self, key: H256) -> usize {
+        self.db.counter.get(&key).map(|v| *v).unwrap_or_default()
+    }
+
+    // atomic operation:
+    // 1. check if key counter didn't increment in other thread.
+    // 2. remove key if counter == 0.
+    // 3. find all childs
+    // 4. decrease child counters
+    // 5. return list of childs with counter == 0
+    fn gc_try_cleanup_node<F>(&self, key: H256, child_extractor: F) -> Vec<H256>
+    where
+        F: FnMut(&[u8]) -> Vec<H256>,
+    {
+        match self.db.data.entry(key) {
+            Entry::Occupied(entry) => {
+                // in this code we lock data, so it's okay to check counter from separate function
+                if self.gc_count(key) == 0 {
+                    let value = entry.remove();
+                    let rlp = Rlp::new(&value);
+                    let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                    return ReachableHashes::collect(&node, child_extractor)
+                        .childs()
+                        .into_iter()
+                        .filter(|k| self.db.decrease(*k) == 0)
+                        .collect();
+                }
+            }
+            Entry::Vacant(_) => {}
+        };
+        vec![]
+    }
+
+    fn gc_pin_root(&self, key: H256) {
+        self.db.increase(key);
+    }
+
+    fn gc_unpin_root(&self, key: H256) -> bool {
+        self.db.decrease(key) == 0
+    }
+}
+
+impl CachedDatabaseHandle for MapWithCounter {
+    fn get(&self, key: H256) -> Vec<u8> {
+        self.data.get(&key).unwrap().clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeSet, HashMap};
 
-    use dashmap::{mapref::entry::Entry, DashMap};
-
     use crate::MerkleNode;
-    use log::*;
     use rlp::Rlp;
 
     use quickcheck::TestResult;
     use quickcheck_macros::quickcheck;
 
     use super::*;
-    use crate::{
-        cache::CachedHandle,
-        impls::tests::{Data, K},
-        CachedDatabaseHandle,
-    };
+    use crate::impls::tests::{Data, K};
     use hex_literal::hex;
 
-    #[derive(Default)]
-    struct MapWithCounter {
-        counter: DashMap<H256, usize>,
-        data: DashMap<H256, Vec<u8>>,
-    }
-    impl MapWithCounter {
-        fn increase(&self, key: H256) -> usize {
-            self.counter
-                .entry(key)
-                .and_modify(|count| {
-                    *count += 1;
-                })
-                .or_insert(1);
-            trace!("{} count++ is {}", key, *self.counter.get(&key).unwrap());
-            *self.counter.get(&key).unwrap()
-        }
-        fn decrease(&self, key: H256) -> usize {
-            let count = match self.counter.entry(key) {
-                Entry::Vacant(_) => unreachable!(),
-                Entry::Occupied(entry) if *entry.get() <= 1 => {
-                    entry.remove();
-                    0
-                }
-                Entry::Occupied(mut entry) => {
-                    *entry.get_mut() -= 1;
-                    *entry.get()
-                }
-            };
-            trace!("{} count-- is {}", key, count);
-            count
-        }
-    }
-
-    type MapWithCounterCached = CachedHandle<MapWithCounter>;
-
-    impl DbCounter for MapWithCounterCached {
-        // Insert value into db.
-        // Check if value exist before, if not exist, increment child counter.
-        fn gc_insert_node(&self, key: H256, value: &[u8]) {
-            match self.db.data.entry(key) {
-                Entry::Occupied(_) => {}
-                Entry::Vacant(v) => {
-                    let rlp = Rlp::new(&value);
-                    let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-                    trace!("inserting node {}=>{:?}", key, node);
-                    for hash in node.childs() {
-                        self.db.increase(hash);
-                    }
-                    v.insert(value.to_vec());
-                }
-            };
-        }
-        fn gc_count(&self, key: H256) -> usize {
-            self.db.counter.get(&key).map(|v| *v).unwrap_or_default()
-        }
-
-        // atomic operation:
-        // 1. check if key counter didn't increment in other thread.
-        // 2. remove key if counter == 0.
-        // 3. find all childs
-        // 4. decrease child counters
-        // 5. return list of childs with counter == 0
-        fn gc_try_cleanup_node(&self, key: H256) -> Vec<H256> {
-            match self.db.data.entry(key) {
-                Entry::Occupied(entry) => {
-                    // in this code we lock data, so it's okay to check counter from separate function
-                    if self.gc_count(key) == 0 {
-                        let value = entry.remove();
-                        let rlp = Rlp::new(&value);
-                        let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-                        return node
-                            .childs()
-                            .into_iter()
-                            .filter(|k| self.db.decrease(*k) == 0)
-                            .collect();
-                    }
-                }
-                Entry::Vacant(_) => {}
-            };
-            vec![]
-        }
-
-        fn gc_pin_root(&self, key: H256) {
-            self.db.increase(key);
-        }
-
-        fn gc_unpin_root(&self, key: H256) -> bool {
-            self.db.decrease(key) == 0
-        }
-    }
-
-    impl CachedDatabaseHandle for MapWithCounter {
-        fn get(&self, key: H256) -> Vec<u8> {
-            self.data.get(&key).unwrap().clone()
-        }
+    fn no_childs(_: &[u8]) -> Vec<H256> {
+        vec![]
     }
 
     // Visualisation of the next tree::
@@ -297,7 +367,7 @@ mod tests {
         trie.insert(key3, value3);
         let patch = trie.into_patch();
         assert_eq!(collection.database.gc_count(patch.root), 0);
-        let root = collection.apply_increase(patch);
+        let root = collection.apply_increase(patch, no_childs);
         assert_eq!(collection.database.gc_count(root), 0);
 
         // mark root for pass GC
@@ -309,7 +379,7 @@ mod tests {
         let node = collection.database.get(root);
         let rlp = Rlp::new(&node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-        let childs = node.childs();
+        let childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(childs.len(), 2); // "bb..", "ffaa", check test doc comments
 
         for child in &childs {
@@ -326,7 +396,7 @@ mod tests {
         let patch = trie.into_patch();
 
         assert_eq!(collection.database.gc_count(patch.root), 0);
-        let another_root = collection.apply_increase(patch);
+        let another_root = collection.apply_increase(patch, no_childs);
         assert_eq!(collection.database.gc_count(another_root), 0);
 
         // mark root for pass GC
@@ -336,7 +406,7 @@ mod tests {
         let node = collection.database.get(another_root);
         let rlp = Rlp::new(&node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-        let another_root_childs = node.childs();
+        let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(another_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
 
         let first_set: BTreeSet<_> = childs.into_iter().collect();
@@ -369,14 +439,14 @@ mod tests {
 
         let patch = trie.into_patch();
 
-        let latest_root = collection.apply_increase(patch);
+        let latest_root = collection.apply_increase(patch, no_childs);
 
         collection.database.gc_pin_root(latest_root);
 
         let node = collection.database.get(latest_root);
         let rlp = Rlp::new(&node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-        let latest_root_childs = node.childs();
+        let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(latest_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
 
         let latest_set: BTreeSet<_> = latest_root_childs.into_iter().collect();
@@ -402,12 +472,12 @@ mod tests {
 
         assert!(collection.database.gc_unpin_root(root));
 
-        let mut elems = collection.database.gc_cleanup_layer(&[root]);
+        let mut elems = collection.database.gc_cleanup_layer(&[root], no_childs);
         assert_eq!(elems.len(), 1);
         while !elems.is_empty() {
             // perform additional check, that all removed elements should be also removed from db.
             let cloned_elems = elems.clone();
-            elems = collection.database.gc_cleanup_layer(&elems);
+            elems = collection.database.gc_cleanup_layer(&elems, no_childs);
             for child in cloned_elems {
                 assert!(collection.database.db.data.get(&child).is_none());
             }
@@ -455,7 +525,7 @@ mod tests {
             trie.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
 
             let patch = trie.into_patch();
-            root = collection.apply_increase(patch);
+            root = collection.apply_increase(patch, no_childs);
 
             if !roots.insert(root) {
                 collection.database.gc_pin_root(root);
@@ -473,9 +543,11 @@ mod tests {
             if stale_root == root {
                 continue;
             }
-            let mut elems = collection.database.gc_cleanup_layer(&[stale_root]);
+            let mut elems = collection
+                .database
+                .gc_cleanup_layer(&[stale_root], no_childs);
             while !elems.is_empty() {
-                elems = collection.database.gc_cleanup_layer(&elems);
+                elems = collection.database.gc_cleanup_layer(&elems, no_childs);
             }
         }
 
@@ -498,7 +570,7 @@ mod tests {
             let mut trie = collection.trie_for(root);
             trie.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
             let patch = trie.into_patch();
-            root = collection.apply_increase(patch);
+            root = collection.apply_increase(patch, no_childs);
         }
 
         let trie = collection.trie_for(root);
