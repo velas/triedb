@@ -41,7 +41,7 @@ pub trait DbCounter {
 }
 
 pub struct TrieCollection<D> {
-    database: D,
+    pub(crate) database: D,
 }
 
 impl<D: DbCounter> TrieCollection<D> {
@@ -83,8 +83,8 @@ pub struct DatabaseTrieMut<'a, D> {
 }
 
 pub struct DatabaseTrieMutPatch {
-    root: H256,
-    change: Change,
+    pub root: H256,
+    pub change: Change,
 }
 
 // TODO: impl DatabaseMut for DatabaseTrieMut and lookup changes before database
