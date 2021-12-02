@@ -53,6 +53,29 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         }
         Ok(())
     }
+
+    pub fn increase_atomic(&self, key: H256) -> Result<(), rocksdb_lib::Error>
+    where
+        D: Borrow<DB>,
+    {
+        if let Some(counter_cf) = self.counter_cf {
+            self.db
+                .borrow()
+                .merge_cf(counter_cf, &key.as_ref(), &&serialize_counter(1))?
+        }
+        Ok(())
+    }
+    pub fn decrease_atomic(&self, key: H256) -> Result<(), rocksdb_lib::Error>
+    where
+        D: Borrow<DB>,
+    {
+        if let Some(counter_cf) = self.counter_cf {
+            self.db
+                .borrow()
+                .merge_cf(counter_cf, &key.as_ref(), &&serialize_counter(-1))?
+        }
+        Ok(())
+    }
     pub fn increase(&self, b: &mut Transaction<DB>, key: H256) -> Result<(), rocksdb_lib::Error> {
         if let Some(counter_cf) = self.counter_cf {
             b.merge_cf(counter_cf, &key.as_ref(), &&serialize_counter(1))?
