@@ -104,23 +104,16 @@ fn deserialize_counter(counter: &[u8]) -> i64 {
     i64::from_le_bytes(bytes)
 }
 
-impl<'a, D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandle<'a, D> {
-    fn get(&self, key: H256) -> Vec<u8> {
-        self.db
-            .borrow()
-            .get(key.as_ref())
-            .expect("Error on reading database")
-            .unwrap_or_else(|| panic!("Value for {} not found in database", key))
-    }
-}
-
 macro_rules! retry {
     {$($tokens:tt)*} => {
+        {
+
+        const NUM_RETRY: usize = 3;
+        #[allow(unused_mut)]
         let mut retry = move || -> Result<_, anyhow::Error> {
             let result = { $($tokens)* };
             Ok(result)
         };
-        const NUM_RETRY: usize = 3;
         let mut e = None; //use option because rust think that this variable can be uninit
         for _ in 0..NUM_RETRY {
             e = Some(retry());
@@ -132,9 +125,22 @@ macro_rules! retry {
         }
         e.unwrap()
          .expect(&format!("Failed to retry operation for {} times", NUM_RETRY))
-
+        }
     };
 }
+
+impl<'a, D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandle<'a, D> {
+    fn get(&self, key: H256) -> Vec<u8> {
+        let res = retry! {
+            self.db
+            .borrow()
+            .get(key.as_ref())
+                .map_err(|e| anyhow::format_err!("Cannot get key {}", e))?
+        };
+        res.unwrap_or_else(|| panic!("Value for {} not found in database", key))
+    }
+}
+
 pub type RocksHandle<'a, D> = CachedHandle<RocksDatabaseHandle<'a, D>>;
 
 impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
