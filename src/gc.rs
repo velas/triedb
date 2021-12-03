@@ -95,7 +95,7 @@ pub trait DbCounter {
     // 1. checks if removes counter == 0.
     // 2. if it == 0 remove from database, and decrement child counters.
     // 3. return list of childs with counter == 0
-    fn gc_cleanup_layer<F>(&mut self, removes: &[H256], mut child_extractor: F) -> Vec<H256>
+    fn gc_cleanup_layer<F>(&self, removes: &[H256], mut child_extractor: F) -> Vec<H256>
     where
         F: FnMut(&[u8]) -> Vec<H256>,
     {
@@ -126,7 +126,7 @@ impl<D: DbCounter> TrieCollection<D> {
 
     // Apply changes and only increase child counters
     pub fn apply_increase<F>(
-        &mut self,
+        &self,
         DatabaseTrieMutPatch { root, change }: DatabaseTrieMutPatch,
         mut child_extractor: F,
     ) -> H256
@@ -300,14 +300,20 @@ impl CachedDatabaseHandle for MapWithCounter {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::collections::{BTreeSet, HashMap};
 
-    use crate::MerkleNode;
+    use crate::{
+        merkle::nibble::{into_key, Nibble},
+        MerkleNode,
+    };
     use rlp::Rlp;
 
     use quickcheck::TestResult;
     use quickcheck_macros::quickcheck;
+
+    use quickcheck::{Arbitrary, Gen};
+    use serde::{Deserialize, Serialize};
 
     use super::*;
     use crate::impls::tests::{Data, K};
@@ -315,6 +321,44 @@ mod tests {
 
     fn no_childs(_: &[u8]) -> Vec<H256> {
         vec![]
+    }
+
+    /// short fixed lenght key, with 4 nimbles
+    /// To simplify fuzzying each nimble is one of [0,3,7,b,f]
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+    pub struct Key(pub [u8; 4]);
+
+    impl Arbitrary for Key {
+        fn arbitrary(g: &mut Gen) -> Self {
+            let nibble: Vec<_> = std::iter::from_fn(|| {
+                g.choose(&[Nibble::N0, Nibble::N3, Nibble::N7, Nibble::N11, Nibble::N15])
+                    .copied()
+            })
+            .take(8)
+            .collect();
+            let mut key = [0; 4];
+
+            let vec_data = into_key(&nibble);
+            assert_eq!(key.len(), vec_data.len());
+            key.copy_from_slice(&vec_data);
+
+            Self(key)
+        }
+    }
+
+    /// RLP encoded data should be more or equal 32 bytes, this prevent node data to be inlined.
+    /// There is two kind of datas, 1st byte == 0xff and == 0x00, remaining always stay 0x00
+    #[derive(Clone, PartialEq, Serialize, Deserialize, Eq, Debug)]
+    pub struct FixedData(pub [u8; 32]);
+
+    impl Arbitrary for FixedData {
+        fn arbitrary(g: &mut Gen) -> Self {
+            let mut fixed = [0; 32]; // increase possibility of conflict.
+            if <bool>::arbitrary(g) {
+                fixed[0] = 0xff
+            }
+            Self(fixed)
+        }
     }
 
     // Visualisation of the next tree::
@@ -358,7 +402,7 @@ mod tests {
         let value3_1 = b"changed data_____________________";
         let value2_1 = b"changed data_____________________";
 
-        let mut collection = TrieCollection::new(MapWithCounterCached::default());
+        let collection = TrieCollection::new(MapWithCounterCached::default());
 
         let mut trie = collection.trie_for(crate::empty_trie_hash());
         trie.insert(key1, value1);
@@ -467,6 +511,15 @@ mod tests {
             assert_eq!(collection.database.gc_count(**child), 2);
         }
 
+        // Check rootguard cleanup;
+        let guard = RootGuard::new(&collection.database, root, no_childs);
+
+        // ensure that we have two references now
+        assert!(!collection.database.gc_unpin_root(root));
+        // return back
+        collection.database.gc_pin_root(root);
+        drop(guard); // after drop manual unpin should free latest reference.
+
         // TRY cleanup first root.
 
         assert!(collection.database.gc_unpin_root(root));
@@ -506,6 +559,133 @@ mod tests {
         }
     }
 
+    pub struct RootGuard<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> {
+        pub root: H256,
+        db: &'a D,
+        child_collector: F,
+    }
+    impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> RootGuard<'a, D, F> {
+        pub fn new(db: &'a D, root: H256, child_collector: F) -> Self {
+            db.gc_pin_root(root);
+            Self {
+                db,
+                root,
+                child_collector,
+            }
+        }
+    }
+
+    impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> Drop for RootGuard<'a, D, F> {
+        fn drop(&mut self) {
+            if self.db.gc_unpin_root(self.root) {
+                let mut elems = self
+                    .db
+                    .gc_cleanup_layer(&[self.root], &mut self.child_collector);
+
+                while !elems.is_empty() {
+                    elems = self.db.gc_cleanup_layer(&elems, &mut self.child_collector);
+                }
+            }
+        }
+    }
+
+    #[quickcheck]
+    fn qc_handles_several_key_changes(
+        kvs_1: HashMap<Key, FixedData>,
+        kvs_2: HashMap<Key, FixedData>,
+    ) -> TestResult {
+        if kvs_1.is_empty() || kvs_2.is_empty() {
+            return TestResult::discard();
+        }
+        let collection = TrieCollection::new(MapWithCounterCached::default());
+
+        let mut root = crate::empty_trie_hash();
+        let mut roots = Vec::new();
+
+        for (k, data) in kvs_1.iter() {
+            let mut trie = collection.trie_for(root);
+            trie.insert(&k.0, &data.0);
+
+            let patch = trie.into_patch();
+            root = collection.apply_increase(patch, no_childs);
+
+            roots.push(RootGuard::new(&collection.database, root, no_childs));
+        }
+        println!(
+            "db_size_before_cleanup = {}\n\
+            counters = {}",
+            collection.database.db.data.len(),
+            collection.database.db.counter.len()
+        );
+        let last_root_guard = roots.pop().unwrap();
+
+        // perform cleanup of all intermediate roots
+        for stale_root in roots {
+            drop(stale_root);
+        }
+
+        println!(
+            "db_size_after_cleanup = {}\n\
+            counters = {}",
+            collection.database.db.data.len(),
+            collection.database.db.counter.len()
+        );
+
+        // expect for kvs to be available
+        let trie = collection.trie_for(root);
+        for k in kvs_1.keys() {
+            assert_eq!(&kvs_1[k].0[..], &TrieMut::get(&trie, &k.0).unwrap());
+        }
+
+        let mut roots = Vec::new();
+
+        for (k, data) in kvs_2.iter() {
+            let mut trie = collection.trie_for(root);
+            trie.insert(&k.0, &data.0);
+            let patch = trie.into_patch();
+            root = collection.apply_increase(patch, no_childs);
+            roots.push(RootGuard::new(&collection.database, root, no_childs));
+        }
+
+        let second_collection_root_guard = roots.pop().unwrap();
+        // perform cleanup of all intermediate roots
+        for stale_root in roots {
+            drop(stale_root);
+        }
+
+        let trie = collection.trie_for(last_root_guard.root);
+        for k in kvs_1.keys() {
+            assert_eq!(&kvs_1[k].0[..], &TrieMut::get(&trie, &k.0).unwrap());
+        }
+
+        let trie = collection.trie_for(second_collection_root_guard.root);
+        for k in kvs_2.keys() {
+            assert_eq!(&kvs_2[k].0[..], &TrieMut::get(&trie, &k.0).unwrap());
+        }
+
+        println!(
+            "db_size_with_two_colelctions = {}\n\
+            counters = {}",
+            collection.database.db.data.len(),
+            collection.database.db.counter.len()
+        );
+
+        drop(last_root_guard);
+        drop(second_collection_root_guard);
+
+        println!(
+            "db_size_after_all_cleanup = {}\n\
+            counters = {}",
+            collection.database.db.data.len(),
+            collection.database.db.counter.len()
+        );
+
+        assert_eq!(collection.database.db.data.len(), 0);
+        assert_eq!(collection.database.db.counter.len(), 0);
+
+        TestResult::passed()
+    }
+
     #[quickcheck]
     fn qc_handles_several_roots_via_gc(
         kvs_1: HashMap<K, Data>,
@@ -514,7 +694,7 @@ mod tests {
         if kvs_1.is_empty() || kvs_2.is_empty() {
             return TestResult::discard();
         }
-        let mut collection = TrieCollection::new(MapWithCounterCached::default());
+        let collection = TrieCollection::new(MapWithCounterCached::default());
 
         let mut root = crate::empty_trie_hash();
         let mut roots = BTreeSet::new();

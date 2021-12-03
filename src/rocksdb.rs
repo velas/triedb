@@ -42,14 +42,13 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         }
     }
 
-    // mark counter as zero, to make write batch conflict
     pub fn remove_counter(
         &self,
         b: &mut Transaction<DB>,
         key: H256,
     ) -> Result<(), rocksdb_lib::Error> {
         if let Some(counter_cf) = self.counter_cf {
-            b.put_cf(counter_cf, key, serialize_counter(0))?
+            b.delete_cf(counter_cf, &key)?
         }
         Ok(())
     }
@@ -495,8 +494,7 @@ mod tests {
 
         let cf = db.cf_handle("counter").unwrap();
 
-        let mut collection =
-            TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
+        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
 
         let mut trie = collection.trie_for(crate::empty_trie_hash());
         trie.insert(key1, value1);
@@ -644,6 +642,92 @@ mod tests {
         }
     }
 
+    use crate::gc::tests::{FixedData, Key, RootGuard};
+
+    #[quickcheck]
+    fn qc_handles_several_key_changes(
+        kvs_1: HashMap<Key, FixedData>,
+        kvs_2: HashMap<Key, FixedData>,
+    ) -> TestResult {
+        if kvs_1.is_empty() || kvs_2.is_empty() {
+            return TestResult::discard();
+        }
+
+        let dir = tempdir().unwrap();
+        let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
+        let db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
+
+        let cf = db.cf_handle("counter").unwrap();
+
+        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
+
+        let mut root = crate::empty_trie_hash();
+        let mut roots = Vec::new();
+
+        for (k, data) in kvs_1.iter() {
+            let mut trie = collection.trie_for(root);
+            trie.insert(&k.0, &data.0);
+
+            let patch = trie.into_patch();
+            root = collection.apply_increase(patch, no_childs);
+
+            roots.push(RootGuard::new(&collection.database, root, no_childs));
+        }
+
+        let last_root_guard = roots.pop().unwrap();
+
+        // perform cleanup of all intermediate roots
+        for stale_root in roots {
+            drop(stale_root);
+        }
+
+        // expect for kvs to be available
+        let trie = collection.trie_for(root);
+        for k in kvs_1.keys() {
+            assert_eq!(&kvs_1[k].0[..], &TrieMut::get(&trie, &k.0).unwrap());
+        }
+
+        let mut roots = Vec::new();
+
+        for (k, data) in kvs_2.iter() {
+            let mut trie = collection.trie_for(root);
+            trie.insert(&k.0, &data.0);
+            let patch = trie.into_patch();
+            root = collection.apply_increase(patch, no_childs);
+            roots.push(RootGuard::new(&collection.database, root, no_childs));
+        }
+
+        let second_collection_root_guard = roots.pop().unwrap();
+        // perform cleanup of all intermediate roots
+        for stale_root in roots {
+            drop(stale_root);
+        }
+
+        let trie = collection.trie_for(last_root_guard.root);
+        for k in kvs_1.keys() {
+            assert_eq!(&kvs_1[k].0[..], &TrieMut::get(&trie, &k.0).unwrap());
+        }
+
+        let trie = collection.trie_for(second_collection_root_guard.root);
+        for k in kvs_2.keys() {
+            assert_eq!(&kvs_2[k].0[..], &TrieMut::get(&trie, &k.0).unwrap());
+        }
+
+        drop(last_root_guard);
+        drop(second_collection_root_guard);
+
+        use rocksdb_lib::IteratorMode;
+        assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
+
+        println!("Debug cf");
+        for (k, v) in db.iterator_cf(cf, IteratorMode::Start) {
+            println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
+        }
+        assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);
+
+        TestResult::passed()
+    }
+
     #[quickcheck]
     fn qc_handles_several_roots_via_gc(
         kvs_1: HashMap<K, Data>,
@@ -658,8 +742,7 @@ mod tests {
 
         let cf = db.cf_handle("counter").unwrap();
 
-        let mut collection =
-            TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
+        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
 
         let mut root = crate::empty_trie_hash();
         let mut roots = BTreeSet::new();
