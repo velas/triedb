@@ -304,6 +304,7 @@ pub mod tests {
     use std::collections::{BTreeSet, HashMap};
 
     use crate::{
+        empty_trie_hash,
         merkle::nibble::{into_key, Nibble},
         MerkleNode,
     };
@@ -326,7 +327,7 @@ pub mod tests {
     /// short fixed lenght key, with 4 nimbles
     /// To simplify fuzzying each nimble is one of [0,3,7,b,f]
     #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-    pub struct Key(pub [u8; 4]);
+    pub struct Key(pub [u8; 2]);
 
     impl Arbitrary for Key {
         fn arbitrary(g: &mut Gen) -> Self {
@@ -334,9 +335,9 @@ pub mod tests {
                 g.choose(&[Nibble::N0, Nibble::N3, Nibble::N7, Nibble::N11, Nibble::N15])
                     .copied()
             })
-            .take(8)
+            .take(4)
             .collect();
-            let mut key = [0; 4];
+            let mut key = [0; 2];
 
             let vec_data = into_key(&nibble);
             assert_eq!(key.len(), vec_data.len());
@@ -348,7 +349,7 @@ pub mod tests {
 
     /// RLP encoded data should be more or equal 32 bytes, this prevent node data to be inlined.
     /// There is two kind of datas, 1st byte == 0xff and == 0x00, remaining always stay 0x00
-    #[derive(Clone, PartialEq, Serialize, Deserialize, Eq, Debug)]
+    #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Eq, Debug)]
     pub struct FixedData(pub [u8; 32]);
 
     impl Arbitrary for FixedData {
@@ -566,7 +567,9 @@ pub mod tests {
     }
     impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> RootGuard<'a, D, F> {
         pub fn new(db: &'a D, root: H256, child_collector: F) -> Self {
-            db.gc_pin_root(root);
+            if root != empty_trie_hash!() {
+                db.gc_pin_root(root);
+            }
             Self {
                 db,
                 root,
@@ -577,6 +580,9 @@ pub mod tests {
 
     impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> Drop for RootGuard<'a, D, F> {
         fn drop(&mut self) {
+            if self.root == empty_trie_hash!() {
+                return;
+            }
             if self.db.gc_unpin_root(self.root) {
                 let mut elems = self
                     .db

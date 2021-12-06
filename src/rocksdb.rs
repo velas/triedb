@@ -53,6 +53,19 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         Ok(())
     }
 
+    pub fn create_counter(
+        &self,
+        b: &mut Transaction<DB>,
+        key: H256,
+    ) -> Result<(), rocksdb_lib::Error> {
+        if let Some(counter_cf) = self.counter_cf {
+            if b.get_for_update_cf(counter_cf, &key, EXCLUSIVE)?.is_none() {
+                b.put_cf(counter_cf, &key, &serialize_counter(0))?
+            }
+        }
+        Ok(())
+    }
+
     pub fn increase_atomic(&self, key: H256) -> Result<(), rocksdb_lib::Error>
     where
         D: Borrow<DB>,
@@ -60,7 +73,7 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         if let Some(counter_cf) = self.counter_cf {
             self.db
                 .borrow()
-                .merge_cf(counter_cf, &key.as_ref(), &&serialize_counter(1))?
+                .merge_cf(counter_cf, &key.as_ref(), &serialize_counter(1))?
         }
         Ok(())
     }
@@ -71,19 +84,19 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         if let Some(counter_cf) = self.counter_cf {
             self.db
                 .borrow()
-                .merge_cf(counter_cf, &key.as_ref(), &&serialize_counter(-1))?
+                .merge_cf(counter_cf, &key.as_ref(), &serialize_counter(-1))?
         }
         Ok(())
     }
     pub fn increase(&self, b: &mut Transaction<DB>, key: H256) -> Result<(), rocksdb_lib::Error> {
         if let Some(counter_cf) = self.counter_cf {
-            b.merge_cf(counter_cf, &key.as_ref(), &&serialize_counter(1))?
+            b.merge_cf(counter_cf, &key.as_ref(), &serialize_counter(1))?
         }
         Ok(())
     }
     pub fn decrease(&self, b: &mut Transaction<DB>, key: H256) -> Result<(), rocksdb_lib::Error> {
         if let Some(counter_cf) = self.counter_cf {
-            b.merge_cf(counter_cf, &key.as_ref(), &&serialize_counter(-1))?
+            b.merge_cf(counter_cf, &key.as_ref(), &serialize_counter(-1))?
         }
         Ok(())
     }
@@ -136,6 +149,7 @@ impl<'a, D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandle<'a, D> {
     }
 }
 
+/// Retry is used because optimistic transactions can fail if other thread change some value.
 macro_rules! retry {
     {$($tokens:tt)*} => {
         let mut retry = move || -> Result<_, anyhow::Error> {
@@ -183,6 +197,7 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
                 }
 
                 tx.put(key.as_ref(), value)?;
+                self.db.create_counter(&mut tx, key)?;
                 tx.commit()?;
             }
         }
@@ -348,6 +363,7 @@ impl<'a, D: Borrow<DB>> RocksMemoryTrieMut<'a, D> {
 mod tests {
     use std::collections::{BTreeSet, HashMap, HashSet};
 
+    use crate::empty_trie_hash;
     use crate::gc::TrieCollection;
     use crate::merkle::MerkleNode;
     use hex_literal::hex;
@@ -355,9 +371,11 @@ mod tests {
     use quickcheck_macros::quickcheck;
     use rlp::Rlp;
     use rocksdb_lib::{ColumnFamilyDescriptor, Options};
+    use serde::{Deserialize, Serialize};
     use tempfile::tempdir;
 
     use super::*;
+    use crate::gc::tests::{FixedData, Key, RootGuard};
     use crate::impls::tests::{Data, K};
 
     fn no_childs(_: &[u8]) -> Vec<H256> {
@@ -642,8 +660,6 @@ mod tests {
         }
     }
 
-    use crate::gc::tests::{FixedData, Key, RootGuard};
-
     #[quickcheck]
     fn qc_handles_several_key_changes(
         kvs_1: HashMap<Key, FixedData>,
@@ -699,9 +715,7 @@ mod tests {
 
         let second_collection_root_guard = roots.pop().unwrap();
         // perform cleanup of all intermediate roots
-        for stale_root in roots {
-            drop(stale_root);
-        }
+        drop(roots);
 
         let trie = collection.trie_for(last_root_guard.root);
         for k in kvs_1.keys() {
@@ -715,6 +729,150 @@ mod tests {
 
         drop(last_root_guard);
         drop(second_collection_root_guard);
+
+        use rocksdb_lib::IteratorMode;
+        assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
+
+        println!("Debug cf");
+        for (k, v) in db.iterator_cf(cf, IteratorMode::Start) {
+            println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
+        }
+        assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);
+
+        TestResult::passed()
+    }
+
+    #[derive(Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
+    pub struct DataWithRoot {
+        pub root: H256,
+    }
+
+    impl DataWithRoot {
+        fn get_childs(data: &[u8]) -> Vec<H256> {
+            bincode::deserialize::<Self>(data)
+                .ok()
+                .into_iter()
+                .map(|e| e.root)
+                .collect()
+        }
+    }
+    impl Default for DataWithRoot {
+        fn default() -> Self {
+            Self {
+                root: empty_trie_hash!(),
+            }
+        }
+    }
+
+    // todo implement data with child collection.
+    #[quickcheck]
+    fn qc_handles_inner_roots(
+        alice_key: Key,
+        alice_chages: Vec<(Key, FixedData)>,
+        bob_key: Key,
+        bob_storage: HashMap<Key, FixedData>,
+    ) -> TestResult {
+        if alice_chages.is_empty() || bob_storage.is_empty() {
+            return TestResult::discard();
+        }
+
+        let dir = tempdir().unwrap();
+        let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
+        let db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
+
+        let cf = db.cf_handle("counter").unwrap();
+
+        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
+
+        let mut top_level_root = RootGuard::new(
+            &collection.database,
+            crate::empty_trie_hash(),
+            DataWithRoot::get_childs,
+        );
+
+        let mut alice_storage_mem = HashMap::new();
+        {
+            for (k, data) in alice_chages.iter() {
+                alice_storage_mem.insert(*k, *data);
+
+                let mut account_trie = collection.trie_for(top_level_root.root);
+
+                let mut alice_account: DataWithRoot = TrieMut::get(&account_trie, &alice_key.0)
+                    .map(|d| bincode::deserialize(&d).unwrap())
+                    .unwrap_or_default();
+
+                let mut storage_trie = collection.trie_for(alice_account.root);
+                storage_trie.insert(&k.0, &data.0);
+
+                let storage_patch = storage_trie.into_patch();
+
+                alice_account.root = storage_patch.root;
+
+                account_trie.insert(&alice_key.0, &bincode::serialize(&alice_account).unwrap());
+
+                let mut account_patch = account_trie.into_patch();
+
+                account_patch.change.merge(&storage_patch.change);
+                top_level_root = RootGuard::new(
+                    &collection.database,
+                    collection.apply_increase(account_patch, DataWithRoot::get_childs),
+                    DataWithRoot::get_childs,
+                );
+            }
+        };
+
+        {
+            for (k, data) in bob_storage.iter() {
+                let mut account_trie = collection.trie_for(top_level_root.root);
+
+                let mut bob_account: DataWithRoot = TrieMut::get(&account_trie, &bob_key.0)
+                    .map(|d| bincode::deserialize(&d).unwrap())
+                    .unwrap_or_default();
+
+                let mut storage_trie = collection.trie_for(bob_account.root);
+                storage_trie.insert(&k.0, &data.0);
+
+                let storage_patch = storage_trie.into_patch();
+
+                bob_account.root = storage_patch.root;
+
+                account_trie.insert(&bob_key.0, &bincode::serialize(&bob_account).unwrap());
+
+                let mut account_patch = account_trie.into_patch();
+
+                account_patch.change.merge(&storage_patch.change);
+                top_level_root = RootGuard::new(
+                    &collection.database,
+                    collection.apply_increase(account_patch, DataWithRoot::get_childs),
+                    DataWithRoot::get_childs,
+                );
+            }
+        };
+
+        let accounts_storage = collection.trie_for(top_level_root.root);
+        let alice_account: DataWithRoot =
+            bincode::deserialize(&TrieMut::get(&accounts_storage, &alice_key.0).unwrap()).unwrap();
+        let bob_account: DataWithRoot =
+            bincode::deserialize(&TrieMut::get(&accounts_storage, &bob_key.0).unwrap()).unwrap();
+
+        let alice_storage_trie = collection.trie_for(alice_account.root);
+        for k in alice_storage_mem.keys() {
+            assert_eq!(
+                &alice_storage_mem[k].0[..],
+                &TrieMut::get(&alice_storage_trie, &k.0).unwrap()
+            );
+        }
+
+        let bob_storage_trie = collection.trie_for(bob_account.root);
+        for k in bob_storage.keys() {
+            assert_eq!(
+                &bob_storage[k].0[..],
+                &TrieMut::get(&bob_storage_trie, &k.0).unwrap()
+            );
+        }
+
+        // check cleanup db
+        drop(top_level_root);
 
         use rocksdb_lib::IteratorMode;
         assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
@@ -745,7 +903,7 @@ mod tests {
         let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
 
         let mut root = crate::empty_trie_hash();
-        let mut roots = BTreeSet::new();
+        let mut root_guards = vec![];
 
         for (k, data) in kvs_1.iter() {
             let mut trie = collection.trie_for(root);
@@ -754,24 +912,12 @@ mod tests {
             let patch = trie.into_patch();
             root = collection.apply_increase(patch, no_childs);
 
-            if !roots.insert(root) {
-                collection.database.gc_pin_root(root);
-            }
+            root_guards.push(RootGuard::new(&collection.database, root, no_childs));
         }
 
-        // perform cleanup of all intermediate roots
-        for stale_root in roots {
-            if stale_root == root {
-                continue;
-            }
-            let mut elems = collection
-                .database
-                .gc_cleanup_layer(&[stale_root], no_childs);
-            while !elems.is_empty() {
-                elems = collection.database.gc_cleanup_layer(&elems, no_childs);
-            }
-        }
+        let mut root_guard = root_guards.pop().unwrap();
 
+        drop(root_guards);
         // expect for kvs to be available
         let trie = collection.trie_for(root);
         for k in kvs_1.keys() {
@@ -783,9 +929,10 @@ mod tests {
 
         for (k, data) in kvs_2.iter() {
             let mut trie = collection.trie_for(root);
-            trie.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
+            trie.insert(&k.to_bytes(), &&bincode::serialize(data).unwrap());
             let patch = trie.into_patch();
             root = collection.apply_increase(patch, no_childs);
+            root_guard = RootGuard::new(&collection.database, root, no_childs);
         }
 
         let trie = collection.trie_for(root);
@@ -795,6 +942,17 @@ mod tests {
                 bincode::deserialize(&TrieMut::get(&trie, &k.to_bytes()).unwrap()).unwrap()
             );
         }
+
+        drop(root_guard);
+
+        use rocksdb_lib::IteratorMode;
+        assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
+
+        println!("Debug cf");
+        for (k, v) in db.iterator_cf(cf, IteratorMode::Start) {
+            println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
+        }
+        assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);
 
         TestResult::passed()
     }
