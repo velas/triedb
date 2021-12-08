@@ -1,6 +1,11 @@
+use std::borrow::Borrow;
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::merkle::MerkleValue;
 use crate::{
-    cache::CachedHandle, delete, get, insert, CachedDatabaseHandle, Change, Database, TrieMut,
+    cache::CachedHandle, delete, empty_trie_hash, get, insert, CachedDatabaseHandle, Change,
+    Database, TrieMut,
 };
 
 use crate::MerkleNode;
@@ -108,20 +113,21 @@ pub trait DbCounter {
 }
 
 pub struct TrieCollection<D> {
-    pub(crate) database: D,
+    pub database: D,
 }
 
-impl<D: DbCounter> TrieCollection<D> {
+impl<D: DbCounter + Database> TrieCollection<D> {
     pub fn new(database: D) -> Self {
         Self { database }
     }
 
-    pub fn trie_for(&self, root: H256) -> DatabaseTrieMut<'_, D> {
-        DatabaseTrieMut {
-            database: &self.database,
-            change: Change::default(),
-            root,
-        }
+    pub fn trie_for(&self, root: H256) -> DatabaseTrieMut<&D> {
+        DatabaseTrieMut::trie_for(&self.database, root)
+    }
+
+    // returns guard to empty trie;
+    pub fn empty_guard<F: FnMut(&[u8]) -> Vec<H256>>(&self, child_extractor: F) -> RootGuard<D, F> {
+        RootGuard::new(&self.database, empty_trie_hash!(), child_extractor)
     }
 
     // Apply changes and only increase child counters
@@ -129,21 +135,29 @@ impl<D: DbCounter> TrieCollection<D> {
         &self,
         DatabaseTrieMutPatch { root, change }: DatabaseTrieMutPatch,
         mut child_extractor: F,
-    ) -> H256
+    ) -> RootGuard<D, F>
     where
-        F: FnMut(&[u8]) -> Vec<H256>,
+        F: FnMut(&[u8]) -> Vec<H256> + Clone,
     {
-        for (key, value) in change.adds {
-            self.database
-                .gc_insert_node(key, &value, &mut child_extractor);
+        let root_guard = RootGuard::new(&self.database, root, child_extractor.clone());
+        // we collect changs from bottom to top, but insert should be done from root to child.
+        for (key, value) in change.changes.into_iter().rev() {
+            // dbg!(&key);
+            // dbg!(value.is_some());
+            if let Some(value) = value {
+                self.database
+                    .gc_insert_node(key, &value, &mut child_extractor);
+            }
         }
-        root
+        root_guard
     }
 }
 
-pub struct DatabaseTrieMut<'a, D> {
-    database: &'a D,
+pub struct DatabaseTrieMut<D> {
+    database: D,
     change: Change,
+    // latest state of changed data.
+    change_data: HashMap<H256, Vec<u8>>,
     root: H256,
 }
 
@@ -155,7 +169,7 @@ pub struct DatabaseTrieMutPatch {
 
 // TODO: impl DatabaseMut for DatabaseTrieMut and lookup changes before database
 
-impl<'a, D: Database> TrieMut for DatabaseTrieMut<'a, D> {
+impl<D: Database> TrieMut for DatabaseTrieMut<D> {
     fn root(&self) -> H256 {
         self.root
     }
@@ -163,14 +177,14 @@ impl<'a, D: Database> TrieMut for DatabaseTrieMut<'a, D> {
     fn insert(&mut self, key: &[u8], value: &[u8]) {
         let (new_root, change) = insert(self.root, self, key, value);
 
-        self.change.merge(&change);
+        self.merge(&change);
         self.root = new_root;
     }
 
     fn delete(&mut self, key: &[u8]) {
         let (new_root, change) = delete(self.root, self, key);
 
-        self.change.merge(&change);
+        self.merge(&change);
         self.root = new_root;
     }
 
@@ -179,20 +193,53 @@ impl<'a, D: Database> TrieMut for DatabaseTrieMut<'a, D> {
     }
 }
 
-impl<'a, D: Database> Database for DatabaseTrieMut<'a, D> {
+impl<D: Database> Database for DatabaseTrieMut<D> {
     fn get(&self, key: H256) -> &[u8] {
-        if let Some(bytes) = self.change.adds.get(&key) {
-            bytes
+        if let Some(bytes) = self.change_data.get(&key) {
+            &**bytes
         } else {
-            self.database.get(key)
+            self.database.borrow().get(key)
         }
     }
 }
 
-impl<'a, D> DatabaseTrieMut<'a, D> {
+impl<D: Database> DatabaseTrieMut<D> {
+    pub fn merge(&mut self, change: &Change) {
+        for (key, v) in &change.changes {
+            if let Some(v) = v {
+                self.change_data.insert(*key, v.clone());
+            } else {
+                self.change_data.remove(key);
+            }
+        }
+        self.change.merge(change)
+    }
     pub fn into_patch(self) -> DatabaseTrieMutPatch {
-        let Self { root, change, .. } = self;
-        DatabaseTrieMutPatch { root, change }
+        let Self {
+            root,
+            change,
+            change_data,
+            ..
+        } = self;
+        // ideally we need map ordered by push time, but currently we use log+map so we need
+        // filter changes that was removed during latest insert, collect only changes that is equal to actual.
+        let changes = change
+            .changes
+            .into_iter()
+            .filter(|(k, v)| v.is_some() == change_data.get(k).is_some())
+            .collect();
+        DatabaseTrieMutPatch {
+            root,
+            change: Change { changes },
+        }
+    }
+    pub fn trie_for(db: D, root: H256) -> Self {
+        Self {
+            database: db,
+            change: Change::default(),
+            change_data: Default::default(),
+            root,
+        }
     }
 }
 
@@ -229,7 +276,7 @@ impl MapWithCounter {
     }
 }
 
-pub type MapWithCounterCached = CachedHandle<MapWithCounter>;
+pub type MapWithCounterCached = CachedHandle<Arc<MapWithCounter>>;
 
 impl DbCounter for MapWithCounterCached {
     // Insert value into db.
@@ -293,18 +340,65 @@ impl DbCounter for MapWithCounterCached {
     }
 }
 
-impl CachedDatabaseHandle for MapWithCounter {
+impl CachedDatabaseHandle for Arc<MapWithCounter> {
     fn get(&self, key: H256) -> Vec<u8> {
-        self.data.get(&key).unwrap().clone()
+        self.data
+            .get(&key)
+            .unwrap_or_else(|| panic!("Value for {} not found in database", key))
+            .clone()
+    }
+}
+
+pub struct RootGuard<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> {
+    pub root: H256,
+    db: &'a D,
+    child_collector: F,
+}
+impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> RootGuard<'a, D, F> {
+    pub fn new(db: &'a D, root: H256, child_collector: F) -> Self {
+        if root != empty_trie_hash!() {
+            db.gc_pin_root(root);
+        }
+        Self {
+            db,
+            root,
+            child_collector,
+        }
+    }
+    // Release root reference, but skip cleanup.
+    pub fn leak_root(mut self) -> H256 {
+        let root = self.root;
+        self.db.gc_unpin_root(root);
+        self.root = empty_trie_hash!();
+        root
+    }
+}
+
+impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> Drop for RootGuard<'a, D, F> {
+    fn drop(&mut self) {
+        if self.root == empty_trie_hash!() {
+            return;
+        }
+        if self.db.gc_unpin_root(self.root) {
+            let mut elems = self
+                .db
+                .gc_cleanup_layer(&[self.root], &mut self.child_collector);
+
+            while !elems.is_empty() {
+                elems = self.db.gc_cleanup_layer(&elems, &mut self.child_collector);
+            }
+        }
     }
 }
 
 #[cfg(test)]
 pub mod tests {
-    use std::collections::{BTreeSet, HashMap};
+    use std::{
+        collections::{BTreeSet, HashMap},
+        sync::Arc,
+    };
 
     use crate::{
-        empty_trie_hash,
         merkle::nibble::{into_key, Nibble},
         MerkleNode,
     };
@@ -327,7 +421,7 @@ pub mod tests {
     /// short fixed lenght key, with 4 nimbles
     /// To simplify fuzzying each nimble is one of [0,3,7,b,f]
     #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-    pub struct Key(pub [u8; 2]);
+    pub struct Key(pub [u8; 4]);
 
     impl Arbitrary for Key {
         fn arbitrary(g: &mut Gen) -> Self {
@@ -335,9 +429,9 @@ pub mod tests {
                 g.choose(&[Nibble::N0, Nibble::N3, Nibble::N7, Nibble::N11, Nibble::N15])
                     .copied()
             })
-            .take(4)
+            .take(8)
             .collect();
-            let mut key = [0; 2];
+            let mut key = [0; 4];
 
             let vec_data = into_key(&nibble);
             assert_eq!(key.len(), vec_data.len());
@@ -411,16 +505,12 @@ pub mod tests {
         trie.insert(key3, value3);
         let patch = trie.into_patch();
         assert_eq!(collection.database.gc_count(patch.root), 0);
-        let root = collection.apply_increase(patch, no_childs);
-        assert_eq!(collection.database.gc_count(root), 0);
-
-        // mark root for pass GC
-        collection.database.gc_pin_root(root);
-        assert_eq!(collection.database.gc_count(root), 1);
+        let root_guard = collection.apply_increase(patch, no_childs);
+        assert_eq!(collection.database.gc_count(root_guard.root), 1);
 
         // CHECK CHILDS counts
-        println!("root={}", root);
-        let node = collection.database.get(root);
+        println!("root={}", root_guard.root);
+        let node = collection.database.get(root_guard.root);
         let rlp = Rlp::new(&node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let childs = ReachableHashes::collect(&node, no_childs).childs();
@@ -430,7 +520,7 @@ pub mod tests {
             assert_eq!(collection.database.gc_count(*child), 1);
         }
 
-        let mut trie = collection.trie_for(root);
+        let mut trie = collection.trie_for(root_guard.root);
         assert_eq!(TrieMut::get(&trie, key1), Some(value1.to_vec()));
         assert_eq!(TrieMut::get(&trie, key2), Some(value2.to_vec()));
         assert_eq!(TrieMut::get(&trie, key3), Some(value3.to_vec()));
@@ -441,13 +531,9 @@ pub mod tests {
 
         assert_eq!(collection.database.gc_count(patch.root), 0);
         let another_root = collection.apply_increase(patch, no_childs);
-        assert_eq!(collection.database.gc_count(another_root), 0);
+        assert_eq!(collection.database.gc_count(another_root.root), 1);
 
-        // mark root for pass GC
-        collection.database.gc_pin_root(another_root);
-        assert_eq!(collection.database.gc_count(another_root), 1);
-
-        let node = collection.database.get(another_root);
+        let node = collection.database.get(another_root.root);
         let rlp = Rlp::new(&node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();
@@ -467,17 +553,17 @@ pub mod tests {
 
         // Adding one dublicate
 
-        let mut trie = collection.trie_for(another_root);
+        let mut trie = collection.trie_for(another_root.root);
 
         // adding dublicate value should not affect RC
         trie.insert(key1, value1);
 
         let patch = trie.into_patch();
-        assert_eq!(patch.root, another_root);
+        assert_eq!(patch.root, another_root.root);
 
         // adding one more changed element, and make additional conflict.
 
-        let mut trie = collection.trie_for(another_root);
+        let mut trie = collection.trie_for(another_root.root);
 
         trie.insert(key2, value2_1);
 
@@ -485,9 +571,7 @@ pub mod tests {
 
         let latest_root = collection.apply_increase(patch, no_childs);
 
-        collection.database.gc_pin_root(latest_root);
-
-        let node = collection.database.get(latest_root);
+        let node = collection.database.get(latest_root.root);
         let rlp = Rlp::new(&node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();
@@ -512,19 +596,17 @@ pub mod tests {
             assert_eq!(collection.database.gc_count(**child), 2);
         }
 
-        // Check rootguard cleanup;
-        let guard = RootGuard::new(&collection.database, root, no_childs);
-
-        // ensure that we have two references now
-        assert!(!collection.database.gc_unpin_root(root));
+        let root = root_guard.root;
         // return back
-        collection.database.gc_pin_root(root);
-        drop(guard); // after drop manual unpin should free latest reference.
+        collection.database.gc_pin_root(root_guard.root);
+        assert!(!collection.database.gc_unpin_root(root_guard.root));
+
+        collection.database.gc_pin_root(root_guard.root);
+        drop(root_guard); // after drop manual unpin should free latest reference.
 
         // TRY cleanup first root.
 
         assert!(collection.database.gc_unpin_root(root));
-
         let mut elems = collection.database.gc_cleanup_layer(&[root], no_childs);
         assert_eq!(elems.len(), 1);
         while !elems.is_empty() {
@@ -560,39 +642,70 @@ pub mod tests {
         }
     }
 
-    pub struct RootGuard<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> {
-        pub root: H256,
-        db: &'a D,
-        child_collector: F,
-    }
-    impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> RootGuard<'a, D, F> {
-        pub fn new(db: &'a D, root: H256, child_collector: F) -> Self {
-            if root != empty_trie_hash!() {
-                db.gc_pin_root(root);
-            }
-            Self {
-                db,
-                root,
-                child_collector,
-            }
-        }
-    }
+    #[test]
+    fn two_threads_conflict() {
+        let shared_db = Arc::new(MapWithCounter::default());
+        fn routine(db: Arc<MapWithCounter>) {
+            let shared_db = CachedHandle::new(db);
+            let key1 = &hex!("bbaa");
+            let key2 = &hex!("ffaa");
+            let key3 = &hex!("bbcc");
 
-    impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> Drop for RootGuard<'a, D, F> {
-        fn drop(&mut self) {
-            if self.root == empty_trie_hash!() {
-                return;
-            }
-            if self.db.gc_unpin_root(self.root) {
-                let mut elems = self
-                    .db
-                    .gc_cleanup_layer(&[self.root], &mut self.child_collector);
+            // make data too long for inline
+            let value1 = b"same data________________________";
+            let value2 = b"same data________________________";
+            let value3 = b"other data_______________________";
+            let value3_1 = b"changed data_____________________";
+            let collection = TrieCollection::new(shared_db);
 
-                while !elems.is_empty() {
-                    elems = self.db.gc_cleanup_layer(&elems, &mut self.child_collector);
-                }
-            }
+            let mut trie = collection.trie_for(crate::empty_trie_hash());
+            trie.insert(key1, value1);
+            trie.insert(key2, value2);
+            trie.insert(key3, value3);
+            let patch = trie.into_patch();
+            let mut root_guard = collection.apply_increase(patch, no_childs);
+
+            let mut trie = collection.trie_for(root_guard.root);
+            assert_eq!(TrieMut::get(&trie, key1), Some(value1.to_vec()));
+            assert_eq!(TrieMut::get(&trie, key2), Some(value2.to_vec()));
+            assert_eq!(TrieMut::get(&trie, key3), Some(value3.to_vec()));
+
+            trie.insert(key3, value3_1);
+            assert_eq!(TrieMut::get(&trie, key3), Some(value3_1.to_vec()));
+            let patch = trie.into_patch();
+
+            root_guard = collection.apply_increase(patch, no_childs);
+
+            let mut trie = collection.trie_for(root_guard.root);
+            assert_eq!(TrieMut::get(&trie, key1), Some(value1.to_vec()));
+            assert_eq!(TrieMut::get(&trie, key2), Some(value2.to_vec()));
+            assert_eq!(TrieMut::get(&trie, key3), Some(value3_1.to_vec()));
+
+            trie.delete(key2);
+            let patch = trie.into_patch();
+            root_guard = collection.apply_increase(patch, no_childs);
+
+            let trie = collection.trie_for(root_guard.root);
+
+            assert_eq!(TrieMut::get(&trie, key2), None);
         }
+        let cloned_db = shared_db.clone();
+        let th1 = std::thread::spawn(move || {
+            for _i in 0..100 {
+                routine(cloned_db.clone())
+            }
+        });
+        let cloned_db = shared_db.clone();
+        let th2 = std::thread::spawn(move || {
+            for _i in 0..100 {
+                routine(cloned_db.clone())
+            }
+        });
+        th1.join().unwrap();
+        th2.join().unwrap();
+
+        assert_eq!(shared_db.data.len(), 0);
+        assert_eq!(shared_db.counter.len(), 0);
     }
 
     #[quickcheck]
@@ -613,9 +726,10 @@ pub mod tests {
             trie.insert(&k.0, &data.0);
 
             let patch = trie.into_patch();
-            root = collection.apply_increase(patch, no_childs);
+            let root_guard = collection.apply_increase(patch, no_childs);
+            root = root_guard.root;
 
-            roots.push(RootGuard::new(&collection.database, root, no_childs));
+            roots.push(root_guard);
         }
         println!(
             "db_size_before_cleanup = {}\n\
@@ -626,9 +740,8 @@ pub mod tests {
         let last_root_guard = roots.pop().unwrap();
 
         // perform cleanup of all intermediate roots
-        for stale_root in roots {
-            drop(stale_root);
-        }
+
+        drop(roots);
 
         println!(
             "db_size_after_cleanup = {}\n\
@@ -649,8 +762,10 @@ pub mod tests {
             let mut trie = collection.trie_for(root);
             trie.insert(&k.0, &data.0);
             let patch = trie.into_patch();
-            root = collection.apply_increase(patch, no_childs);
-            roots.push(RootGuard::new(&collection.database, root, no_childs));
+            let root_guard = collection.apply_increase(patch, no_childs);
+            root = root_guard.root;
+
+            roots.push(root_guard);
         }
 
         let second_collection_root_guard = roots.pop().unwrap();
@@ -703,18 +818,17 @@ pub mod tests {
         let collection = TrieCollection::new(MapWithCounterCached::default());
 
         let mut root = crate::empty_trie_hash();
-        let mut roots = BTreeSet::new();
+        let mut roots = Vec::new();
 
         for (k, data) in kvs_1.iter() {
             let mut trie = collection.trie_for(root);
             trie.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
 
             let patch = trie.into_patch();
-            root = collection.apply_increase(patch, no_childs);
+            let root_guard = collection.apply_increase(patch, no_childs);
+            root = root_guard.root;
 
-            if !roots.insert(root) {
-                collection.database.gc_pin_root(root);
-            }
+            roots.push(root_guard);
         }
         println!(
             "db_size_before_cleanup = {}\n\
@@ -723,18 +837,9 @@ pub mod tests {
             collection.database.db.counter.len()
         );
 
+        let last_root = roots.pop().unwrap();
         // perform cleanup of all intermediate roots
-        for stale_root in roots {
-            if stale_root == root {
-                continue;
-            }
-            let mut elems = collection
-                .database
-                .gc_cleanup_layer(&[stale_root], no_childs);
-            while !elems.is_empty() {
-                elems = collection.database.gc_cleanup_layer(&elems, no_childs);
-            }
-        }
+        drop(roots);
 
         println!(
             "db_size_after_cleanup = {}\n\
@@ -751,12 +856,17 @@ pub mod tests {
             );
         }
 
+        let mut roots = Vec::new();
         for (k, data) in kvs_2.iter() {
             let mut trie = collection.trie_for(root);
             trie.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
             let patch = trie.into_patch();
-            root = collection.apply_increase(patch, no_childs);
+            let root_guard = collection.apply_increase(patch, no_childs);
+            root = root_guard.root;
+
+            roots.push(root_guard);
         }
+        drop(last_root);
 
         let trie = collection.trie_for(root);
         for k in kvs_2.keys() {

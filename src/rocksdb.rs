@@ -14,7 +14,7 @@ type DB = OptimisticTransactionDB;
 use crate::{
     cache::CachedHandle,
     gc::{DbCounter, ReachableHashes},
-    CachedDatabaseHandle, Change, Database, TrieMut,
+    CachedDatabaseHandle,
 };
 
 const EXCLUSIVE: bool = true;
@@ -90,15 +90,22 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
     }
     pub fn increase(&self, b: &mut Transaction<DB>, key: H256) -> Result<(), rocksdb_lib::Error> {
         if let Some(counter_cf) = self.counter_cf {
-            b.merge_cf(counter_cf, &key.as_ref(), &serialize_counter(1))?
+            let mut value = self.get_counter_in_tx(b, key)?;
+            value += 1;
+            b.put_cf(counter_cf, &key.as_ref(), &serialize_counter(value))?;
+            trace!("increase node {}=>{}", key, value);
         }
         Ok(())
     }
-    pub fn decrease(&self, b: &mut Transaction<DB>, key: H256) -> Result<(), rocksdb_lib::Error> {
+    pub fn decrease(&self, b: &mut Transaction<DB>, key: H256) -> Result<i64, rocksdb_lib::Error> {
         if let Some(counter_cf) = self.counter_cf {
-            b.merge_cf(counter_cf, &key.as_ref(), &serialize_counter(-1))?
+            let mut value = self.get_counter_in_tx(b, key)?;
+            value -= 1;
+            b.put_cf(counter_cf, &key.as_ref(), &serialize_counter(value))?;
+            trace!("decrease node {}=>{}", key, value);
+            return Ok(value);
         }
-        Ok(())
+        Ok(1) // report one reference remaining, to report that this is not latest link
     }
     pub fn get_counter_in_tx(
         &self,
@@ -109,7 +116,7 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
             b.get_for_update_cf(counter_cf, key.as_ref(), EXCLUSIVE)
                 .map(|s| s.map(|s| deserialize_counter(&s)).unwrap_or_default())
         } else {
-            Ok(2) // report two, to make sure that after decrement there still will be atleast one reference
+            Ok(1) // report two, to make sure that after decrement there still will be atleast one reference
         }
     }
 }
@@ -152,17 +159,18 @@ impl<'a, D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandle<'a, D> {
 /// Retry is used because optimistic transactions can fail if other thread change some value.
 macro_rules! retry {
     {$($tokens:tt)*} => {
+        #[allow(unused_mut)]
         let mut retry = move || -> Result<_, anyhow::Error> {
             let result = { $($tokens)* };
             Ok(result)
         };
         const NUM_RETRY: usize = 3;
         let mut e = None; //use option because rust think that this variable can be uninit
-        for _ in 0..NUM_RETRY {
+        for retry_count in 0..NUM_RETRY {
             e = Some(retry());
             match e.as_ref().unwrap() {
                 Ok(_) => break,
-                Err(e) => log::warn!("Error during transaction execution {}", e)
+                Err(e) => log::warn!("Error during transaction execution retry_count:{} reason:{}", retry_count + 1,  e)
 
             }
         }
@@ -224,26 +232,28 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
         if self.db.counter_cf.is_none() {
             return vec![];
         };
+
+        trace!("try removing node {}", key);
         retry! {
             let mut nodes = vec![];
             //TODO: retry
-            if let Some(value) = db.get(key.as_ref())? {
-                let mut tx = db.transaction();
+
+            let mut tx = db.transaction();
+            if let Some(value) = tx.get_for_update(key.as_ref(), EXCLUSIVE)? {
                 let count = self.db.get_counter_in_tx(&mut tx, key)?;
                 if count > 0 {
+                    trace!("ignore removing node {}, counter: {}", key, count);
                     return Ok(vec![]);
                 }
                 tx.delete(&key.as_ref())?;
                 self.db.remove_counter(&mut tx, key)?;
-
                 let rlp = Rlp::new(&value);
                 let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
                 for hash in ReachableHashes::collect(&node, &mut child_extractor).childs() {
-                    let child_count = self.db.get_counter_in_tx(&mut tx, hash)?;
-                    if child_count <= 1 {
+                    let child_count = self.db.decrease(&mut tx, hash)?;
+                    if child_count <= 0 {
                         nodes.push(hash);
                     }
-                    self.db.decrease(&mut tx, hash)?;
                 }
 
                 tx.commit()?;
@@ -253,115 +263,32 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
     }
 
     fn gc_pin_root(&self, key: H256) {
-        let db = self.db.db.borrow();
-        let mut tx = db.transaction();
-        self.db.increase(&mut tx, key).expect("cannot write batch");
-        tx.commit().expect("cannot write batch");
+        trace!("Pin root:{}", key);
+        retry! {
+            let db = self.db.db.borrow();
+            let mut tx = db.transaction();
+            self.db.increase(&mut tx, key)?;
+            tx.commit()?;
+        }
     }
 
     fn gc_unpin_root(&self, key: H256) -> bool {
-        let db = self.db.db.borrow();
-        let mut tx = db.transaction();
-        self.db.decrease(&mut tx, key).expect("cannot write batch");
-        tx.commit().expect("cannot write batch");
-        self.gc_count(key) == 0
-    }
-}
-
-#[derive(Debug)]
-pub struct RocksMemoryTrieMut<'a, D: Borrow<DB>> {
-    root: H256,
-    change: Change,
-    handle: RocksHandle<'a, D>,
-}
-
-impl<'a, D: Borrow<DB>> Database for RocksMemoryTrieMut<'a, D> {
-    fn get(&self, key: H256) -> &[u8] {
-        if self.change.adds.contains_key(&key) {
-            self.change.adds.get(&key).unwrap()
-        } else {
-            self.handle.get(key)
+        trace!("Unpin root:{}", key);
+        retry! {
+            let db = self.db.db.borrow();
+            let mut tx = db.transaction();
+            self.db.decrease(&mut tx, key)?;
+            tx.commit()?;
+            self.gc_count(key) == 0
         }
-    }
-}
-
-// TODO: D: Database
-impl<'a, D: Borrow<DB>> TrieMut for RocksMemoryTrieMut<'a, D> {
-    fn root(&self) -> H256 {
-        self.root
-    }
-
-    fn insert(&mut self, key: &[u8], value: &[u8]) {
-        self.clear_cache();
-
-        let (new_root, change) = crate::insert(self.root, self, key, value);
-
-        self.change.merge(&change);
-        self.root = new_root;
-    }
-
-    fn delete(&mut self, key: &[u8]) {
-        self.clear_cache();
-
-        let (new_root, change) = crate::delete(self.root, self, key);
-
-        self.change.merge(&change);
-        self.root = new_root;
-    }
-
-    fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        crate::get(self.root, self, key).map(|v| v.into())
-    }
-}
-
-impl<'a, D: Borrow<DB>> RocksMemoryTrieMut<'a, D> {
-    pub fn new(db: D, root: H256, counter_cf: &'a ColumnFamily) -> Self {
-        Self {
-            root,
-            change: Change::default(),
-            handle: RocksHandle::new(RocksDatabaseHandle::new(db, counter_cf)),
-        }
-    }
-
-    pub fn without_counter(db: D, root: H256) -> Self {
-        Self {
-            root,
-            change: Change::default(),
-            handle: RocksHandle::new(RocksDatabaseHandle::without_counter(db)),
-        }
-    }
-
-    pub fn clear_cache(&mut self) {
-        self.handle.clear_cache();
-    }
-
-    /// Apply changes to database
-    /// Explicitly ask for setting ignore_gc flag.
-    /// This will make sure
-    pub fn apply(self, ignore_gc: bool) -> Result<H256, String> {
-        if ignore_gc == self.handle.db.counter_cf.is_some() {
-            return Err(String::from(
-                "Gc settings for apply function differ from RocksdbHandle creation",
-            ));
-        }
-
-        let db = self.handle.db.db.borrow();
-
-        for key in self.change.removes {
-            db.delete(key.as_ref())?;
-        }
-
-        for (key, value) in self.change.adds {
-            db.put(key.as_ref(), &value)?;
-        }
-
-        Ok(self.root)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeSet, HashMap, HashSet};
+    use std::collections::{BTreeSet, HashMap};
+    use std::io::Write;
+    use std::sync::Arc;
 
     use crate::empty_trie_hash;
     use crate::gc::TrieCollection;
@@ -370,13 +297,17 @@ mod tests {
     use quickcheck::TestResult;
     use quickcheck_macros::quickcheck;
     use rlp::Rlp;
+    use rocksdb_lib::IteratorMode;
     use rocksdb_lib::{ColumnFamilyDescriptor, Options};
     use serde::{Deserialize, Serialize};
     use tempfile::tempdir;
 
     use super::*;
-    use crate::gc::tests::{FixedData, Key, RootGuard};
+    use crate::gc::tests::{FixedData, Key};
+    use crate::gc::RootGuard;
     use crate::impls::tests::{Data, K};
+    use crate::mutable::TrieMut;
+    use crate::Database;
 
     fn no_childs(_: &[u8]) -> Vec<H256> {
         vec![]
@@ -393,104 +324,6 @@ mod tests {
         let mut opts = default_opts();
         opts.set_merge_operator_associative("inc_counter", merge_counter);
         opts
-    }
-    #[quickcheck]
-    fn qc_reads_the_same_as_inserts(kvs: HashMap<K, Data>) {
-        let dir = tempdir().unwrap();
-
-        let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
-        let db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
-
-        let cf = db.cf_handle("counter").unwrap();
-        let mut triedb = RocksMemoryTrieMut::without_counter(&db, crate::empty_trie_hash());
-        for (k, data) in kvs.iter() {
-            triedb.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
-        }
-
-        // reads before apply
-        for k in kvs.keys() {
-            assert_eq!(
-                kvs[k],
-                bincode::deserialize(&TrieMut::get(&triedb, &k.to_bytes()).unwrap()).unwrap()
-            );
-        }
-
-        // reads after apply
-        let root = triedb.apply(true).unwrap();
-        let triedb = RocksMemoryTrieMut::new(&db, root, cf);
-        for k in kvs.keys() {
-            assert_eq!(
-                kvs[k],
-                bincode::deserialize(&TrieMut::get(&triedb, &k.to_bytes()).unwrap()).unwrap()
-            );
-        }
-        drop(triedb);
-        drop(cf);
-
-        drop(db);
-
-        // close and re-open database
-        let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
-        let db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
-
-        let cf = db.cf_handle("counter").unwrap();
-
-        let triedb = RocksMemoryTrieMut::new(&db, root, cf);
-        for k in kvs.keys() {
-            assert_eq!(
-                kvs[k],
-                bincode::deserialize(&TrieMut::get(&triedb, &k.to_bytes()).unwrap()).unwrap()
-            );
-        }
-    }
-
-    #[quickcheck]
-    fn qc_reads_the_same_with_overriden_keys(
-        kvs_1: HashMap<K, Data>,
-        kvs_2: HashMap<K, Data>,
-    ) -> TestResult {
-        let keys_1: HashSet<K> = kvs_1.keys().copied().collect();
-        let keys_2: HashSet<K> = kvs_2.keys().copied().collect();
-
-        // TODO: save intersection and filter iteration for root_2 and keys_1
-        if keys_1.intersection(&keys_2).count() == 0 {
-            return TestResult::discard();
-        }
-
-        let dir = tempdir().unwrap();
-        let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
-        let db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
-
-        let cf = db.cf_handle("counter").unwrap();
-
-        let mut triedb = RocksMemoryTrieMut::new(&db, crate::empty_trie_hash(), cf);
-        for (k, data) in kvs_1.iter() {
-            triedb.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
-        }
-        let root_1 = triedb.apply(false).unwrap();
-
-        let mut triedb = RocksMemoryTrieMut::new(&db, root_1, cf);
-        for (k, data) in kvs_2.iter() {
-            triedb.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
-        }
-        let root_2 = triedb.apply(false).unwrap();
-
-        assert_ne!(root_1, root_2);
-
-        // can read data from bd without counting references
-        let triedb = RocksMemoryTrieMut::without_counter(&db, root_2);
-        for (k, data) in kvs_2
-            .iter()
-            .chain(kvs_1.iter().filter(|(k, _)| !kvs_2.contains_key(k)))
-        {
-            assert_eq!(
-                data,
-                &bincode::deserialize::<Data>(&TrieMut::get(&triedb, &k.to_bytes()).unwrap())
-                    .unwrap()
-            );
-        }
-
-        TestResult::passed()
     }
 
     #[test]
@@ -520,16 +353,12 @@ mod tests {
         trie.insert(key3, value3);
         let patch = trie.into_patch();
         assert_eq!(collection.database.gc_count(patch.root), 0);
-        let root = collection.apply_increase(patch, no_childs);
-        assert_eq!(collection.database.gc_count(root), 0);
-
-        // mark root for pass GC
-        collection.database.gc_pin_root(root);
-        assert_eq!(collection.database.gc_count(root), 1);
+        let root_guard = collection.apply_increase(patch, no_childs);
+        assert_eq!(collection.database.gc_count(root_guard.root), 1);
 
         // CHECK CHILDS counts
-        println!("root={}", root);
-        let node = collection.database.get(root);
+        println!("root={}", root_guard.root);
+        let node = collection.database.get(root_guard.root);
         let rlp = Rlp::new(&node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let childs = ReachableHashes::collect(&node, no_childs).childs();
@@ -539,7 +368,7 @@ mod tests {
             assert_eq!(collection.database.gc_count(*child), 1);
         }
 
-        let mut trie = collection.trie_for(root);
+        let mut trie = collection.trie_for(root_guard.root);
         assert_eq!(TrieMut::get(&trie, key1), Some(value1.to_vec()));
         assert_eq!(TrieMut::get(&trie, key2), Some(value2.to_vec()));
         assert_eq!(TrieMut::get(&trie, key3), Some(value3.to_vec()));
@@ -549,14 +378,10 @@ mod tests {
         let patch = trie.into_patch();
 
         assert_eq!(collection.database.gc_count(patch.root), 0);
-        let another_root = collection.apply_increase(patch, no_childs);
-        assert_eq!(collection.database.gc_count(another_root), 0);
+        let another_root_guard = collection.apply_increase(patch, no_childs);
+        assert_eq!(collection.database.gc_count(another_root_guard.root), 1);
 
-        // mark root for pass GC
-        collection.database.gc_pin_root(another_root);
-        assert_eq!(collection.database.gc_count(another_root), 1);
-
-        let node = collection.database.get(another_root);
+        let node = collection.database.get(another_root_guard.root);
         let rlp = Rlp::new(&node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();
@@ -576,27 +401,27 @@ mod tests {
 
         // Adding one dublicate
 
-        let mut trie = collection.trie_for(another_root);
+        let mut trie = collection.trie_for(another_root_guard.root);
 
         // adding dublicate value should not affect RC
         trie.insert(key1, value1);
 
         let patch = trie.into_patch();
-        assert_eq!(patch.root, another_root);
+        assert_eq!(patch.root, another_root_guard.root);
 
         // adding one more changed element, and make additional conflict.
 
-        let mut trie = collection.trie_for(another_root);
+        let mut trie = collection.trie_for(another_root_guard.root);
 
         trie.insert(key2, value2_1);
 
         let patch = trie.into_patch();
 
-        let latest_root = collection.apply_increase(patch, no_childs);
+        let latest_root_guard = collection.apply_increase(patch, no_childs);
 
-        collection.database.gc_pin_root(latest_root);
+        collection.database.gc_pin_root(latest_root_guard.root);
 
-        let node = collection.database.get(latest_root);
+        let node = collection.database.get(latest_root_guard.root);
         let rlp = Rlp::new(&node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();
@@ -623,6 +448,9 @@ mod tests {
 
         // TRY cleanup first root.
 
+        let root = root_guard.root;
+        collection.database.gc_pin_root(root);
+        drop(root_guard);
         assert!(collection.database.gc_unpin_root(root));
 
         let mut elems = collection.database.gc_cleanup_layer(&[root], no_childs);
@@ -685,17 +513,15 @@ mod tests {
             trie.insert(&k.0, &data.0);
 
             let patch = trie.into_patch();
-            root = collection.apply_increase(patch, no_childs);
-
-            roots.push(RootGuard::new(&collection.database, root, no_childs));
+            let root_guard = collection.apply_increase(patch, no_childs);
+            root = root_guard.root;
+            roots.push(root_guard);
         }
 
         let last_root_guard = roots.pop().unwrap();
 
         // perform cleanup of all intermediate roots
-        for stale_root in roots {
-            drop(stale_root);
-        }
+        drop(roots);
 
         // expect for kvs to be available
         let trie = collection.trie_for(root);
@@ -709,8 +535,9 @@ mod tests {
             let mut trie = collection.trie_for(root);
             trie.insert(&k.0, &data.0);
             let patch = trie.into_patch();
-            root = collection.apply_increase(patch, no_childs);
-            roots.push(RootGuard::new(&collection.database, root, no_childs));
+            let root_guard = collection.apply_increase(patch, no_childs);
+            root = root_guard.root;
+            roots.push(root_guard);
         }
 
         let second_collection_root_guard = roots.pop().unwrap();
@@ -784,11 +611,7 @@ mod tests {
 
         let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
 
-        let mut top_level_root = RootGuard::new(
-            &collection.database,
-            crate::empty_trie_hash(),
-            DataWithRoot::get_childs,
-        );
+        let mut top_level_root = collection.empty_guard(DataWithRoot::get_childs);
 
         let mut alice_storage_mem = HashMap::new();
         {
@@ -812,12 +635,8 @@ mod tests {
 
                 let mut account_patch = account_trie.into_patch();
 
-                account_patch.change.merge(&storage_patch.change);
-                top_level_root = RootGuard::new(
-                    &collection.database,
-                    collection.apply_increase(account_patch, DataWithRoot::get_childs),
-                    DataWithRoot::get_childs,
-                );
+                account_patch.change.merge_child(&storage_patch.change);
+                top_level_root = collection.apply_increase(account_patch, DataWithRoot::get_childs);
             }
         };
 
@@ -840,12 +659,8 @@ mod tests {
 
                 let mut account_patch = account_trie.into_patch();
 
-                account_patch.change.merge(&storage_patch.change);
-                top_level_root = RootGuard::new(
-                    &collection.database,
-                    collection.apply_increase(account_patch, DataWithRoot::get_childs),
-                    DataWithRoot::get_childs,
-                );
+                account_patch.change.merge_child(&storage_patch.change);
+                top_level_root = collection.apply_increase(account_patch, DataWithRoot::get_childs);
             }
         };
 
@@ -910,9 +725,10 @@ mod tests {
             trie.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
 
             let patch = trie.into_patch();
-            root = collection.apply_increase(patch, no_childs);
+            let root_guard = collection.apply_increase(patch, no_childs);
+            root = root_guard.root;
 
-            root_guards.push(RootGuard::new(&collection.database, root, no_childs));
+            root_guards.push(root_guard);
         }
 
         let mut root_guard = root_guards.pop().unwrap();
@@ -931,8 +747,8 @@ mod tests {
             let mut trie = collection.trie_for(root);
             trie.insert(&k.to_bytes(), &&bincode::serialize(data).unwrap());
             let patch = trie.into_patch();
-            root = collection.apply_increase(patch, no_childs);
-            root_guard = RootGuard::new(&collection.database, root, no_childs);
+            root_guard = collection.apply_increase(patch, no_childs);
+            root = root_guard.root;
         }
 
         let trie = collection.trie_for(root);
@@ -945,7 +761,6 @@ mod tests {
 
         drop(root_guard);
 
-        use rocksdb_lib::IteratorMode;
         assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
 
         println!("Debug cf");
@@ -955,5 +770,391 @@ mod tests {
         assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);
 
         TestResult::passed()
+    }
+
+    #[test]
+    fn two_threads_conflict() {
+        let _ = env_logger::Builder::new().parse_filters("trace").try_init();
+        let dir = tempdir().unwrap();
+        let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
+        let shared_db =
+            Arc::new(DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap());
+
+        fn routine(db: std::sync::Arc<DB>) {
+            let cf = db.cf_handle("counter").unwrap();
+            let collection =
+                TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&*db, cf)));
+
+            let key1 = &hex!("bbaa");
+            let key2 = &hex!("ffaa");
+            let key3 = &hex!("bbcc");
+
+            // make data too long for inline
+            let value1 = b"same data________________________";
+            let value2 = b"same data________________________";
+            let value3 = b"other data_______________________";
+            let value3_1 = b"changed data_____________________";
+            let mut trie = collection.trie_for(crate::empty_trie_hash());
+            trie.insert(key1, value1);
+            trie.insert(key2, value2);
+            trie.insert(key3, value3);
+            let patch = trie.into_patch();
+            let mut root_guard = collection.apply_increase(patch, no_childs);
+
+            let mut trie = collection.trie_for(root_guard.root);
+            assert_eq!(TrieMut::get(&trie, key1), Some(value1.to_vec()));
+            assert_eq!(TrieMut::get(&trie, key2), Some(value2.to_vec()));
+            assert_eq!(TrieMut::get(&trie, key3), Some(value3.to_vec()));
+
+            trie.insert(key3, value3_1);
+            assert_eq!(TrieMut::get(&trie, key3), Some(value3_1.to_vec()));
+            let patch = trie.into_patch();
+
+            root_guard = collection.apply_increase(patch, no_childs);
+
+            let mut trie = collection.trie_for(root_guard.root);
+            assert_eq!(TrieMut::get(&trie, key1), Some(value1.to_vec()));
+            assert_eq!(TrieMut::get(&trie, key2), Some(value2.to_vec()));
+            assert_eq!(TrieMut::get(&trie, key3), Some(value3_1.to_vec()));
+
+            trie.delete(key2);
+            let patch = trie.into_patch();
+            root_guard = collection.apply_increase(patch, no_childs);
+
+            let trie = collection.trie_for(root_guard.root);
+
+            assert_eq!(TrieMut::get(&trie, key2), None);
+        }
+
+        let cloned_db = shared_db.clone();
+        let th1 = std::thread::spawn(move || {
+            for _i in 0..100 {
+                routine(cloned_db.clone())
+            }
+        });
+        let cloned_db = shared_db.clone();
+        let th2 = std::thread::spawn(move || {
+            for _i in 0..100 {
+                routine(cloned_db.clone())
+            }
+        });
+        th1.join().unwrap();
+        th2.join().unwrap();
+
+        let cf = shared_db.cf_handle("counter").unwrap();
+        assert_eq!(shared_db.iterator(IteratorMode::Start).count(), 0);
+
+        for (k, v) in shared_db.iterator_cf(cf, IteratorMode::Start) {
+            println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
+        }
+        assert_eq!(shared_db.iterator_cf(cf, IteratorMode::Start).count(), 0);
+    }
+
+    #[test]
+    fn two_threads_data_from_fuzz() {
+        let hex_0 = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0,
+        ];
+        let hex_1 = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0,
+        ];
+        let hex_238 = [
+            238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0,
+        ];
+        let hex_255 = [
+            238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0,
+        ];
+        let changes1 = vec![
+            (
+                Key([119, 0, 0, 3]),
+                vec![
+                    (Key([11, 119, 0, 119]), FixedData(hex_1)),
+                    (Key([3, 51, 51, 183]), FixedData(hex_1)),
+                    (Key([0, 0, 255, 240]), FixedData(hex_1)),
+                    (Key([255, 255, 255, 255]), FixedData(hex_238)),
+                    (Key([255, 255, 255, 255]), FixedData(hex_238)),
+                    (Key([0, 0, 7, 55]), FixedData(hex_238)),
+                ],
+            ),
+            (
+                Key([112, 7, 119, 0]),
+                vec![
+                    (Key([51, 51, 183, 112]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 48]), FixedData(hex_238)),
+                    (Key([112, 119, 0, 0]), FixedData(hex_238)),
+                    (Key([255, 255, 255, 255]), FixedData(hex_238)),
+                    (Key([255, 255, 240, 48]), FixedData(hex_238)),
+                    (Key([3, 112, 183, 112]), FixedData(hex_238)),
+                    (Key([119, 0, 51, 51]), FixedData(hex_238)),
+                ],
+            ),
+            (
+                Key([112, 0, 0, 0]),
+                vec![
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 240, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 11, 119]), FixedData(hex_238)),
+                    (Key([0, 48, 0, 0]), FixedData(hex_1)),
+                ],
+            ),
+            (
+                Key([0, 0, 55, 11]),
+                vec![
+                    (Key([112, 7, 119, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 3, 0]), FixedData(hex_238)),
+                    (Key([7, 112, 0, 0]), FixedData(hex_238)),
+                    (Key([255, 255, 255, 255]), FixedData(hex_238)),
+                    (Key([255, 255, 3, 0]), FixedData(hex_238)),
+                    (Key([55, 11, 119, 0]), FixedData(hex_1)),
+                    (Key([112, 3, 51, 51]), FixedData(hex_0)),
+                    (Key([112, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 15, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 183, 112]), FixedData(hex_238)),
+                    (Key([3, 0, 0, 3]), FixedData(hex_255)),
+                    (Key([0, 0, 0, 7]), FixedData(hex_1)),
+                    (Key([11, 119, 7, 15]), FixedData(hex_0)),
+                ],
+            ),
+            (
+                Key([112, 0, 0, 0]),
+                vec![
+                    (Key([112, 119, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 48, 0]), FixedData(hex_238)),
+                    (Key([7, 112, 0, 0]), FixedData(hex_238)),
+                    (Key([7, 7, 0, 7]), FixedData(hex_1)),
+                    (Key([119, 119, 247, 176]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_1)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                ],
+            ),
+        ];
+        let changes2 = vec![
+            (
+                Key([15, 0, 0, 0]),
+                vec![
+                    (Key([0, 11, 119, 0]), FixedData(hex_238)),
+                    (Key([48, 0, 0, 48]), FixedData(hex_238)),
+                    (Key([0, 3, 112, 183]), FixedData(hex_1)),
+                    (Key([15, 187, 0, 0]), FixedData(hex_255)),
+                    (Key([0, 3, 0, 7]), FixedData(hex_238)),
+                    (Key([112, 0, 0, 255]), FixedData(hex_238)),
+                    (Key([255, 255, 255, 255]), FixedData(hex_238)),
+                    (Key([255, 3, 0, 0]), FixedData(hex_1)),
+                    (Key([11, 119, 0, 119]), FixedData(hex_1)),
+                    (Key([3, 51, 51, 183]), FixedData(hex_1)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([15, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 183, 112, 0]), FixedData(hex_238)),
+                ],
+            ),
+            (
+                Key([0, 0, 48, 0]),
+                vec![
+                    (Key([0, 0, 7, 0]), FixedData(hex_238)),
+                    (Key([112, 119, 119, 247]), FixedData(hex_0)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([123, 176, 15, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 183]), FixedData(hex_1)),
+                    (Key([0, 3, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 55]), FixedData(hex_238)),
+                ],
+            ),
+            (
+                Key([112, 7, 119, 0]),
+                vec![
+                    (Key([0, 0, 0, 48]), FixedData(hex_238)),
+                    (Key([112, 119, 0, 0]), FixedData(hex_238)),
+                    (Key([255, 255, 255, 255]), FixedData(hex_238)),
+                    (Key([255, 255, 240, 48]), FixedData(hex_238)),
+                    (Key([3, 112, 183, 112]), FixedData(hex_238)),
+                    (Key([119, 0, 51, 51]), FixedData(hex_238)),
+                ],
+            ),
+            (
+                Key([112, 0, 0, 0]),
+                vec![
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 240, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 11, 119]), FixedData(hex_238)),
+                    (Key([0, 48, 0, 0]), FixedData(hex_1)),
+                ],
+            ),
+            (
+                Key([0, 0, 0, 0]),
+                vec![
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([119, 112, 183, 112]), FixedData(hex_1)),
+                    (Key([255, 240, 112, 0]), FixedData(hex_238)),
+                    (Key([0, 7, 7, 112]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 3]), FixedData(hex_238)),
+                    (Key([0, 0, 119, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 119, 176]), FixedData(hex_238)),
+                    (Key([119, 7, 119, 183]), FixedData(hex_1)),
+                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (Key([0, 0, 0, 3]), FixedData(hex_238)),
+                    (Key([0, 0, 11, 119]), FixedData(hex_238)),
+                    (Key([119, 112, 3, 51]), FixedData(hex_238)),
+                    (Key([183, 112, 0, 0]), FixedData(hex_0)),
+                ],
+            ),
+        ];
+
+        fn routine(db: std::sync::Arc<DB>, changes: Vec<(Key, Vec<(Key, FixedData)>)>) {
+            let cf = db.cf_handle("counter").unwrap();
+            let collection =
+                TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&*db, cf)));
+
+            let mut top_level_root = RootGuard::new(
+                &collection.database,
+                crate::empty_trie_hash(),
+                DataWithRoot::get_childs,
+            );
+
+            let mut accounts_map: HashMap<Key, HashMap<Key, FixedData>> = HashMap::new();
+            {
+                for (k, storage) in changes.iter() {
+                    let account_storage_mem = accounts_map.entry(*k).or_insert(HashMap::default());
+
+                    for (data_key, data) in storage {
+                        let mut account_trie = collection.trie_for(top_level_root.root);
+
+                        let mut account: DataWithRoot = TrieMut::get(&account_trie, &k.0)
+                            .map(|d| bincode::deserialize(&d).unwrap())
+                            .unwrap_or_default();
+                        let mut storage_trie = collection.trie_for(account.root);
+                        account_storage_mem.insert(*data_key, *data);
+
+                        storage_trie.insert(&data_key.0, &data.0);
+
+                        let storage_patch = storage_trie.into_patch();
+                        account.root = storage_patch.root;
+
+                        account_trie.insert(&k.0, &bincode::serialize(&account).unwrap());
+
+                        let mut account_patch = account_trie.into_patch();
+
+                        let mut roots = String::new();
+                        for (key, v) in storage_patch.change.changes.iter().rev() {
+                            roots.push_str(&format!("=>{}({})", key, v.is_some() as i32))
+                        }
+                        trace!("storage_root:{}", roots);
+                        let mut roots = String::new();
+                        for (key, v) in account_patch.change.changes.iter().rev() {
+                            roots.push_str(&format!("=>{}({})", key, v.is_some() as i32))
+                        }
+                        trace!("account_root:{}", roots);
+                        account_patch.change.merge_child(&storage_patch.change);
+
+                        let mut roots = String::new();
+                        for (key, v) in account_patch.change.changes.iter().rev() {
+                            roots.push_str(&format!("=>{}({})", key, v.is_some() as i32))
+                        }
+                        trace!("full_root:{}", roots);
+
+                        top_level_root =
+                            collection.apply_increase(account_patch, DataWithRoot::get_childs);
+                    }
+                }
+            };
+
+            let accounts_storage = collection.trie_for(top_level_root.root);
+
+            // println!("accounts_map = {}", accounts_map.len());
+            for (bob_key, storage) in accounts_map {
+                // println!("storage_len = {}", storage.len());
+                let bob_account: DataWithRoot =
+                    bincode::deserialize(&TrieMut::get(&accounts_storage, &bob_key.0).unwrap())
+                        .unwrap();
+
+                let bob_storage_trie = collection.trie_for(bob_account.root);
+                for k in storage.keys() {
+                    assert_eq!(
+                        &storage[k].0[..],
+                        &TrieMut::get(&bob_storage_trie, &k.0).unwrap()
+                    );
+                }
+            }
+            // check cleanup db
+            drop(top_level_root);
+        }
+
+        let _ = env_logger::Builder::new()
+            .parse_filters("trace")
+            .format(|buf, record| {
+                let handle = std::thread::current();
+                writeln!(
+                    buf,
+                    "[{}]{}=>{}",
+                    record.target(),
+                    handle.name().unwrap_or_default(),
+                    record.args()
+                )
+            })
+            .try_init();
+        let dir = tempdir().unwrap();
+        let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
+        let db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
+        let db = std::sync::Arc::new(db);
+        let cloned_db = db.clone();
+        let th1 = std::thread::Builder::new()
+            .name("1".into())
+            .spawn(move || {
+                for _ in 0..100 {
+                    routine(cloned_db.clone(), changes1.clone())
+                }
+            })
+            .unwrap();
+        let cloned_db = db.clone();
+        let th2 = std::thread::Builder::new()
+            .name("2".into())
+            .spawn(move || {
+                for _ in 0..100 {
+                    routine(cloned_db.clone(), changes2.clone())
+                }
+            })
+            .unwrap();
+        th1.join().unwrap();
+        th2.join().unwrap();
+
+        // let changestested = vec![(
+        //     Key([15, 0, 0, 0]),
+        //     vec![
+        //         (Key([0, 11, 119, 0]), FixedData(hex_238)),
+        //         (Key([48, 0, 0, 48]), FixedData(hex_238)),
+        //         (Key([0, 3, 112, 183]), FixedData(hex_1)),
+        //     ],
+        // )];
+        // routine(cloned_db.clone(), changestested.clone());
+
+        let cf = db.cf_handle("counter").unwrap();
+        assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
+
+        for (k, v) in db.iterator_cf(cf, IteratorMode::Start) {
+            println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
+        }
+        assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);
     }
 }

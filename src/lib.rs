@@ -1,13 +1,16 @@
 //! Merkle trie implementation for Ethereum.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 
 use primitive_types::H256;
 use rlp::Rlp;
 use sha3::{Digest, Keccak256};
 
 use merkle::{nibble, MerkleNode, MerkleValue};
-
+pub use rocksdb_lib;
 pub mod gc;
 pub mod merkle;
 pub use memory::*;
@@ -37,20 +40,28 @@ pub trait Database {
     fn get(&self, key: H256) -> &[u8];
 }
 
+impl<'a, T: Database> Database for &'a T {
+    fn get(&self, key: H256) -> &[u8] {
+        Database::get(*self, key)
+    }
+}
+impl<T: Database> Database for Arc<T> {
+    fn get(&self, key: H256) -> &[u8] {
+        Database::get(self.as_ref(), key)
+    }
+}
+
 /// Change for a merkle trie operation.
 #[derive(Default, Debug, Clone)]
 pub struct Change {
     /// Additions to the database.
-    pub adds: HashMap<H256, Vec<u8>>,
-    /// Removals to the database.
-    pub removes: HashSet<H256>,
+    pub changes: VecDeque<(H256, Option<Vec<u8>>)>,
 }
 
 impl Change {
     /// Change to add a new raw value.
     pub fn add_raw(&mut self, key: H256, value: Vec<u8>) {
-        self.adds.insert(key, value);
-        self.removes.remove(&key);
+        self.changes.push_back((key, Some(value)));
     }
 
     /// Change to add a new node.
@@ -74,8 +85,7 @@ impl Change {
 
     /// Change to remove a raw key.
     pub fn remove_raw(&mut self, key: H256) {
-        self.adds.remove(&key);
-        self.removes.insert(key);
+        self.changes.push_back((key, None));
     }
 
     /// Change to remove a node. Return whether there's any node being
@@ -93,12 +103,19 @@ impl Change {
 
     /// Merge another change to this change.
     pub fn merge(&mut self, other: &Change) {
-        for v in &other.removes {
-            self.remove_raw(*v);
+        for (key, v) in &other.changes {
+            if let Some(v) = v {
+                self.add_raw(*key, v.clone());
+            } else {
+                self.remove_raw(*key);
+            }
         }
+    }
 
-        for (key, value) in &other.adds {
-            self.add_raw(*key, value.clone());
+    /// Merge child tree change into this change.
+    pub fn merge_child(&mut self, other: &Change) {
+        for (key, v) in other.changes.iter().rev() {
+            self.changes.push_front((*key, v.clone()))
         }
     }
 }

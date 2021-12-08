@@ -9,9 +9,6 @@ repository = "https://github.com/hrls/triedb"
 [lib]
 name = "triedb"
 
-[features]
-default = ["rocksdb"]
-rocksdb = ["rocksdb_lib"]
 
 [dependencies]
 sha3 = "0.9.1"
@@ -33,3 +30,9 @@ quickcheck_macros = "1.0.0"
 serde = { version = "1.0.123", features = ["derive"] }
 tempfile = "3.2.0"
 hex-literal="0.3"
+env_logger = "0.9"
+
+
+[features]
+default = ["rocksdb"]
+rocksdb = ["rocksdb_lib"]
