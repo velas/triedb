@@ -16,7 +16,7 @@ fn find_and_remove_child<'a, D: Database>(
 
     let node = match merkle {
         MerkleValue::Empty => panic!(),
-        MerkleValue::Full(ref sub_node) => sub_node.as_ref().clone(),
+        MerkleValue::Full(sub_node) => *sub_node,
         MerkleValue::Hash(h) => {
             let sub_node =
                 MerkleNode::decode(&Rlp::new(database.get(h))).expect("Unable to decode value");
@@ -116,13 +116,10 @@ pub fn delete_by_child<'a, D: Database>(
 
     let new = match merkle {
         MerkleValue::Empty => None,
-        MerkleValue::Full(ref sub_node) => {
-            let (new_node, subchange) = delete_by_node(sub_node.as_ref().clone(), nibble, database);
+        MerkleValue::Full(sub_node) => {
+            let (new_node, subchange) = delete_by_node(*sub_node, nibble, database);
             change.merge(&subchange);
-            match new_node {
-                Some(new_node) => Some(new_node),
-                None => None,
-            }
+            new_node
         }
         MerkleValue::Hash(h) => {
             let sub_node = MerkleNode::decode(&Rlp::new(database.get(h)))
@@ -130,10 +127,7 @@ pub fn delete_by_child<'a, D: Database>(
             change.remove_node(&sub_node);
             let (new_node, subchange) = delete_by_node(sub_node, nibble, database);
             change.merge(&subchange);
-            match new_node {
-                Some(new_node) => Some(new_node),
-                None => None,
-            }
+            new_node
         }
     };
 

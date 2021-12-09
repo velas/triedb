@@ -102,15 +102,11 @@ pub type NibbleSlice<'a> = &'a [Nibble];
 
 /// Given a key, return the corresponding nibble.
 pub fn from_key(key: &[u8]) -> NibbleVec {
-    let mut vec = NibbleVec::new();
+    let mut vec = NibbleVec::with_capacity(key.len() * 2);
 
-    for i in 0..(key.len() * 2) {
-        if i & 1 == 0 {
-            // even
-            vec.push(((key[i / 2] & 0xf0) >> 4).into());
-        } else {
-            vec.push((key[i / 2] & 0x0f).into());
-        }
+    for k in key {
+        vec.push((k >> 4).into());
+        vec.push((k & 0x0f).into());
     }
 
     vec
@@ -118,7 +114,7 @@ pub fn from_key(key: &[u8]) -> NibbleVec {
 
 /// Given a nibble, return the corresponding key.
 pub fn into_key(nibble: NibbleSlice) -> Vec<u8> {
-    let mut ret = Vec::new();
+    let mut ret = Vec::with_capacity(nibble.len() / 2 + 1);
 
     for i in 0..nibble.len() {
         let value: u8 = nibble[i].into();
@@ -135,14 +131,14 @@ pub fn into_key(nibble: NibbleSlice) -> Vec<u8> {
 
 /// Decode a nibble from RLP.
 pub fn decode(rlp: &Rlp) -> Result<(NibbleVec, NibbleType)> {
-    let mut vec = NibbleVec::new();
-
     let data = rlp.data()?;
     let start_odd = data[0] & 0b00010000 == 0b00010000;
     let start_index = if start_odd { 1 } else { 2 };
     let is_leaf = data[0] & 0b00100000 == 0b00100000;
 
     let len = data.len() * 2;
+
+    let mut vec = NibbleVec::with_capacity(len - start_index);
 
     for i in start_index..len {
         if i & 1 == 0 {
@@ -233,14 +229,8 @@ pub fn common_with_sub<'a, 'b>(
 
 /// Common prefix for all provided nibbles.
 pub fn common_all<'a, T: Iterator<Item = NibbleSlice<'a>>>(mut iter: T) -> NibbleSlice<'a> {
-    let first = match iter.next() {
-        Some(val) => val,
-        None => return &[],
-    };
-    let second = match iter.next() {
-        Some(val) => val,
-        None => return first,
-    };
+    let first = iter.next().unwrap_or(&[]);
+    let second = iter.next().unwrap_or(first);
 
     let mut common_cur = common(first, second);
     for key in iter {

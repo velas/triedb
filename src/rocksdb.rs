@@ -189,7 +189,7 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
                 .map_err(|e| anyhow::format_err!("Cannot get key {}", e))?
                 .is_none()
             {
-                let rlp = Rlp::new(&value);
+                let rlp = Rlp::new(value);
                 let node = MerkleNode::decode(&rlp)?;
                 trace!("inserting node {}=>{:?}", key, node);
                 for hash in ReachableHashes::collect(&node, &mut child_extractor).childs() {

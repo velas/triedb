@@ -38,24 +38,18 @@ impl<T: TrieMut> AnyTrieMut<T> {
 
     /// Insert a value to the trie.
     pub fn insert<K: rlp::Encodable, V: rlp::Encodable>(&mut self, key: &K, value: &V) {
-        let key = rlp::encode(key).to_vec();
-        let value = rlp::encode(value).to_vec();
-
-        self.0.insert(&key, &value)
+        self.0.insert(&rlp::encode(key), &rlp::encode(value))
     }
 
     /// Delete a value in the trie.
     pub fn delete<K: rlp::Encodable>(&mut self, key: &K) {
-        let key = rlp::encode(key).to_vec();
-
-        self.0.delete(&key)
+        self.0.delete(&rlp::encode(key))
     }
 
     /// Get a value in the trie.
     pub fn get<K: rlp::Encodable, V: rlp::Decodable>(&self, key: &K) -> Option<V> {
-        let key = rlp::encode(key).to_vec();
         self.0
-            .get(&key)
+            .get(&rlp::encode(key))
             .map(|value| rlp::decode(&value).expect("Unable to decode value"))
     }
 }
@@ -131,7 +125,7 @@ impl<T: TrieMut> SecureTrieMut<T> {
     }
 
     fn secure_key<K: AsRef<[u8]>>(key: &K) -> Vec<u8> {
-        Keccak256::digest(key.as_ref()).as_slice().into()
+        Keccak256::digest(key.as_ref()).to_vec()
     }
 
     /// Get the root hash of the current trie.
@@ -185,7 +179,7 @@ impl<T: TrieMut> AnySecureTrieMut<T> {
 
     /// Insert a value to the trie.
     pub fn insert<K: AsRef<[u8]>, V: rlp::Encodable>(&mut self, key: &K, value: &V) {
-        self.0.insert(&key, &rlp::encode(value).to_vec())
+        self.0.insert(&key, &rlp::encode(value))
     }
 
     /// Delete a value in the trie.

@@ -241,7 +241,7 @@ impl DbCounter for MapWithCounterCached {
         match self.db.data.entry(key) {
             Entry::Occupied(_) => {}
             Entry::Vacant(v) => {
-                let rlp = Rlp::new(&value);
+                let rlp = Rlp::new(value);
                 let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
                 trace!("inserting node {}=>{:?}", key, node);
                 for hash in ReachableHashes::collect(&node, child_extractor).childs() {
