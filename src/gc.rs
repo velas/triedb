@@ -95,6 +95,9 @@ pub trait DbCounter {
     // To modify counter use gc_insert_node/gc_try_cleanup_node.
     fn gc_count(&self, key: H256) -> usize;
 
+    // Return true if node data is exist, and it counter more than 0;
+    fn node_exist(&self, key: H256) -> bool;
+
     // Any of remove is a link to MerkleNode.
     // Every remove should be processed atomicly:
     // 1. checks if removes counter == 0.
@@ -140,15 +143,15 @@ impl<D: DbCounter + Database> TrieCollection<D> {
         F: FnMut(&[u8]) -> Vec<H256> + Clone,
     {
         let root_guard = RootGuard::new(&self.database, root, child_extractor.clone());
+
         // we collect changs from bottom to top, but insert should be done from root to child.
         for (key, value) in change.changes.into_iter().rev() {
-            // dbg!(&key);
-            // dbg!(value.is_some());
             if let Some(value) = value {
                 self.database
                     .gc_insert_node(key, &value, &mut child_extractor);
             }
         }
+
         root_guard
     }
 }
@@ -302,6 +305,11 @@ impl DbCounter for MapWithCounterCached {
         self.db.counter.get(&key).map(|v| *v).unwrap_or_default()
     }
 
+    // Return true if node data is exist, and it counter more than 0;
+    fn node_exist(&self, key: H256) -> bool {
+        self.db.data.get(&key).is_some() && self.gc_count(key) > 0
+    }
+
     // atomic operation:
     // 1. check if key counter didn't increment in other thread.
     // 2. remove key if counter == 0.
@@ -364,6 +372,14 @@ impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> RootGuard<'a, D,
             root,
             child_collector,
         }
+    }
+    // Return true if root is valid node
+    pub fn check_root_exist(&self) -> bool {
+        if self.root == empty_trie_hash!() {
+            return true;
+        }
+
+        self.db.node_exist(self.root)
     }
     // Release root reference, but skip cleanup.
     pub fn leak_root(mut self) -> H256 {

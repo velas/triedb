@@ -113,6 +113,8 @@ impl Change {
     }
 
     /// Merge child tree change into this change.
+    /// Changes inserts are ordered from child to root, so when we merge child subtree
+    /// we should push merge it in front.
     pub fn merge_child(&mut self, other: &Change) {
         for (key, v) in other.changes.iter().rev() {
             self.changes.push_front((*key, v.clone()))

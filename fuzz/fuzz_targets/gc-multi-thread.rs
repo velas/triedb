@@ -214,6 +214,7 @@ fn qc_handles_inner_roots(
     changes: Vec<(Key, Vec<(Key, FixedData)>)>,
     changes2: Vec<(Key, Vec<(Key, FixedData)>)>,
 ) {
+    let _ = env_logger::Builder::new().parse_filters("warn").try_init();
     let dir = tempdir().unwrap();
     let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
     let db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();

@@ -9,6 +9,7 @@ use primitive_types::H256;
 use rlp::Rlp;
 use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB, Transaction};
 
+// We use optimistica transaction, to allow regular `get` operation execute without lock timeouts.
 type DB = OptimisticTransactionDB;
 
 use crate::{
@@ -164,7 +165,7 @@ macro_rules! retry {
             let result = { $($tokens)* };
             Ok(result)
         };
-        const NUM_RETRY: usize = 3;
+        const NUM_RETRY: usize = 10;
         let mut e = None; //use option because rust think that this variable can be uninit
         for retry_count in 0..NUM_RETRY {
             e = Some(retry());
@@ -188,6 +189,9 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
     where
         F: FnMut(&[u8]) -> Vec<H256>,
     {
+        let rlp = Rlp::new(&value);
+        let node = MerkleNode::decode(&rlp).expect("Data should be decodable node");
+        let childs = ReachableHashes::collect(&node, &mut child_extractor).childs();
         retry! {
             let db = self.db.db.borrow();
             let mut tx = db.transaction();
@@ -197,11 +201,9 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
                 .map_err(|e| anyhow::format_err!("Cannot get key {}", e))?
                 .is_none()
             {
-                let rlp = Rlp::new(&value);
-                let node = MerkleNode::decode(&rlp)?;
                 trace!("inserting node {}=>{:?}", key, node);
-                for hash in ReachableHashes::collect(&node, &mut child_extractor).childs() {
-                    self.db.increase(&mut tx, hash)?;
+                for hash in &childs {
+                    self.db.increase(&mut tx, *hash)?;
                 }
 
                 tx.put(key.as_ref(), value)?;
@@ -216,6 +218,17 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
         self.db
             .get_counter_in_tx(&mut tx, key)
             .expect("Cannot read value") as usize
+    }
+
+    // Return true if node data is exist, and it counter more than 0;
+    fn node_exist(&self, key: H256) -> bool {
+        self.db
+            .db
+            .borrow()
+            .get(key.as_ref())
+            .unwrap_or_default()
+            .is_some()
+            && self.gc_count(key) > 0
     }
 
     // atomic operation:
@@ -233,9 +246,11 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
             return vec![];
         };
 
+        // To make second retry execute faster, cache child keys.
+        let mut cached_childs = None;
         trace!("try removing node {}", key);
         retry! {
-            let mut nodes = vec![];
+            let mut nodes = Vec::with_capacity(16);
             //TODO: retry
 
             let mut tx = db.transaction();
@@ -247,14 +262,22 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
                 }
                 tx.delete(&key.as_ref())?;
                 self.db.remove_counter(&mut tx, key)?;
-                let rlp = Rlp::new(&value);
-                let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-                for hash in ReachableHashes::collect(&node, &mut child_extractor).childs() {
-                    let child_count = self.db.decrease(&mut tx, hash)?;
+
+
+                let childs = cached_childs.take().unwrap_or_else(||{
+                    let rlp = Rlp::new(&value);
+                    let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                    ReachableHashes::collect(&node, &mut child_extractor).childs()
+                });
+
+                for hash in &childs {
+                    let child_count = self.db.decrease(&mut tx, *hash)?;
                     if child_count <= 0 {
-                        nodes.push(hash);
+                        nodes.push(*hash);
                     }
                 }
+
+                cached_childs = Some(childs);
 
                 tx.commit()?;
             }
