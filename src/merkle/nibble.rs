@@ -102,31 +102,18 @@ pub type NibbleSlice<'a> = &'a [Nibble];
 
 /// Given a key, return the corresponding nibble.
 pub fn from_key(key: &[u8]) -> NibbleVec {
-    let mut vec = NibbleVec::with_capacity(key.len() * 2);
-
-    for k in key {
-        vec.push((k >> 4).into());
-        vec.push((k & 0x0f).into());
-    }
-
-    vec
+    key.iter()
+        .map(|k| [(k >> 4).into(), (k & 0x0F).into()])
+        .flatten()
+        .collect()
 }
 
 /// Given a nibble, return the corresponding key.
 pub fn into_key(nibble: NibbleSlice) -> Vec<u8> {
-    let mut ret = Vec::with_capacity(nibble.len() / 2 + 1);
-
-    for i in 0..nibble.len() {
-        let value: u8 = nibble[i].into();
-        if i & 1 == 0 {
-            // even
-            ret.push(value << 4);
-        } else {
-            ret[i / 2] |= value;
-        }
-    }
-
-    ret
+    nibble
+        .chunks(2)
+        .map(|chunk| ((chunk[0] as u8) << 4) + (*chunk.get(1).unwrap_or(&Nibble::N0) as u8))
+        .collect()
 }
 
 /// Decode a nibble from RLP.
@@ -161,7 +148,7 @@ pub fn decode(rlp: &Rlp) -> Result<(NibbleVec, NibbleType)> {
 
 /// Encode a nibble into the given RLP stream.
 pub fn encode(vec: NibbleSlice, typ: NibbleType, s: &mut RlpStream) {
-    let mut ret: Vec<u8> = Vec::new();
+    let mut ret: Vec<u8> = Vec::with_capacity((vec.len() + 1) / 2 + 1);
 
     if vec.len() & 1 == 0 {
         // even
