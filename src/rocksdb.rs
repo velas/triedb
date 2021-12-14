@@ -9,7 +9,7 @@ use primitive_types::H256;
 use rlp::Rlp;
 use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB, Transaction};
 
-type DB = OptimisticTransactionDB;
+pub type DB = OptimisticTransactionDB;
 
 use crate::{
     cache::CachedHandle,
