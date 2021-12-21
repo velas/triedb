@@ -9,8 +9,10 @@ use crate::{
 };
 
 use crate::MerkleNode;
+
+//use asterix to avoid unresolved import https://github.com/rust-analyzer/rust-analyzer/issues/7459#issuecomment-907714513
+use derivative::*;
 use dashmap::{mapref::entry::Entry, DashMap};
-use derivative::Derivative;
 use log::*;
 use primitive_types::H256;
 use rlp::Rlp;
@@ -63,6 +65,11 @@ where
 
     pub fn childs(self) -> Vec<H256> {
         self.childs
+            .into_iter()
+            // Empty trie is a common default value for most
+            // objects that contain submap, filtering it will reduce collissions.
+            .filter(|i| *i != empty_trie_hash!())
+            .collect()
     }
 }
 
