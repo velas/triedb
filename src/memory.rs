@@ -38,9 +38,9 @@ impl Default for MemoryTrieMut {
     }
 }
 
-impl Into<HashMap<H256, Vec<u8>>> for MemoryTrieMut {
-    fn into(self) -> HashMap<H256, Vec<u8>> {
-        self.database
+impl From<MemoryTrieMut> for HashMap<H256, Vec<u8>> {
+    fn from(trie: MemoryTrieMut) -> HashMap<H256, Vec<u8>> {
+        trie.database
     }
 }
 
@@ -70,12 +70,12 @@ impl TrieMut for MemoryTrieMut {
 
 impl MemoryTrieMut {
     fn apply_change(&mut self, change: Change) {
-        for add in change.adds {
-            self.database.insert(add.0, add.1);
-        }
-
-        for remove in change.removes {
-            self.database.remove(&remove);
+        for (key, v) in &change.changes {
+            if let Some(v) = v {
+                self.database.insert(*key, v.clone());
+            } else {
+                self.database.remove(key);
+            }
         }
     }
 
@@ -94,6 +94,7 @@ impl MemoryTrieMut {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hex_literal::hex;
     use std::str::FromStr;
 
     #[test]
@@ -163,5 +164,24 @@ mod tests {
         mtrie.delete("key2bbb".as_bytes());
 
         assert_eq!(db1, mtrie.database);
+    }
+
+    #[test]
+    fn trie_multiple_prefixed_keys() {
+        let key1 = &hex!("af");
+        let key2 = &hex!("a2");
+        let key3 = &hex!("b3");
+        let keyc = &hex!("bf");
+        let val = &hex!("bb");
+        let mut mtrie = MemoryTrieMut::default();
+        mtrie.insert(key1, val);
+        mtrie.insert(key2, val);
+        mtrie.insert(key3, val);
+        mtrie.insert(keyc, val);
+        mtrie.delete(keyc);
+
+        assert_eq!(mtrie.get(key1).unwrap(), val);
+        assert_eq!(mtrie.get(key2).unwrap(), val);
+        assert_eq!(mtrie.get(key3).unwrap(), val);
     }
 }

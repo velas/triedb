@@ -1,13 +1,16 @@
 //! Merkle trie implementation for Ethereum.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 
 use primitive_types::H256;
 use rlp::Rlp;
 use sha3::{Digest, Keccak256};
 
 use merkle::{nibble, MerkleNode, MerkleValue};
-
+pub use rocksdb_lib;
 pub mod gc;
 pub mod merkle;
 pub use memory::*;
@@ -37,20 +40,28 @@ pub trait Database {
     fn get(&self, key: H256) -> &[u8];
 }
 
+impl<'a, T: Database> Database for &'a T {
+    fn get(&self, key: H256) -> &[u8] {
+        Database::get(*self, key)
+    }
+}
+impl<T: Database> Database for Arc<T> {
+    fn get(&self, key: H256) -> &[u8] {
+        Database::get(self.as_ref(), key)
+    }
+}
+
 /// Change for a merkle trie operation.
 #[derive(Default, Debug, Clone)]
 pub struct Change {
     /// Additions to the database.
-    pub adds: HashMap<H256, Vec<u8>>,
-    /// Removals to the database.
-    pub removes: HashSet<H256>,
+    pub changes: VecDeque<(H256, Option<Vec<u8>>)>,
 }
 
 impl Change {
     /// Change to add a new raw value.
     pub fn add_raw(&mut self, key: H256, value: Vec<u8>) {
-        self.adds.insert(key, value);
-        self.removes.remove(&key);
+        self.changes.push_back((key, Some(value)));
     }
 
     /// Change to add a new node.
@@ -74,8 +85,7 @@ impl Change {
 
     /// Change to remove a raw key.
     pub fn remove_raw(&mut self, key: H256) {
-        self.adds.remove(&key);
-        self.removes.insert(key);
+        self.changes.push_back((key, None));
     }
 
     /// Change to remove a node. Return whether there's any node being
@@ -93,12 +103,21 @@ impl Change {
 
     /// Merge another change to this change.
     pub fn merge(&mut self, other: &Change) {
-        for (key, value) in &other.adds {
-            self.add_raw(*key, value.clone());
+        for (key, v) in &other.changes {
+            if let Some(v) = v {
+                self.add_raw(*key, v.clone());
+            } else {
+                self.remove_raw(*key);
+            }
         }
+    }
 
-        for v in &other.removes {
-            self.remove_raw(*v);
+    /// Merge child tree change into this change.
+    /// Changes inserts are ordered from child to root, so when we merge child subtree
+    /// we should push merge it in front.
+    pub fn merge_child(&mut self, other: &Change) {
+        for (key, v) in other.changes.iter().rev() {
+            self.changes.push_front((*key, v.clone()))
         }
     }
 }
@@ -211,4 +230,20 @@ macro_rules! empty_trie_hash {
 
         H256::from_str("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421").unwrap()
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KECCAK_NULL_RLP: H256 = H256([
+        0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8,
+        0x6e, 0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63,
+        0xb4, 0x21,
+    ]);
+
+    #[test]
+    fn it_checks_macro_generates_expected_empty_hash() {
+        assert_eq!(empty_trie_hash!(), KECCAK_NULL_RLP);
+    }
 }
