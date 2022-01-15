@@ -1,30 +1,30 @@
 //! Merkle trie implementation for Ethereum.
 
+mod cache;
+mod database;
+mod error;
+pub mod gc;
+mod impls;
+mod memory;
+pub mod merkle;
+mod mutable;
+mod ops;
+
+#[cfg(feature = "rocksdb")]
+pub mod rocksdb;
+
 use std::collections::{HashMap, VecDeque};
 
 use primitive_types::H256;
 use rlp::Rlp;
 use sha3::{Digest, Keccak256};
 
-use merkle::{nibble, MerkleNode, MerkleValue};
-pub use rocksdb_lib;
-pub mod gc;
-pub mod merkle;
 pub use memory::*;
+use merkle::{nibble, MerkleNode, MerkleValue};
 pub use mutable::*;
+pub use rocksdb_lib;
 
 use crate::database::Database;
-
-#[cfg(feature = "rocksdb")]
-pub mod rocksdb;
-
-mod cache;
-mod database;
-mod error;
-mod impls;
-mod memory;
-mod mutable;
-mod ops;
 
 use ops::{build, delete, get, insert};
 
