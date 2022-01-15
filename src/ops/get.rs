@@ -1,9 +1,7 @@
 use rlp::{self, Rlp};
 
-use crate::{
-    merkle::{nibble::NibbleVec, MerkleNode, MerkleValue},
-    Database,
-};
+use crate::database::Database;
+use crate::merkle::{nibble::NibbleVec, MerkleNode, MerkleValue};
 
 pub fn get_by_value<'a, D: Database>(
     merkle: MerkleValue<'a>,

@@ -1,12 +1,13 @@
 use rlp::{self, Rlp};
 
+use crate::database::Database;
 use crate::{
     merkle::{
         empty_nodes,
         nibble::{self, NibbleVec},
         MerkleNode, MerkleValue,
     },
-    Change, Database,
+    Change,
 };
 
 fn value_and_leaf_branch<'a>(

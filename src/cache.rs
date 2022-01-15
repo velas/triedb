@@ -5,7 +5,8 @@ use std::{
 
 use primitive_types::H256;
 
-use crate::{CachedDatabaseHandle, Database};
+use crate::database::Database;
+use crate::CachedDatabaseHandle;
 
 #[derive(Default, Debug)]
 pub struct CachedHandle<D> {

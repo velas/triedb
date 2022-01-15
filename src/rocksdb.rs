@@ -13,11 +13,8 @@ use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB, Transact
 // We use optimistica transaction, to allow regular `get` operation execute without lock timeouts.
 type DB = OptimisticTransactionDB;
 
-use crate::{
-    cache::CachedHandle,
-    gc::{DbCounter, ReachableHashes},
-    CachedDatabaseHandle,
-};
+use crate::database::DatabaseMut;
+use crate::{cache::CachedHandle, gc::ReachableHashes, CachedDatabaseHandle};
 
 const EXCLUSIVE: bool = true;
 
@@ -185,7 +182,7 @@ macro_rules! retry {
 }
 pub type RocksHandle<'a, D> = CachedHandle<RocksDatabaseHandle<'a, D>>;
 
-impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
+impl<'a, D: Borrow<DB>> DatabaseMut for RocksHandle<'a, D> {
     // Insert value into db.
     // Check if value exist before, if not exist, increment child counter.
     fn gc_insert_node<F>(&self, key: H256, value: &[u8], mut child_extractor: F)

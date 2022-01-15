@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use primitive_types::H256;
 
-use crate::Database;
+use crate::database::Database;
 
 impl Database for HashMap<H256, Vec<u8>> {
     fn get(&self, key: H256) -> &[u8] {
@@ -50,6 +50,4 @@ pub mod tests {
             Self(Vec::arbitrary(&mut Gen::new(AVG_DATA_SIZE)))
         }
     }
-
-    
 }

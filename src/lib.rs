@@ -1,9 +1,6 @@
 //! Merkle trie implementation for Ethereum.
 
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::Arc,
-};
+use std::collections::{HashMap, VecDeque};
 
 use primitive_types::H256;
 use rlp::Rlp;
@@ -16,10 +13,13 @@ pub mod merkle;
 pub use memory::*;
 pub use mutable::*;
 
+use crate::database::Database;
+
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;
 
 mod cache;
+mod database;
 mod error;
 mod impls;
 mod memory;
@@ -32,23 +32,6 @@ type Result<T> = std::result::Result<T, error::Error>;
 
 pub trait CachedDatabaseHandle {
     fn get(&self, key: H256) -> Vec<u8>;
-}
-
-/// An immutable database handle.
-pub trait Database {
-    /// Get a raw value from the database.
-    fn get(&self, key: H256) -> &[u8];
-}
-
-impl<'a, T: Database> Database for &'a T {
-    fn get(&self, key: H256) -> &[u8] {
-        Database::get(*self, key)
-    }
-}
-impl<T: Database> Database for Arc<T> {
-    fn get(&self, key: H256) -> &[u8] {
-        Database::get(self.as_ref(), key)
-    }
 }
 
 /// Change for a merkle trie operation.
