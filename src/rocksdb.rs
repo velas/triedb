@@ -189,7 +189,7 @@ impl<'a, D: Borrow<DB>> DatabaseMut for RocksHandle<'a, D> {
     where
         F: FnMut(&[u8]) -> Vec<H256>,
     {
-        let rlp = Rlp::new(&value);
+        let rlp = Rlp::new(value);
         let node = MerkleNode::decode(&rlp).expect("Data should be decodable node");
         let childs = ReachableHashes::collect(&node, &mut child_extractor).childs();
         retry! {

@@ -10,7 +10,7 @@ pub fn get_by_value<'a, D: Database>(
 ) -> Option<&'a [u8]> {
     match merkle {
         MerkleValue::Empty => None,
-        MerkleValue::Full(subnode) => get_by_node(subnode.as_ref().clone(), nibble, database),
+        MerkleValue::Full(subnode) => get_by_node(*subnode, nibble, database),
         MerkleValue::Hash(h) => {
             let subnode = MerkleNode::decode(&Rlp::new(database.get(h)))
                 .expect("Unable to decode Node value");

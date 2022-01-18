@@ -47,7 +47,7 @@ impl<'a> MerkleNode<'a> {
 
     /// Whether the node can be inlined to a merkle value.
     pub fn inlinable(&self) -> bool {
-        rlp::encode(self).to_vec().len() < 32
+        rlp::encode(self).len() < 32
     }
 }
 
