@@ -10,8 +10,8 @@ use primitive_types::H256;
 use rlp::Rlp;
 use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB, Transaction};
 
-// We use optimistica transaction, to allow regular `get` operation execute without lock timeouts.
-type DB = OptimisticTransactionDB;
+// We use optimistic transaction, to allow regular `get` operation to execute without lock timeouts.
+pub type DB = OptimisticTransactionDB;
 
 use crate::database::DatabaseMut;
 use crate::{cache::CachedHandle, gc::ReachableHashes, CachedDatabaseHandle};
