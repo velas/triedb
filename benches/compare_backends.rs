@@ -1,17 +1,18 @@
 // trace_macros!(true);
-use std::{collections::HashMap, time::Instant};
+use std::{collections::HashMap, time::Duration, time::Instant};
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use dashmap::DashMap;
 use primitive_types::H256;
 use rand::prelude::*;
-use rocksdb_lib::{ColumnFamilyDescriptor, Options, DB};
+use rocksdb_lib::{ColumnFamilyDescriptor, OptimisticTransactionDB, Options};
 use tempfile::tempdir;
 use triedb::{
     gc::TrieCollection,
     rocksdb::{RocksDatabaseHandle, RocksHandle},
     MemoryTrieMut, TrieMut,
 };
+type DB = OptimisticTransactionDB;
 
 // Amount of entries to be added to collection before benching
 const PREP_SIZE: usize = 1000;
@@ -54,357 +55,225 @@ fn rand_collection(
     ret.into_iter()
 }
 
-fn bench_insert_backends(
-    c: &mut Criterion,
-    (bench_seed, setup_seed): ([u8; 32], [u8; 32]),
-    (bench_amount, setup_amount): (usize, usize),
-) {
-    let test_data: Vec<_> = rand_collection(bench_seed, bench_amount).collect();
+macro_rules! generate_bench {
+    (
+        @ $timing:ident
+        declare($name: expr, $c:ident: &mut Criterion);
+        fn init($bench_seed:ident, $setup_seed:ident,
+            $bench_amount:ident, $setup_amount:ident
+        ) {$($con_body: tt)*}
+        let $db: ident = $construct: expr;
+        let $this: ident = $process: expr;
 
-    c.bench_function("bench insert HashMap", |b| {
-        b.iter_batched(
-            || {
-                (
-                    test_data.clone(),
-                    rand_collection(setup_seed, setup_amount).collect::<HashMap<_, _>>(),
-                )
-            },
-            |(test_data, mut sut)| {
-                for (key, value) in test_data {
-                    sut.insert(key, value);
-                }
-            },
-            criterion::BatchSize::SmallInput,
-        )
-    });
+        fn apply() => $apply: expr;
+        fn reconstruct($root: ident) => $reconstruct: expr;
+        fn get($get_key: ident) => $get: expr;
+        fn insert($insert_key: ident, $insert_value: ident) => $insert: expr;
+    ) => {
+        #[allow(redundant_semicolons)]
+            $c.bench_function(&format!(concat!("{}::",stringify!($timing)), $name), |b| {
+                b.iter_custom(|num_iters| {
+                    let prep: Vec<_> = rand_collection($setup_seed, $setup_amount).collect();
 
-    c.bench_function("bench insert DashMap", |b| {
-        b.iter_batched(
-            || {
-                (
-                    test_data.clone(),
-                    rand_collection(setup_seed, setup_amount).collect::<DashMap<_, _>>(),
-                )
-            },
-            |(test_data, sut)| {
-                for (key, value) in test_data {
-                    sut.insert(key, value);
-                }
-            },
-            criterion::BatchSize::SmallInput,
-        )
-    });
+                    let test_data: Vec<_> = rand_collection($bench_seed, $bench_amount).collect();
+                    $($con_body)*;
+                    let $db = $construct;
+                    #[allow(unused_mut)]
+                    let mut $this = $process;
 
-    c.bench_function("bench insert RocksDB", |b| {
-        let dir = tempdir().unwrap();
-        let sut = DB::open_default(&dir).unwrap();
+                    for ($insert_key, $insert_value) in prep {
+                        $insert;
+                    }
+                    let $root = $apply;
+                    let mut apply = Duration::default();
+                    let mut get = Duration::default();
+                    let mut insert = Duration::default();
+                    let mut reconstruct_gc = Duration::default();
 
-        let prep: Vec<_> = rand_collection(setup_seed, setup_amount).collect();
+                    for _iter in 0..num_iters {
 
-        for (key, value) in prep {
-            sut.put(key, value).unwrap();
-        }
+                        let start = Instant::now();
+                        #[allow(unused_mut)]
+                        let mut $this = $reconstruct;
+                        reconstruct_gc += start.elapsed();
 
-        b.iter_batched(
-            || test_data.clone(),
-            |test_data| {
-                for (key, value) in test_data {
-                    sut.put(key, value).unwrap();
-                }
-            },
-            criterion::BatchSize::SmallInput,
-        );
-        drop(sut);
-        DB::destroy(&Options::default(), &dir).unwrap();
-    });
+                        let test_data = test_data.clone();
 
-    c.bench_function("bench insert MemoryTrieMut", |b| {
-        let mut sut = MemoryTrieMut::default();
+                        let start = Instant::now();
+                        // Start benchmark
+                        for ($get_key, _) in &test_data {
+                            $get;
+                        }
+                        get += start.elapsed();
 
-        let prep: Vec<_> = rand_collection(setup_seed, setup_amount).collect();
+                        let start = Instant::now();
+                        // Start benchmark
+                        for ($insert_key, $insert_value) in test_data {
+                            $insert;
+                        }
+                        insert += start.elapsed();
 
-        for (key, value) in prep {
-            sut.insert(key.as_bytes(), &value);
-        }
+                        let start = Instant::now();
+                        let _new_root = $apply;
+                        apply += start.elapsed();
 
-        b.iter_batched(
-            || test_data.clone(),
-            |test_data| {
-                for (key, value) in test_data {
-                    sut.insert(key.as_bytes(), &value);
-                }
-            },
-            criterion::BatchSize::SmallInput,
-        )
-    });
+                        let start = Instant::now();
+                        drop(_new_root);
+                        reconstruct_gc += start.elapsed();
+                    }
+                    // + is used because macro produce expression, when we choose one of accumulator, only choosen one is set, remaining is produce zero
+                    Duration::default() +
+                    generate_bench!(@@timing => insert, $timing) +
 
-    c.bench_function("bench insert TrieCollection<Mem>", |b| {
-        use triedb::empty_trie_hash;
-        use triedb::gc::MapWithCounterCached;
+                    generate_bench!(@@timing => get, $timing) +
 
-        let handle = MapWithCounterCached::default();
+                    generate_bench!(@@timing => apply, $timing) +
 
-        let collection = TrieCollection::new(handle);
+                    generate_bench!(@@timing => reconstruct_gc, $timing)
+                });
+            });
 
-        b.iter_custom(|num_iters| {
-            let prep: Vec<_> = rand_collection(setup_seed, setup_amount).collect();
-            let mut trie = collection.trie_for(empty_trie_hash());
+    };
+    // just bind $name as ident and as macro binding
+    (@@timing => $name:ident, $timing: ident) => ( generate_bench!(@@timing => $name, $name, $timing));
 
-            for (key, value) in prep {
-                trie.insert(key.as_bytes(), &value);
-            }
+    // match table that choose accumulator, based on name, and type of generated benchmark
+    (@@timing => insert, $insert: ident, insert) => ( $insert );
+    (@@timing => apply, $apply: ident, apply) => ( $apply );
+    (@@timing => reconstruct_gc, $reconstruct_gc: ident, reconstruct_gc) => ( $reconstruct_gc );
+    (@@timing => get, $get: ident, get) => ( $get );
+    // by default return zero
+    (@@timing => $any: ident, $any2: ident, $any3: ident) => ( Duration::default() );
 
-            let patch = trie.into_patch(); // FIXME: get patch without consuming `self`
-            let root = collection.apply_increase(patch, |_| vec![]);
+    // Generate benchmark by type
+    ($($tokens:tt)*) =>
+    {
+        generate_bench!(@insert $($tokens)*);
 
-            let start = Instant::now();
-            for _iter in 0..num_iters {
-                let mut trie = collection.trie_for(root.root);
-                // Start benchmark
-                for (key, value) in &test_data {
-                    trie.insert(key.as_bytes(), &*value);
-                }
+        generate_bench!(@get $($tokens)*);
 
-                let patch = trie.into_patch(); // FIXME: get patch without consuming `self`
-                let _root = collection.apply_increase(patch, |_| vec![]);
-            }
+        generate_bench!(@apply $($tokens)*);
 
-            start.elapsed()
-        });
-    });
+        generate_bench!(@reconstruct_gc $($tokens)*);
 
-    c.bench_function("bench insert TrieCollection<Rocks>", |b| {
-        use triedb::empty_trie_hash;
-        use triedb::rocksdb::{merge_counter, DB};
-
-        fn default_opts() -> Options {
-            let mut opts = Options::default();
-            opts.create_if_missing(true);
-            opts.create_missing_column_families(true);
-            opts
-        }
-
-        fn counter_cf_opts() -> Options {
-            let mut opts = default_opts();
-            opts.set_merge_operator_associative("inc_counter", merge_counter);
-            opts
-        }
-
-        let dir = tempdir().unwrap();
-        let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
-        let db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
-
-        let cf = db.cf_handle("counter").unwrap();
-
-        let handle = RocksHandle::new(RocksDatabaseHandle::new(&db, cf));
-
-        let collection = TrieCollection::new(handle);
-
-        b.iter_custom(|num_iters| {
-            let prep: Vec<_> = rand_collection(setup_seed, setup_amount).collect();
-            let mut trie = collection.trie_for(empty_trie_hash());
-
-            for (key, value) in prep {
-                trie.insert(key.as_bytes(), &value);
-            }
-
-            let patch = trie.into_patch(); // FIXME: get patch without consuming `self`
-            let root = collection.apply_increase(patch, |_| vec![]);
-
-            let start = Instant::now();
-            for _iter in 0..num_iters {
-                let mut trie = collection.trie_for(root.root);
-                // Start benchmark
-                for (key, value) in &test_data {
-                    trie.insert(key.as_bytes(), &*value);
-                }
-
-                let patch = trie.into_patch(); // FIXME: get patch without consuming `self`
-                let _root = collection.apply_increase(patch, |_| vec![]);
-            }
-
-            start.elapsed()
-        });
-    });
+    };
 }
 
-fn bench_get_backends(
+/// Test different collections
+/// Reconstruct = cleanup + cost of recreating the test collection - In other word const of reverting to base state.
+/// apply = write changes to storage.
+fn bench_backends(
     c: &mut Criterion,
     (bench_seed, setup_seed): ([u8; 32], [u8; 32]),
     (bench_amount, setup_amount): (usize, usize),
 ) {
-    let test_data: Vec<_> = rand_collection(bench_seed, bench_amount).collect();
-
-    c.bench_function("bench get HashMap", |b| {
-        b.iter_batched(
-            || {
-                (
-                    test_data.clone(),
-                    rand_collection(setup_seed, setup_amount).collect::<HashMap<_, _>>(),
-                )
-            },
-            |(test_data, sut)| {
-                for (key, _value) in test_data {
-                    let _ = sut.get(&key);
-                }
-            },
-            criterion::BatchSize::SmallInput,
-        )
-    });
-
-    c.bench_function("bench get DashMap", |b| {
-        b.iter_batched(
-            || {
-                (
-                    test_data.clone(),
-                    rand_collection(setup_seed, setup_amount).collect::<DashMap<_, _>>(),
-                )
-            },
-            |(test_data, sut)| {
-                for (key, _value) in test_data {
-                    let _ = sut.get(&key);
-                }
-            },
-            criterion::BatchSize::SmallInput,
-        )
-    });
-
-    c.bench_function("bench get RocksDB", |b| {
-        let dir = tempdir().unwrap();
-        let sut = DB::open_default(&dir).unwrap();
-
-        let prep: Vec<_> = rand_collection(setup_seed, setup_amount).collect();
-
-        for (key, value) in prep {
-            sut.put(key, value).unwrap();
+    generate_bench! {
+        declare("TrieCollection<Rocks>", c: &mut Criterion);
+        fn init(bench_seed, setup_seed,
+            bench_amount, setup_amount) {
+            use triedb::empty_trie_hash;
+            use triedb::rocksdb::merge_counter;
+            fn default_opts() -> Options {
+                let mut opts = Options::default();
+                opts.create_if_missing(true);
+                opts.create_missing_column_families(true);
+                opts
+            }
+            fn counter_cf_opts() -> Options {
+                let mut opts = default_opts();
+                opts.set_merge_operator_associative("inc_counter", merge_counter);
+                opts
+            }
+            let dir = tempdir().unwrap();
+            let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
+            let db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
+            let cf = db.cf_handle("counter").unwrap();
+            let handle = RocksHandle::new(RocksDatabaseHandle::new(&db, cf));
         }
-
-        b.iter_batched(
-            || test_data.clone(),
-            |test_data| {
-                for (key, _value) in test_data {
-                    let _ = sut.get(key.as_bytes());
-                }
-            },
-            criterion::BatchSize::SmallInput,
-        );
-        drop(sut);
-        DB::destroy(&Options::default(), &dir).unwrap();
-    });
-
-    c.bench_function("bench get MemoryTrieMut", |b| {
-        let mut sut = MemoryTrieMut::default();
-
-        let prep: Vec<_> = rand_collection(setup_seed, setup_amount).collect();
-
-        for (key, value) in prep {
-            sut.insert(key.as_bytes(), &value);
-        }
-
-        b.iter_batched(
-            || test_data.clone(),
-            |test_data| {
-                for (key, _value) in test_data {
-                    let _ = sut.get(key.as_bytes());
-                }
-            },
-            criterion::BatchSize::SmallInput,
-        )
-    });
-
-    c.bench_function("bench get TrieCollection<Mem>", |b| {
-        use triedb::empty_trie_hash;
-        use triedb::gc::MapWithCounterCached;
-
-        let handle = MapWithCounterCached::default();
-
         let collection = TrieCollection::new(handle);
+        let this = collection.trie_for(empty_trie_hash());
+        fn apply() => collection.apply_increase(this.into_patch(), no_childs);
+        fn reconstruct(root) => collection.trie_for(root.root);
+        fn get(key)  => this.get(&key.as_ref());
+        fn insert(key, value) => this.insert(&key.as_ref(), &value);
+    }
 
-        b.iter_custom(|num_iters| {
-            let prep: Vec<_> = rand_collection(setup_seed, setup_amount).collect();
-            let mut trie = collection.trie_for(empty_trie_hash());
+    generate_bench! {
+        declare("TrieCollection<Memory>", c: &mut Criterion);
+        fn init(bench_seed, setup_seed,
+            bench_amount, setup_amount) {
+            use triedb::empty_trie_hash;
+            use triedb::gc::MapWithCounterCached;
 
-            for (key, value) in prep {
-                trie.insert(key.as_bytes(), &value);
-            }
-
-            let patch = trie.into_patch(); // FIXME: get patch without consuming `self`
-            let root = collection.apply_increase(patch, |_| vec![]);
-
-            let start = Instant::now();
-            for _iter in 0..num_iters {
-                let trie = collection.trie_for(root.root);
-                // Start benchmark
-                for (key, _value) in &test_data {
-                    let _ = trie.get(key.as_bytes());
-                }
-
-                let patch = trie.into_patch(); // FIXME: get patch without consuming `self`
-                let _root = collection.apply_increase(patch, |_| vec![]);
-            }
-
-            start.elapsed()
-        });
-    });
-
-    c.bench_function("bench get TrieCollection<Rocks>", |b| {
-        use triedb::empty_trie_hash;
-        use triedb::rocksdb::{merge_counter, DB};
-
-        fn default_opts() -> Options {
-            let mut opts = Options::default();
-            opts.create_if_missing(true);
-            opts.create_missing_column_families(true);
-            opts
+            let handle = MapWithCounterCached::default();
         }
-
-        fn counter_cf_opts() -> Options {
-            let mut opts = default_opts();
-            opts.set_merge_operator_associative("inc_counter", merge_counter);
-            opts
-        }
-
-        let dir = tempdir().unwrap();
-        let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
-        let db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
-
-        let cf = db.cf_handle("counter").unwrap();
-
-        let handle = RocksHandle::new(RocksDatabaseHandle::new(&db, cf));
-
         let collection = TrieCollection::new(handle);
+        let this = collection.trie_for(empty_trie_hash());
+        fn apply() => collection.apply_increase(this.into_patch(), no_childs);
+        fn reconstruct(root) => collection.trie_for(root.root);
+        fn get(key)  => this.get(&key.as_ref());
+        fn insert(key, value) => this.insert(&key.as_ref(), &value);
+    }
 
-        b.iter_custom(|num_iters| {
-            let prep: Vec<_> = rand_collection(setup_seed, setup_amount).collect();
-            let mut trie = collection.trie_for(empty_trie_hash());
+    generate_bench! {
+        declare("HashMap", c: &mut Criterion);
+        fn init(bench_seed, setup_seed,
+            bench_amount, setup_amount) {
+        }
+        let collection = HashMap::<Vec<u8>, Vec<u8>>::new();
+        let this = collection;
+        fn apply() => ();
+        fn reconstruct(_root) => this.clone();
+        fn get(key)  => this.get(key.as_ref());
+        fn insert(key, value) => this.insert(key.as_ref().to_vec(), value.as_ref().to_vec());
+    }
 
-            for (key, value) in prep {
-                trie.insert(key.as_bytes(), &value);
-            }
+    generate_bench! {
+        declare("DashMap", c: &mut Criterion);
+        fn init(bench_seed, setup_seed,
+            bench_amount, setup_amount) {
+        }
+        let collection = DashMap::<Vec<u8>, Vec<u8>>::new();
+        let this = collection;
+        fn apply() => ();
+        fn reconstruct(_root) => this.clone();
+        fn get(key)  => this.get(key.as_ref());
+        fn insert(key, value) => this.insert(key.as_ref().to_vec(), value.as_ref().to_vec());
+    }
+    generate_bench! {
+        declare("Rocksdb(without recreate/cleanup)", c: &mut Criterion);
+        fn init(bench_seed, setup_seed,
+            bench_amount, setup_amount) {
+            let dir = tempdir().unwrap();
+        }
+        let collection = DB::open_default(&dir).unwrap();
+        let this = &collection;
+        fn apply() => ();
+        fn reconstruct(_root) => &collection;
+        fn get(key)  => this.get(&key.as_ref()).unwrap();
+        fn insert(key, value) => this.put(key.as_ref(), value.as_ref()).unwrap();
+    }
 
-            let patch = trie.into_patch(); // FIXME: get patch without consuming `self`
-            let root = collection.apply_increase(patch, |_| vec![]);
+    generate_bench! {
+        declare("MemoryTrieMut", c: &mut Criterion);
+        fn init(bench_seed, setup_seed,
+            bench_amount, setup_amount) {
+        }
+        let collection = MemoryTrieMut::default();
+        let this = collection.clone();
+        fn apply() => this;
+        fn reconstruct(root) => root.clone();
+        fn get(key)  => this.get(&key.as_ref());
+        fn insert(key, value) => this.insert(key.as_bytes(), value.as_ref());
+    }
+}
 
-            let start = Instant::now();
-            for _iter in 0..num_iters {
-                let trie = collection.trie_for(root.root);
-                // Start benchmark
-                for (key, _value) in &test_data {
-                    let _ = trie.get(key.as_bytes());
-                }
-
-                let patch = trie.into_patch(); // FIXME: get patch without consuming `self`
-                let _root = collection.apply_increase(patch, |_| vec![]);
-            }
-
-            start.elapsed()
-        });
-    });
+fn no_childs(_data: &[u8]) -> Vec<H256> {
+    vec![]
 }
 
 fn bench_db_backends(c: &mut Criterion) {
-    bench_get_backends(c, (BENCH_SEED, PREP_SEED), (BENCH_AMOUNT, PREP_SIZE));
-    bench_insert_backends(c, (BENCH_SEED, PREP_SEED), (BENCH_AMOUNT, PREP_SIZE))
+    bench_backends(c, (BENCH_SEED, PREP_SEED), (BENCH_AMOUNT, PREP_SIZE))
 }
 
 criterion_group!(benches, bench_db_backends);
