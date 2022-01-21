@@ -9,6 +9,7 @@ mod memory;
 pub mod merkle;
 mod mutable;
 mod ops;
+mod trie;
 
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;
