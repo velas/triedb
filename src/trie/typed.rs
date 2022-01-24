@@ -3,14 +3,14 @@ use sha3::{Digest, Keccak256};
 use super::*;
 use std::{borrow::Cow, marker::PhantomData};
 
-trait KeyFamily<K> {
+pub trait KeyFamily<K> {
     fn calc_key(key: &K) -> Cow<[u8]>;
 }
 
 pub enum Secure {}
 pub enum Raw {}
 
-trait ValueFamily<V> {
+pub trait ValueFamily<V> {
     fn encode_value(value: &V) -> Cow<[u8]>;
 }
 pub enum Encoded {}
@@ -44,7 +44,7 @@ pub struct TypedTrieHandle<K, V, D> {
     handle: TrieHandle<D>,
 }
 
-impl<D: DatabaseMut, KF, VF> TypedTrieHandle<KF, VF, D> {
+impl<D: Database + DatabaseMut, KF, VF> TypedTrieHandle<KF, VF, D> {
     /// Into the underlying TrieMut object.
     pub fn inner(self) -> TrieHandle<D> {
         self.handle
