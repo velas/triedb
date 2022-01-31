@@ -7,13 +7,13 @@ pub trait KeyFamily<K> {
     fn calc_key(key: &K) -> Cow<[u8]>;
 }
 
-pub enum Secure {}
-pub enum Raw {}
+pub struct Secure;
+pub struct Raw;
 
 pub trait ValueFamily<V> {
     fn encode_value(value: &V) -> Cow<[u8]>;
 }
-pub enum Encoded {}
+pub struct Encoded;
 
 impl<K: AsRef<[u8]>> KeyFamily<K> for Secure {
     fn calc_key(key: &K) -> Cow<[u8]> {
@@ -44,7 +44,7 @@ pub struct TypedTrieHandle<K, V, D> {
     handle: TrieHandle<D>,
 }
 
-impl<D: Database + DatabaseMut, KF, VF> TypedTrieHandle<KF, VF, D> {
+impl<D: Database, KF, VF> TypedTrieHandle<KF, VF, D> {
     /// Into the underlying TrieMut object.
     pub fn inner(self) -> TrieHandle<D> {
         self.handle

@@ -53,15 +53,15 @@ impl<'a> MerkleNode<'a> {
 
 impl<'a> Clone for MerkleNode<'a> {
     fn clone(&self) -> MerkleNode<'a> {
-        match *self {
-            MerkleNode::Leaf(ref nibble, value) => MerkleNode::Leaf(nibble.clone(), value),
-            MerkleNode::Extension(ref nibble, ref value) => {
+        match self {
+            MerkleNode::Leaf(nibble, value) => MerkleNode::Leaf(nibble.clone(), value),
+            MerkleNode::Extension(nibble, value) => {
                 MerkleNode::Extension(nibble.clone(), value.clone())
             }
-            MerkleNode::Branch(ref nodes, additional) => {
+            MerkleNode::Branch(nodes, additional) => {
                 let mut cloned_nodes: [MerkleValue<'_>; 16] = empty_nodes();
                 cloned_nodes[..16].clone_from_slice(&nodes[..16]);
-                MerkleNode::Branch(cloned_nodes, additional)
+                MerkleNode::Branch(cloned_nodes, *additional)
             }
         }
     }
@@ -69,18 +69,18 @@ impl<'a> Clone for MerkleNode<'a> {
 
 impl<'a> Encodable for MerkleNode<'a> {
     fn rlp_append(&self, s: &mut RlpStream) {
-        match *self {
-            MerkleNode::Leaf(ref nibble, value) => {
+        match self {
+            MerkleNode::Leaf(nibble, value) => {
                 s.begin_list(2);
                 nibble::encode(nibble, NibbleType::Leaf, s);
                 value.rlp_append(s);
             }
-            MerkleNode::Extension(ref nibble, ref value) => {
+            MerkleNode::Extension(nibble, value) => {
                 s.begin_list(2);
                 nibble::encode(nibble, NibbleType::Extension, s);
                 value.rlp_append(s);
             }
-            MerkleNode::Branch(ref nodes, value) => {
+            MerkleNode::Branch(nodes, value) => {
                 s.begin_list(17);
                 for node in nodes.iter().take(16) {
                     node.rlp_append(s);

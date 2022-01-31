@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 
 use super::H256;
-use crate::database::{Database, DatabaseMut};
+use crate::database::Database;
 use crate::empty_trie_hash;
 use crate::Change;
 
@@ -46,7 +46,7 @@ impl<D> TrieHandle<D> {
         &self.database
     }
 }
-impl<D: Database + DatabaseMut> TrieHandle<D> {
+impl<D: Database> TrieHandle<D> {
     pub fn insert(&mut self, key: &[u8], value: &[u8]) {
         let (new_root, change) = crate::insert(self.root, &self.database, key, value);
 

@@ -10,13 +10,13 @@ pub trait Database {
 
 impl<'a, T: Database> Database for &'a T {
     fn get(&self, key: H256) -> &[u8] {
-        Database::get(*self, key)
+        T::get(*self, key)
     }
 }
 
 impl<T: Database> Database for Arc<T> {
     fn get(&self, key: H256) -> &[u8] {
-        Database::get(self.as_ref(), key)
+        T::get(self.as_ref(), key)
     }
 }
 
