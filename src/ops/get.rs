@@ -10,19 +10,19 @@ pub fn get_by_value<'a, D: Database>(
 ) -> Option<&'a [u8]> {
     match merkle {
         MerkleValue::Empty => None,
-        MerkleValue::Full(subnode) => get_by_node(*subnode, nibble, database),
+        MerkleValue::Full(subnode) => get_by_node(database, *subnode, nibble),
         MerkleValue::Hash(h) => {
-            let subnode = MerkleNode::decode(&Rlp::new(database.get(h)))
+            let subnode = MerkleNode::decode(&Rlp::new(database.get(h).as_ref()))
                 .expect("Unable to decode Node value");
-            get_by_node(subnode, nibble, database)
+            get_by_node(database, subnode, nibble)
         }
     }
 }
 
 pub fn get_by_node<'a, D: Database>(
+    database: &'a D,
     node: MerkleNode<'a>,
     nibble: NibbleVec,
-    database: &'a D,
 ) -> Option<&'a [u8]> {
     match node {
         MerkleNode::Leaf(node_nibble, node_value) => {

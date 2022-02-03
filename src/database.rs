@@ -20,9 +20,10 @@ impl<T: Database> Database for Arc<T> {
     }
 }
 
-pub trait DatabaseMut {
+pub trait DatabaseMut: Database {
     // Insert value into db.
     // Check if value exist before, if not exist, increment child counter.
+    // FIXME: &mut self or &self?
     fn gc_insert_node<F>(&self, key: H256, value: &[u8], child_extractor: F)
     where
         F: FnMut(&[u8]) -> Vec<H256>;

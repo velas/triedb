@@ -5,10 +5,7 @@ use std::sync::Arc;
 use crate::database::{Database, DatabaseMut};
 use crate::merkle::MerkleValue;
 use crate::MerkleNode;
-use crate::{
-    cache::CachedHandle, delete, empty_trie_hash, get, insert, CachedDatabaseHandle, Change,
-    TrieMut,
-};
+use crate::{cache::CachedHandle, empty_trie_hash, CachedDatabaseHandle, Change};
 
 //use asterix to avoid unresolved import https://github.com/rust-analyzer/rust-analyzer/issues/7459#issuecomment-907714513
 use dashmap::{mapref::entry::Entry, DashMap};
@@ -128,31 +125,34 @@ pub struct DatabaseTrieMutPatch {
     pub change: Change,
 }
 
-// TODO: impl DatabaseMut for DatabaseTrieMut and lookup changes before database
+/*  TODO: impl DatabaseMut for:
+    1. HashMap<&[u8], &[u8]> ?
+    2. RocksDb
+*/
 
-impl<D: Database> TrieMut for DatabaseTrieMut<D> {
-    fn root(&self) -> H256 {
-        self.root
-    }
+// impl<D: Database> TrieMut for DatabaseTrieMut<D> {
+//     fn root(&self) -> H256 {
+//         self.root
+//     }
 
-    fn insert(&mut self, key: &[u8], value: &[u8]) {
-        let (new_root, change) = insert(self.root, self, key, value);
+//     fn insert(&mut self, key: &[u8], value: &[u8]) {
+//         let (new_root, change) = insert(self.root, self, key, value);
 
-        self.merge(&change);
-        self.root = new_root;
-    }
+//         self.merge(&change);
+//         self.root = new_root;
+//     }
 
-    fn delete(&mut self, key: &[u8]) {
-        let (new_root, change) = delete(self.root, self, key);
+//     fn delete(&mut self, key: &[u8]) {
+//         let (new_root, change) = delete(self.root, self, key);
 
-        self.merge(&change);
-        self.root = new_root;
-    }
+//         self.merge(&change);
+//         self.root = new_root;
+//     }
 
-    fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        get(self.root, self, key).map(|v| v.into())
-    }
-}
+//     fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+//         get(self.root, self, key).map(|v| v.into())
+//     }
+// }
 
 impl<D: Database> Database for DatabaseTrieMut<D> {
     fn get(&self, key: H256) -> &[u8] {
@@ -279,22 +279,20 @@ impl DatabaseMut for MapWithCounterCached {
         F: FnMut(&[u8]) -> Vec<H256>,
     {
         match self.db.data.entry(key) {
-            Entry::Occupied(entry) => {
+            Entry::Occupied(entry) if self.gc_count(key) == 0 => {
                 // in this code we lock data, so it's okay to check counter from separate function
-                if self.gc_count(key) == 0 {
-                    let value = entry.remove();
-                    let rlp = Rlp::new(&value);
-                    let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-                    return ReachableHashes::collect(&node, child_extractor)
-                        .childs()
-                        .into_iter()
-                        .filter(|k| self.db.decrease(*k) == 0)
-                        .collect();
-                }
+                let value = entry.remove();
+                let rlp = Rlp::new(&value);
+                let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+
+                ReachableHashes::collect(&node, child_extractor)
+                    .childs()
+                    .into_iter()
+                    .filter(|k| self.db.decrease(*k) == 0)
+                    .collect()
             }
-            Entry::Vacant(_) => {}
-        };
-        vec![]
+            _ => vec![],
+        }
     }
 
     fn gc_pin_root(&self, key: H256) {
@@ -365,6 +363,7 @@ impl<'a, D: Database + DatabaseMut, F: FnMut(&[u8]) -> Vec<H256>> Drop for RootG
     }
 }
 
+#[cfg(feature = "null")] // FIXME: remove this line
 #[cfg(test)]
 pub mod tests {
     use std::{

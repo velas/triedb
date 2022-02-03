@@ -1,7 +1,7 @@
 [package]
 name = "triedb"
-version = "0.5.0"
-edition = "2018"
+version = "0.6.0-alpha.1"
+edition = "2021"
 license = "Apache-2.0"
 description = "Lightweight Ethereum world state storage."
 repository = "https://github.com/hrls/triedb"
@@ -38,10 +38,10 @@ tempfile = "3.2.0"
 default = ["rocksdb"]
 rocksdb = ["rocksdb_lib"]
 
-[[bench]]
-name = "sample_bench"
-harness = false
+# [[bench]]
+# name = "sample_bench"
+# harness = false
 
-[[bench]]
-name = "compare_backends"
-harness = false
+# [[bench]]
+# name = "compare_backends"
+# harness = false

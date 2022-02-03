@@ -44,7 +44,7 @@ pub struct TypedTrieHandle<K, V, D> {
     handle: TrieHandle<D>,
 }
 
-impl<D: Database, KF, VF> TypedTrieHandle<KF, VF, D> {
+impl<D: DatabaseMut, KF, VF> TypedTrieHandle<KF, VF, D> {
     /// Into the underlying TrieMut object.
     pub fn inner(self) -> TrieHandle<D> {
         self.handle
@@ -65,13 +65,20 @@ impl<D: Database, KF, VF> TypedTrieHandle<KF, VF, D> {
     }
 
     /// Insert a value to the trie.
-    pub fn insert<K, V>(&mut self, key: &K, value: &V)
-    where
+    pub fn insert<K, V, F: FnMut(&[u8]) -> Vec<H256> + Clone>(
+        &mut self,
+        key: &K,
+        value: &V,
+        child_extractor: F,
+    ) where
         KF: KeyFamily<K>,
         VF: ValueFamily<V>,
     {
-        self.handle
-            .insert(&KF::calc_key(key), &VF::encode_value(value))
+        self.handle.insert(
+            &KF::calc_key(key),
+            &VF::encode_value(value),
+            child_extractor,
+        )
     }
 
     /// Delete a value in the trie.
@@ -83,10 +90,14 @@ impl<D: Database, KF, VF> TypedTrieHandle<KF, VF, D> {
     }
 
     /// Get a value in the trie.
-    pub fn get<K>(&self, key: &K) -> Option<Vec<u8>>
+    pub fn get<K, F: FnMut(&[u8]) -> Vec<H256> + Clone>(
+        &self,
+        key: &K,
+        child_extractor: F,
+    ) -> Option<Vec<u8>>
     where
         KF: KeyFamily<K>,
     {
-        self.handle.get(&KF::calc_key(key))
+        self.handle.get(&KF::calc_key(key), child_extractor)
     }
 }
