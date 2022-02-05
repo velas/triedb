@@ -3,16 +3,16 @@ use rlp::{self, Rlp};
 use crate::database::Database;
 use crate::merkle::{nibble::NibbleVec, MerkleNode, MerkleValue};
 
-pub fn get_by_value<'a, D: Database>(
+pub fn get_by_value<'a, 'b: 'a, D: Database>(
     merkle: MerkleValue<'a>,
     nibble: NibbleVec,
-    database: &'a D,
+    database: &'b D,
 ) -> Option<&'a [u8]> {
     match merkle {
         MerkleValue::Empty => None,
         MerkleValue::Full(subnode) => get_by_node(database, *subnode, nibble),
         MerkleValue::Hash(h) => {
-            let subnode = MerkleNode::decode(&Rlp::new(database.get(h).as_ref()))
+            let subnode = MerkleNode::decode(&Rlp::new(database.get(h)))
                 .expect("Unable to decode Node value");
             get_by_node(database, subnode, nibble)
         }

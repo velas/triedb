@@ -32,7 +32,7 @@ impl<D> TrieHandle<D> {
         self.root
     }
 
-    pub fn inner(&self) -> &D {
+    pub fn database(&self) -> &D {
         &self.database
     }
 }
@@ -44,14 +44,11 @@ impl<D: DatabaseMut> TrieHandle<D> {
         value: &[u8],
         child_extractor: F,
     ) {
-        let _new_root = crate::insert(&mut self.database, self.root, key, value, child_extractor);
+        self.root = crate::insert(&self.database, self.root, key, value, child_extractor);
     }
 
-    pub fn delete(&self, _key: &[u8]) {
-        // let (new_root, change) = crate::delete(self.root, &self.database, key, child_extractor);
-
-        // self.merge(&change);
-        // self.root = new_root;
+    pub fn delete<F: FnMut(&[u8]) -> Vec<H256> + Clone>(&mut self, key: &[u8], child_extractor: F) {
+        self.root = crate::delete(self.root, &self.database, key, child_extractor);
     }
 
     pub fn get<F>(&self, key: &[u8], _child_extractor: F) -> Option<Vec<u8>> {
@@ -67,7 +64,7 @@ impl<D: DatabaseMut> TrieHandle<D> {
         Self: Default,
     {
         let mut ret = Self::default();
-        let new_root = crate::build(&mut ret.database, map, child_extractor);
+        let new_root = crate::build(&ret.database, map, child_extractor);
         ret.root = new_root;
         ret
     }
@@ -77,11 +74,11 @@ impl<D: DatabaseMut> TrieHandle<D> {
 pub mod tests {
     use super::*;
 
-    trait ChildDeserializer {
-        fn deserialize(&mut self, data: &[u8]) -> Vec<H256>;
+    trait ChildExtractor {
+        fn deserialize(&mut self, data: &[u8]) -> Vec<H256>; // TODO: SmallVec instead Vec<_>
     }
 
-    impl<F> ChildDeserializer for F
+    impl<F> ChildExtractor for F
     where
         F: FnMut(&[u8]) -> Vec<H256>,
     {
@@ -92,27 +89,19 @@ pub mod tests {
 
     #[test]
     fn child_extractor_as_trait() {
-        fn foo<F: ChildDeserializer>(bar: &[u8], mut child_extractor: F) -> Vec<H256> {
+        fn foo<F: ChildExtractor>(bar: &[u8], mut child_extractor: F) -> Vec<H256> {
             child_extractor.deserialize(bar)
         }
 
         // CHILD EXTRACTOR AS A CLOSURE
         // type annotations for closure are mandatory
-        let ret = foo(&[0, 1], |data: &[u8]| {
-            vec![
-                H256([11; 32]),
-                H256([22; 32]),
-            ]
-        });
+        let ret = foo(&[0, 1], |_data: &[u8]| vec![H256([11; 32]), H256([22; 32])]);
 
         assert_eq!(ret, vec![H256([11; 32]), H256([22; 32])]);
 
         // CHILD EXTRACTOR AS A FUNCTION POINTER
-        fn static_deserializer(data: &[u8]) -> Vec<H256> {
-            vec![
-                H256([77; 32]),
-                H256([66; 32]),
-            ]
+        fn static_deserializer(_data: &[u8]) -> Vec<H256> {
+            vec![H256([77; 32]), H256([66; 32])]
         }
 
         let ret = foo(&[0, 1], static_deserializer);

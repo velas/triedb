@@ -101,7 +101,7 @@ where
     D: DatabaseMut,
     F: FnMut(&[u8]) -> Vec<H256> + Clone,
 {
-    let new = match merkle {
+    match merkle {
         MerkleValue::Empty => {
             crate::add_value(database, &MerkleNode::Leaf(nibble, value), child_extractor)
         }
@@ -109,18 +109,16 @@ where
             let new_node =
                 insert_by_node(*sub_node, nibble, value, database, child_extractor.clone());
             crate::add_value(database, &new_node, child_extractor)
-        },
+        }
         MerkleValue::Hash(h) => {
-            let sub_node = MerkleNode::decode(&Rlp::new(database.get(h).as_ref()))
+            let sub_node = MerkleNode::decode(&Rlp::new(database.get(h)))
                 .expect("Unable to decide Node value");
             database.gc_try_cleanup_node(h, child_extractor.clone());
             let new_node =
                 insert_by_node(sub_node, nibble, value, database, child_extractor.clone());
             crate::add_value(database, &new_node, child_extractor)
         }
-    };
-
-    new
+    }
 }
 
 pub fn insert_by_node<'a, D, F>(
@@ -134,7 +132,7 @@ where
     D: DatabaseMut,
     F: FnMut(&[u8]) -> Vec<H256> + Clone,
 {
-    let new = match node {
+    match node {
         MerkleNode::Leaf(node_nibble, node_value) => {
             if node_nibble == nibble {
                 MerkleNode::Leaf(nibble, value)
@@ -207,9 +205,7 @@ where
                 MerkleNode::Branch(nodes, node_additional)
             }
         }
-    };
-
-    new
+    }
 }
 
 pub fn insert_by_empty(nibble: NibbleVec, value: &[u8]) -> MerkleNode<'_> {

@@ -1,6 +1,6 @@
 //! Merkle trie implementation for Ethereum.
 
-// mod cache; // Do `Cow`'s
+mod cache; // Do `Cow`'s
 mod database;
 mod error;
 // pub mod gc;
@@ -124,12 +124,13 @@ where
     let new = if root == empty_trie_hash!() {
         insert::insert_by_empty(nibble, value)
     } else {
-        let old = MerkleNode::decode(&Rlp::new(&database.get(root))).expect("Unable to decode Node value");
-        database.gc_try_cleanup_node(H256::from_slice(key), child_extractor.clone());
+        let old =
+            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
+        database.gc_try_cleanup_node(root, child_extractor.clone());
         insert::insert_by_node(old, nibble, value, database, child_extractor.clone())
     };
 
-    database.gc_insert_node(H256::from_slice(key), value, child_extractor);
+    crate::add_node(database, &new, child_extractor);
 
     H256::from_slice(Keccak256::digest(&rlp::encode(&new)).as_slice())
 }
@@ -152,29 +153,28 @@ where
 
 /// Delete a key from a markle trie. Return the new root hash and the
 /// changes.
-/// FIXME: set `database` arg first
-pub fn delete<D: Database>(root: H256, database: &D, key: &[u8]) -> (H256, Change) {
-    let mut change = Change::default();
+pub fn delete<D, F>(root: H256, database: &D, key: &[u8], child_extractor: F) -> H256
+where
+    D: DatabaseMut,
+    F: FnMut(&[u8]) -> Vec<H256> + Clone,
+{
     let nibble = nibble::from_key(key);
 
-    let (new, subchange) = if root == empty_trie_hash!() {
-        return (root, change);
+    let new = if root == empty_trie_hash!() {
+        return root;
     } else {
         let old =
-            MerkleNode::decode(&Rlp::new(database.get(root).as_ref())).expect("Unable to decode Node value");
-        change.remove_raw(root);
-        delete::delete_by_node(old, nibble, database)
+            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
+        delete::delete_by_node(old, nibble, database, child_extractor.clone())
     };
-    change.merge(&subchange);
 
     match new {
         Some(new) => {
-            change.add_node(&new);
+            crate::add_node(database, &new, child_extractor);
 
-            let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new)).as_slice());
-            (hash, change)
+            H256::from_slice(Keccak256::digest(&rlp::encode(&new)).as_slice())
         }
-        None => (empty_trie_hash!(), change),
+        None => empty_trie_hash!(),
     }
 }
 
@@ -197,8 +197,7 @@ where
     let node = build::build_node(database, &node_map, child_extractor.clone());
     crate::add_node(database, &node, child_extractor);
 
-    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&node)).as_slice());
-    hash
+    H256::from_slice(Keccak256::digest(&rlp::encode(&node)).as_slice())
 }
 
 /// Get a value given the root hash and the database.
@@ -207,8 +206,8 @@ pub fn get<'a, 'b, D: Database>(database: &'a D, root: H256, key: &'b [u8]) -> O
         None
     } else {
         let nibble = nibble::from_key(key);
-        let node = MerkleNode::decode(&Rlp::new(database.get(root).as_ref()))
-            .expect("Unable to decode Node value");
+        let node =
+            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
         get::get_by_node(database, node, nibble)
     }
 }

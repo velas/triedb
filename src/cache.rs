@@ -1,3 +1,4 @@
+#![allow(dead_code)] // FIXME: remove this lint
 use std::{
     cell::{RefCell, UnsafeCell},
     collections::HashMap,
@@ -11,7 +12,7 @@ use crate::CachedDatabaseHandle;
 #[derive(Default, Debug)]
 pub struct CachedHandle<D> {
     pub db: D,
-    cache: Cache,
+    pub cache: Cache,
 }
 
 impl<D: Clone> Clone for CachedHandle<D> {

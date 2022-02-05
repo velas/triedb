@@ -102,7 +102,7 @@ pub type NibbleSlice<'a> = &'a [Nibble];
 
 /// Given a key, return the corresponding nibble.
 pub fn from_key(key: &[u8]) -> NibbleVec {
-    let mut vec = NibbleVec::new();
+    let mut vec = NibbleVec::new(); // TODO: ::with_capacity(???)
 
     for i in 0..(key.len() * 2) {
         if i & 1 == 0 {
@@ -118,7 +118,7 @@ pub fn from_key(key: &[u8]) -> NibbleVec {
 
 /// Given a nibble, return the corresponding key.
 pub fn into_key(nibble: NibbleSlice) -> Vec<u8> {
-    let mut ret = Vec::new();
+    let mut ret = Vec::new(); // TODO: ::with_capacity(???)
 
     for i in 0..nibble.len() {
         let value: u8 = nibble[i].into();

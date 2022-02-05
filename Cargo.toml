@@ -17,7 +17,7 @@ primitive-types = { version = "0.8.0", features = ["rlp", "serde"] }
 thiserror = "1.0.23"
 rocksdb_lib = { package = "rocksdb", git = "https://github.com/velas/rust-rocksdb", branch = "transaction", version = "0.17.0", default-features = false, optional = true }
 # rocksdb_lib = { package = "rocksdb", version = "0.16.0", default-features = false, optional = true }
-dashmap = "4.0"
+dashmap = "5.0.0"
 log="0.4"
 derivative="2.2"
 anyhow = "1.0"

@@ -82,11 +82,12 @@ impl<D: DatabaseMut, KF, VF> TypedTrieHandle<KF, VF, D> {
     }
 
     /// Delete a value in the trie.
-    pub fn delete<K>(&mut self, key: &K)
+    pub fn delete<K, F>(&mut self, key: &K, child_extractor: F)
     where
         KF: KeyFamily<K>,
+        F: FnMut(&[u8]) -> Vec<H256> + Clone,
     {
-        self.handle.delete(&KF::calc_key(key))
+        self.handle.delete(&KF::calc_key(key), child_extractor)
     }
 
     /// Get a value in the trie.
