@@ -4,7 +4,9 @@ use std::{
     borrow::Cow,
     cell::{RefCell, UnsafeCell},
     collections::HashMap,
-    sync::Arc, vec::IntoIter,
+    marker::PhantomData,
+    sync::Arc,
+    vec::IntoIter,
 };
 
 use dashmap::{mapref::entry::Entry, DashMap};
@@ -21,21 +23,27 @@ use crate::{
     CachedDatabaseHandle,
 };
 
-fn process_node<F: Fn(&[u8]) -> Vec<H256> + Clone>(merkle_node: &MerkleNode, child_extractor: F) -> impl Iterator<Item = H256> {
-    vec![].into_iter()
-}
+struct HashIterator;
 
-struct HashIterator<'a> {
-    merkle_node: MerkleNode<'a>
-}
+impl HashIterator {
+    pub fn collect<F: Fn(&[u8]) -> Vec<H256> + Clone>(
+        merkle_node: &MerkleNode,
+        child_extractor: F,
+    ) -> Vec<H256> {
+        Self::process_node(merkle_node, child_extractor)
+            .filter(|i| *i != empty_trie_hash!())
+            .collect()
+    }
 
-impl<'a> HashIterator<'a> {
-    fn process_node<F: Fn(&[u8]) -> Vec<H256> + Clone>(&mut self, merkle_node: &MerkleNode, child_extractor: F) -> IntoIter<H256> {
+    fn process_node<F: Fn(&[u8]) -> Vec<H256> + Clone>(
+        merkle_node: &MerkleNode,
+        child_extractor: F,
+    ) -> IntoIter<H256> {
         match merkle_node {
             MerkleNode::Leaf(_, d) => (child_extractor)(*d).into_iter(),
             MerkleNode::Extension(_, merkle_value) => {
-                self.process_value(merkle_value, child_extractor)
-            },
+                Self::process_value(merkle_value, child_extractor)
+            }
             MerkleNode::Branch(merkle_values, data) => {
                 // if let Some(d) = data {
                 //     self.childs.extend_from_slice(&(self.child_extractor)(*d))
@@ -45,27 +53,25 @@ impl<'a> HashIterator<'a> {
                 // }
                 merkle_values
                     .iter()
-                    .map(|merkle_value| self.process_value(merkle_value, child_extractor.clone()))
-                    .fold(Vec::new(), |mut acc, next| {acc.extend_from_slice(next.as_slice()); acc})
+                    .map(|merkle_value| Self::process_value(merkle_value, child_extractor.clone()))
+                    .fold(Vec::new(), |mut acc, next| {
+                        acc.extend_from_slice(next.as_slice());
+                        acc
+                    })
                     .into_iter()
             }
         }
     }
 
-    fn process_value<F: Fn(&[u8]) -> Vec<H256> + Clone>(&mut self, merkle_value: &MerkleValue, child_extractor: F) -> IntoIter<H256> {
+    fn process_value<F: Fn(&[u8]) -> Vec<H256> + Clone>(
+        merkle_value: &MerkleValue,
+        child_extractor: F,
+    ) -> IntoIter<H256> {
         match merkle_value {
             MerkleValue::Empty => vec![].into_iter(),
-            MerkleValue::Full(merkle_node) => self.process_node(merkle_node, child_extractor),
+            MerkleValue::Full(merkle_node) => Self::process_node(merkle_node, child_extractor),
             MerkleValue::Hash(hash) => vec![*hash].into_iter(),
         }
-    }
-}
-
-impl<'a> Iterator for HashIterator<'a> {
-    type Item = H256;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        todo!()
     }
 }
 
@@ -430,7 +436,7 @@ pub mod tests {
     // │bbcc   ││bbaa││bbcc*│
     // └───────┘└────┘└─────┘
 
-    #[cfg(disabled)]
+    // #[cfg(disabled)]
     #[test]
     fn it_counts_childs_as_expected_and_cleanup_correctly() {
         let key1 = &hex!("bbaa");
@@ -444,16 +450,17 @@ pub mod tests {
         let value3_1 = b"changed data_____________________";
         let value2_1 = b"changed data_____________________";
 
-        let collection = TrieCollection::new(MapWithCounterCached::default());
+        let collection = TrieHandle::<CachedHandle<Arc<MemoryBackend>>>::default();
 
-        let mut trie = collection.trie_for(crate::empty_trie_hash());
-        trie.insert(key1, value1);
-        trie.insert(key2, value2);
-        trie.insert(key3, value3);
+        // let mut trie = collection.trie_for(crate::empty_trie_hash());
+        let trie = collection; // TODO: cleanup
+        trie.insert(key1, value1, no_childs);
+        trie.insert(key2, value2, no_childs);
+        trie.insert(key3, value3, no_childs);
         let patch = trie.into_patch();
-        assert_eq!(collection.database.gc_count(patch.root), 0);
+        assert_eq!(collection.database().gc_count(patch.root), 0);
         let root_guard = collection.apply_increase(patch, no_childs);
-        assert_eq!(collection.database.gc_count(root_guard.root), 1);
+        assert_eq!(collection.database().gc_count(root_guard.root), 1);
 
         // CHECK CHILDS counts
         println!("root={}", root_guard.root);
