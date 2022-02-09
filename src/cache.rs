@@ -71,11 +71,10 @@ impl Cache {
 
     pub fn get(&self, key: H256) -> Option<&[u8]> {
         let cache = unsafe { &mut *self.cache.get() };
-        let map = self.map.borrow_mut();
-        match map.get(&key) {
-            Some(index) => Some(&cache[*index]),
-            None => None,
-        }
+        self.map
+            .borrow_mut()
+            .get(&key)
+            .map(|index| cache[*index].as_ref())
     }
 
     pub fn contains_key(&self, key: H256) -> bool {
