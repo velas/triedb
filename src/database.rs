@@ -1,21 +1,21 @@
-use std::sync::Arc;
+use std::{sync::Arc, borrow::Cow};
 
 use primitive_types::H256;
 
 /// An immutable database handle.
 pub trait Database {
     /// Get a raw value from the database.
-    fn get(&self, key: H256) -> &[u8];
+    fn get(&self, key: H256) -> Cow<[u8]>;
 }
 
 impl<'a, T: Database> Database for &'a T {
-    fn get(&self, key: H256) -> &[u8] {
+    fn get(&self, key: H256) -> Cow<[u8]> {
         Database::get(*self, key)
     }
 }
 
 impl<T: Database> Database for Arc<T> {
-    fn get(&self, key: H256) -> &[u8] {
+    fn get(&self, key: H256) -> Cow<[u8]> {
         Database::get(self.as_ref(), key)
     }
 }

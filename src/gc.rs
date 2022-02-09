@@ -1,4 +1,4 @@
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -155,9 +155,9 @@ impl<D: Database> TrieMut for DatabaseTrieMut<D> {
 }
 
 impl<D: Database> Database for DatabaseTrieMut<D> {
-    fn get(&self, key: H256) -> &[u8] {
+    fn get(&self, key: H256) -> Cow<[u8]> {
         if let Some(bytes) = self.change_data.get(&key) {
-            &**bytes
+            Cow::Borrowed(bytes.as_slice())
         } else {
             self.database.borrow().get(key)
         }

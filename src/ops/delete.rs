@@ -19,7 +19,7 @@ fn find_and_remove_child<'a, D: Database>(
         MerkleValue::Full(sub_node) => *sub_node,
         MerkleValue::Hash(h) => {
             let sub_node =
-                MerkleNode::decode(&Rlp::new(database.get(h))).expect("Unable to decode value");
+                MerkleNode::decode(&Rlp::new(&database.get(h))).expect("Unable to decode value");
             change.remove_node(&sub_node);
             sub_node
         }
@@ -122,7 +122,7 @@ pub fn delete_by_child<'a, D: Database>(
             new_node
         }
         MerkleValue::Hash(h) => {
-            let sub_node = MerkleNode::decode(&Rlp::new(database.get(h)))
+            let sub_node = MerkleNode::decode(&Rlp::new(&database.get(h)))
                 .expect("Unable to decode Node value");
             change.remove_node(&sub_node);
             let (new_node, subchange) = delete_by_node(sub_node, nibble, database);

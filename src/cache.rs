@@ -1,6 +1,6 @@
 use std::{
     cell::{RefCell, UnsafeCell},
-    collections::HashMap,
+    collections::HashMap, borrow::Cow,
 };
 
 use primitive_types::H256;
@@ -37,11 +37,11 @@ impl<D: CachedDatabaseHandle> CachedHandle<D> {
 }
 
 impl<D: CachedDatabaseHandle> Database for CachedHandle<D> {
-    fn get(&self, key: H256) -> &[u8] {
+    fn get(&self, key: H256) -> Cow<[u8]> {
         if !self.cache.contains_key(key) {
-            self.cache.insert(key, self.db.get(key))
+            self.cache.insert(key, self.db.get(key)).into()
         } else {
-            self.cache.get(key).unwrap()
+            self.cache.get(key).unwrap().into()
         }
     }
 }

@@ -13,7 +13,7 @@ mod ops;
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;
 
-use std::collections::{HashMap, VecDeque};
+use std::{collections::{HashMap, VecDeque}, borrow::Borrow};
 
 use primitive_types::H256;
 use rlp::Rlp;
@@ -119,7 +119,7 @@ pub fn insert<D: Database>(root: H256, database: &D, key: &[u8], value: &[u8]) -
         insert::insert_by_empty(nibble, value)
     } else {
         let old =
-            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
+            MerkleNode::decode(&Rlp::new(&database.get(root))).expect("Unable to decode Node value");
         change.remove_raw(root);
         insert::insert_by_node(old, nibble, value, database)
     };
@@ -150,11 +150,12 @@ pub fn delete<D: Database>(root: H256, database: &D, key: &[u8]) -> (H256, Chang
     let mut change = Change::default();
     let nibble = nibble::from_key(key);
 
+    let get = database.get(root);
     let (new, subchange) = if root == empty_trie_hash!() {
         return (root, change);
     } else {
         let old =
-            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
+            MerkleNode::decode(&Rlp::new(&*get)).expect("Unable to decode Node value");
         change.remove_raw(root);
         delete::delete_by_node(old, nibble, database)
     };
@@ -195,12 +196,13 @@ pub fn build(map: &HashMap<Vec<u8>, Vec<u8>>) -> (H256, Change) {
 
 /// Get a value given the root hash and the database.
 pub fn get<'a, 'b, D: Database>(root: H256, database: &'a D, key: &'b [u8]) -> Option<&'a [u8]> {
+    let get = database.get(root);
     if root == empty_trie_hash!() {
         None
     } else {
         let nibble = nibble::from_key(key);
         let node =
-            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
+            MerkleNode::decode(&Rlp::new(&*get)).expect("Unable to decode Node value");
         get::get_by_node(node, nibble, database)
     }
 }

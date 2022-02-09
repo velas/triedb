@@ -12,7 +12,8 @@ pub fn get_by_value<'a, D: Database>(
         MerkleValue::Empty => None,
         MerkleValue::Full(subnode) => get_by_node(*subnode, nibble, database),
         MerkleValue::Hash(h) => {
-            let subnode = MerkleNode::decode(&Rlp::new(database.get(h)))
+            let get = &*database.get(h);
+            let subnode = MerkleNode::decode(&Rlp::new(&*get))
                 .expect("Unable to decode Node value");
             get_by_node(subnode, nibble, database)
         }
