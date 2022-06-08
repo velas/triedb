@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 use std::sync::RwLock;
 
-use crate::merkle::nibble::NibbleVec;
+use crate::merkle::nibble::{self, Nibble, NibbleSlice, NibbleVec};
 use crate::merkle::{MerkleNode, MerkleValue};
 use primitive_types::H256;
 use rlp::Rlp;
@@ -26,8 +26,31 @@ struct Cursor {
 #[derive(Debug, Clone)]
 enum Change {
     Insert(H256, Vec<u8>),
-    Change(NibbleVec, Vec<u8>),
     Removal(H256, Vec<u8>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ComparePathResult {
+    // Left NibbleVec contain additional nibbles
+    // Example:
+    // key1: bb33
+    // key2: bb3
+    LeftDeeper,
+    // Right NibbleVec contain additional nibbles
+    // Example:
+    // key1: aabb
+    // key2: aabb1e
+    RightDeeper,
+    // Right and Left NibbleVec are the same
+    // Example:
+    // key1: aabb1e
+    // key2: aabb1e
+    SamePath,
+    // Left and Right paths contain different postfixes, and cannot be compared
+    // Example:
+    // key1: aabBcc
+    // key2: aabEcc
+    Uncomparable,
 }
 
 impl<DB: Borrow<OptimisticTransactionDB> + Sync + Send> StateTraversal<DB> {
@@ -123,37 +146,209 @@ impl<DB: Borrow<OptimisticTransactionDB> + Sync + Send> StateTraversal<DB> {
 
     fn compare_nodes(
         &self,
-        mut left_nibble: NibbleVec,
+        left_nibble: NibbleVec,
         left_node: &MerkleNode,
-        mut right_nibble: NibbleVec,
+        right_nibble: NibbleVec,
         right_node: &MerkleNode,
-    ) {
-        match (left_node, right_node) {
-            (MerkleNode::Leaf(lnibbles, ldata), MerkleNode::Leaf(rnibbles, rdata)) => {
-                left_nibble.extend_from_slice(&*lnibbles);
-                let lkey = crate::merkle::nibble::into_key(&left_nibble);
-
-                right_nibble.extend_from_slice(&*rnibbles);
-                let rkey = crate::merkle::nibble::into_key(&right_nibble);
-
-                ldata == rdata;
-
-                // self.changeset.push
-
-                // compare ldata, rdata
-            }
-            (MerkleNode::Leaf(lnibbles, ldata), MerkleNode::Extension(rnibbles, rdata)) => {
-                left_nibble.extend_from_slice(&*lnibbles);
-                // self.process_value(nibble, value);
-            }
-            (MerkleNode::Leaf(lnibbles, ldata), MerkleNode::Branch(values, mb_data)) => {}
-            (MerkleNode::Extension(lnibbles, ldata), MerkleNode::Leaf(values, mb_data)) => {}
-            (MerkleNode::Extension(lnibbles, ldata), MerkleNode::Extension(values, mb_data)) => {}
-            (MerkleNode::Extension(lnibbles, ldata), MerkleNode::Branch(values, mb_data)) => {}
-            (MerkleNode::Branch(lnibbles, ldata), MerkleNode::Leaf(values, mb_data)) => {}
-            (MerkleNode::Branch(lnibbles, ldata), MerkleNode::Extension(values, mb_data)) => {}
-            (MerkleNode::Branch(lnibbles, ldata), MerkleNode::Branch(values, mb_data)) => {}
+    ) -> Vec<Change> {
+        let mut changes = vec![];
+        // TODO: check hash is enough there
+        if left_node == right_node {
+            // if nodes are same - then left tree already contain this node - no reason to traverse it
+            // return empty list
+            return changes;
         }
+
+        let branch_level = Self::check_branch_level(&left_nibble, &right_nibble);
+        match branch_level {
+            // We found two completely different paths
+            ComparePathResult::Uncomparable => {
+                changes.extend_from_slice(&self.remowe_swallow(left_nibble, left_node));
+                changes.extend_from_slice(&self.insert_swallow(right_nibble, right_node));
+                return changes;
+            }
+            // We always trying to keep this function on same level, or when right nodes are deeper.
+            // Traverse right side.
+            ComparePathResult::LeftDeeper => {
+                changes.extend_from_slice(&Self::reverse_changes(self.compare_nodes(
+                    right_nibble,
+                    right_node,
+                    left_nibble,
+                    left_node,
+                )));
+                return changes;
+            }
+            ComparePathResult::RightDeeper | ComparePathResult::SamePath => {}
+        };
+
+        match (left_node, right_node) {
+            // One leaf was replaced by other. (data changed)
+            (MerkleNode::Leaf(_lnibbles, ldata), MerkleNode::Leaf(rnibbles, rdata)) => {
+                assert!(
+                    left_nibble != right_nibble || ldata != rdata,
+                    "Found different nodes, with same prefix and data"
+                );
+                assert_eq!(
+                    left_nibble.len(),
+                    right_nibble.len(),
+                    "Diff work only with fixed sized key"
+                );
+                // if node is not same then it replace of new node
+                changes.push(Change::remove(left_node));
+                changes.push(Change::insert(right_node))
+            }
+            // Leaf was replaced by subtree.
+            (MerkleNode::Leaf(_lnibbles, ldata), rnode) => {
+                changes.push(Change::remove(left_node));
+                changes.extend_from_slice(&self.insert_swallow(right_nibble, rnode));
+            }
+            // We found extension at left part that differ from node from right.
+            // Go deeper to find any branch or leaf.
+            (MerkleNode::Extension(lnibbles, ldata), rnode) => {
+                changes.push(Change::remove(left_node));
+                let e_nibbles = {
+                    let mut ln = left_nibble.clone();
+                    ln.extend_from_slice(&lnibbles);
+                    ln
+                };
+                changes.extend_from_slice(&self.walk_extension(
+                    e_nibbles,
+                    ldata,
+                    right_nibble,
+                    right_node,
+                ));
+            }
+            // Branches on same level, but values were changed.
+            (MerkleNode::Branch(lvalues, left_data), MerkleNode::Branch(rvalues, right_data))
+                if branch_level == ComparePathResult::SamePath =>
+            {
+                assert!(
+                    left_data.is_none(),
+                    "We support only fixed sized keys in diff"
+                );
+                assert!(
+                    right_data.is_none(),
+                    "We support only fixed sized keys in diff"
+                );
+                for (left_value, right_value) in lvalues.zip(rvalues) {
+                    let b_nibble = {
+                        let mut rn = right_nibble.clone();
+                        rn.push(Nibble::from(index));
+                        rn
+                    };
+                    match (right_value.node(db), left_value.node(db)) {
+                        (Some(lnode), Some(rnode)) => changes.extend_from_slice(
+                            &self.compare_nodes(b_nibble, left_node, b_nibble, right_node),
+                        ),
+                        (Some(lnode), None) => changes.push(Change::remove(lnode)),
+                        (None, Some(rnode)) => changes.push(Change::insert(lnode)),
+                        (None, None) => {}
+                    }
+                }
+            }
+            (MerkleNode::Branch(values, mb_data), rnode) => {
+                changes.extend_from_slice(&self.walk_branch(
+                    left_nibble,
+                    values,
+                    mb_data,
+                    right_nibble,
+                    right_node,
+                ));
+            } // We can make shortcut for leaf.
+              // (lnode, MerkleNode::Leaf(_lnibbles, rdata)) => {
+              //     changes.push(Change::insert(right_node));
+              //     changes.extend_from_slice(self.remove_swallow(left_nibble, lnode));
+              // }
+
+              // But all this cases:
+              // (lnode, MerkleNode::Extension(..)) |
+              // (lnode, MerkleNode::Leaf(..)) |
+              // (lnode, MerkleNode::Branch(..))
+              // were already covered by above match branches.
+        }
+        return changes;
+    }
+
+    fn check_branch_level(left_slice: NibbleSlice, right_slice: NibbleSlice) -> ComparePathResult {
+        let common = nibble::common(&left_slice, &right_slice);
+        match (
+            common.len() != left_slice.len(),
+            common.len() != right_slice.len(),
+        ) {
+            (true, false) => ComparePathResult::LeftDeeper,
+            (false, true) => ComparePathResult::RightDeeper,
+            (true, true) => ComparePathResult::Uncomparable,
+            (false, false) => ComparePathResult::SamePath,
+        }
+    }
+
+    // Find branch for right_ndoe and walk deeper into one of branch
+    fn walk_branch(
+        &self,
+        left_nibble_prefix: NibbleVec,
+        left_values: &[MerkleValue; 16],
+        mb_data: &Option<&[u8]>,
+        right_nibble: NibbleVec,
+        right_node: &MerkleNode,
+    ) -> Vec<Change> {
+        // Found a data in branch - it's a marker that key is not fixed sized.
+        assert!(
+            mb_data.is_none(),
+            "We support only fixed sized keys in diff"
+        );
+
+        let mut changes = vec![Change::insert(right_node)];
+
+        let mut right_nibble_with_postfix = right_nibble.clone();
+        if let Some(rnibble_postfix) = right_node.nibble() {
+            right_nibble_with_postfix.extend_from_slice(&rnibble_postfix)
+        }
+
+        let (common, left_postfix, right_postfix) =
+            nibble::common_with_sub(&left_nibble_prefix, &right_nibble_with_postfix);
+        assert!(
+            left_postfix.is_empty(),
+            "left tree should have smaller path in order to find changed node in branch."
+        );
+        let r_index = right_postfix[0]; // find first different nibble
+
+        for (index, value) in left_values.into_iter().enumerate() {
+            let b_nibble = {
+                let mut rn = right_nibble.clone();
+                rn.push(Nibble::from(index));
+                rn
+            };
+            if let Some(b_node) = value.node(db) {
+                // Compare changed nodes
+                if r_index == index {
+                    changes.extend_from_slice(&self.compare_nodes(
+                        b_nibble,
+                        b_node,
+                        right_nibble,
+                        right_node,
+                    ));
+                } else {
+                    changes.extend_from_slice(self.insert_swallow(b_nibble, b_node))
+                }
+            } else {
+                log::trace!("Node {} was not found in branch", b_nibble);
+            }
+        }
+        changes
+    }
+
+    // Walk deeper into extension
+    fn walk_extension(
+        &self,
+        left_nibble: NibbleVec,
+        left_value: &MerkleValue,
+        right_nibble: NibbleVec,
+        right_node: &MerkleNode,
+    ) -> Vec<Change> {
+        let left_node = left_value
+            .node(self.db.borrow())
+            .expect("Extension should never link to empty value");
+        self.compare_nodes(left_nibble, left_node, right_nibble, right_node)
     }
 
     // We should compare the tags of MerkleNode and understarand if two
@@ -224,8 +419,8 @@ impl<DB: Borrow<OptimisticTransactionDB> + Sync + Send> StateTraversal<DB> {
 mod tests {
     use hex_literal::hex;
 
-    use crate::gc::TrieCollection;
     use crate::gc::MapWithCounterCached;
+    use crate::gc::TrieCollection;
     use crate::mutable::TrieMut;
 
     use super::*;

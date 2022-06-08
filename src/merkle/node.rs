@@ -45,6 +45,16 @@ impl<'a> MerkleNode<'a> {
         Ok(node)
     }
 
+    /// Return nibbles that was inlined to this node.
+    /// This nibble represent a suffix between parent node, and child node/value.
+    pub fn nibble(&self) -> Option<NibbleVec> {
+        Some(match self {
+            Self::Branch(..) => return None,
+            Self::Leaf(nibble, _) => nibble,
+            Self::Extension(nibble, _) => nibble,
+        })
+    }
+
     /// Whether the node can be inlined to a merkle value.
     pub fn inlinable(&self) -> bool {
         rlp::encode(self).to_vec().len() < 32
