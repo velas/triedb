@@ -50,6 +50,4 @@ pub mod tests {
             Self(Vec::arbitrary(&mut Gen::new(AVG_DATA_SIZE)))
         }
     }
-
-    
 }

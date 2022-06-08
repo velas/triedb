@@ -11,8 +11,8 @@ use crate::{
 use crate::MerkleNode;
 
 //use asterix to avoid unresolved import https://github.com/rust-analyzer/rust-analyzer/issues/7459#issuecomment-907714513
-use derivative::*;
 use dashmap::{mapref::entry::Entry, DashMap};
+use derivative::*;
 use log::*;
 use primitive_types::H256;
 use rlp::Rlp;
