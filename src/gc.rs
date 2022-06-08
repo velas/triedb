@@ -414,6 +414,147 @@ impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> Drop for RootGua
     }
 }
 
+pub mod testing {
+    use std::cell::UnsafeCell;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::RwLock;
+    use dashmap::mapref::entry::Entry;
+    use log::trace;
+    use primitive_types::H256;
+    use super::*;
+
+    use crate::{Database, CachedDatabaseHandle};
+
+    use super::{MapWithCounter, DbCounter};
+
+    #[derive(Default, Debug)]
+    pub struct AsyncCachedHandle<D> {
+        pub db: D,
+        cache: AsyncCache,
+    }
+
+
+    #[derive(Default, Debug)]
+    pub struct AsyncCache {
+        cache: UnsafeCell<Vec<Vec<u8>>>,
+        map: RwLock<HashMap<H256, usize>>,
+    }
+
+    unsafe impl Sync for AsyncCache {}
+    unsafe impl Send for AsyncCache {}
+
+    impl AsyncCache {
+        pub fn new() -> AsyncCache {
+            AsyncCache {
+                cache: UnsafeCell::new(Vec::new()),
+                map: RwLock::new(HashMap::new()),
+            }
+        }
+
+        pub fn insert(&self, key: H256, value: Vec<u8>) -> &[u8] {
+            let mut map = self.map.write().unwrap();
+            let cache = unsafe { &mut *self.cache.get() };
+            let index = cache.len();
+            map.insert(key, index);
+            cache.push(value);
+            &cache[index]
+        }
+
+        pub fn get(&self, key: H256) -> Option<&[u8]> {
+            let cache = unsafe { &mut *self.cache.get() };
+            let map = self.map.read().unwrap();
+            match map.get(&key) {
+                Some(index) => Some(&cache[*index]),
+                None => None,
+            }
+        }
+
+        pub fn contains_key(&self, key: H256) -> bool {
+            let map = self.map.read().unwrap();
+            map.contains_key(&key)
+        }
+    }
+
+
+    impl<D: CachedDatabaseHandle> Database for AsyncCachedHandle<D> {
+        fn get(&self, key: H256) -> &[u8] {
+            if !self.cache.contains_key(key) {
+                self.cache.insert(key, self.db.get(key))
+            } else {
+                self.cache.get(key).unwrap()
+            }
+        }
+    }
+    pub type MapWithCounterCached = AsyncCachedHandle<Arc<MapWithCounter>>;
+    impl DbCounter for MapWithCounterCached {
+        // Insert value into db.
+        // Check if value exist before, if not exist, increment child counter.
+        fn gc_insert_node<F>(&self, key: H256, value: &[u8], child_extractor: F)
+        where
+            F: FnMut(&[u8]) -> Vec<H256>,
+        {
+            match self.db.data.entry(key) {
+                Entry::Occupied(_) => {}
+                Entry::Vacant(v) => {
+                    let rlp = Rlp::new(&value);
+                    let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                    trace!("inserting node {}=>{:?}", key, node);
+                    for hash in ReachableHashes::collect(&node, child_extractor).childs() {
+                        self.db.increase(hash);
+                    }
+                    v.insert(value.to_vec());
+                }
+            };
+        }
+        fn gc_count(&self, key: H256) -> usize {
+            self.db.counter.get(&key).map(|v| *v).unwrap_or_default()
+        }
+
+        // Return true if node data is exist, and it counter more than 0;
+        fn node_exist(&self, key: H256) -> bool {
+            self.db.data.get(&key).is_some() && self.gc_count(key) > 0
+        }
+
+        // atomic operation:
+        // 1. check if key counter didn't increment in other thread.
+        // 2. remove key if counter == 0.
+        // 3. find all childs
+        // 4. decrease child counters
+        // 5. return list of childs with counter == 0
+        fn gc_try_cleanup_node<F>(&self, key: H256, child_extractor: F) -> Vec<H256>
+        where
+            F: FnMut(&[u8]) -> Vec<H256>,
+        {
+            match self.db.data.entry(key) {
+                Entry::Occupied(entry) => {
+                    // in this code we lock data, so it's okay to check counter from separate function
+                    if self.gc_count(key) == 0 {
+                        let value = entry.remove();
+                        let rlp = Rlp::new(&value);
+                        let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                        return ReachableHashes::collect(&node, child_extractor)
+                            .childs()
+                            .into_iter()
+                            .filter(|k| self.db.decrease(*k) == 0)
+                            .collect();
+                    }
+                }
+                Entry::Vacant(_) => {}
+            };
+            vec![]
+        }
+
+        fn gc_pin_root(&self, key: H256) {
+            self.db.increase(key);
+        }
+
+        fn gc_unpin_root(&self, key: H256) -> bool {
+            self.db.decrease(key) == 0
+        }
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use std::{
@@ -437,7 +578,7 @@ pub mod tests {
     use crate::impls::tests::{Data, K};
     use hex_literal::hex;
 
-    fn no_childs(_: &[u8]) -> Vec<H256> {
+    pub fn no_childs(_: &[u8]) -> Vec<H256> {
         vec![]
     }
 

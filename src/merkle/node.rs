@@ -1,10 +1,10 @@
-use std::borrow::Borrow;
+use std::{borrow::Borrow, ops::Deref};
 
 use primitive_types::H256;
 use rlp::{self, Encodable, Prototype, Rlp, RlpStream};
 
 use super::nibble::{self, NibbleType, NibbleVec};
-use crate::Result;
+use crate::{Result, Database};
 
 /// Represents a merkle node.
 #[derive(Debug, PartialEq, Eq)]
@@ -47,11 +47,12 @@ impl<'a> MerkleNode<'a> {
 
     /// Return nibbles that was inlined to this node.
     /// This nibble represent a suffix between parent node, and child node/value.
+    //TODO: Return nible slice
     pub fn nibble(&self) -> Option<NibbleVec> {
         Some(match self {
             Self::Branch(..) => return None,
-            Self::Leaf(nibble, _) => nibble,
-            Self::Extension(nibble, _) => nibble,
+            Self::Leaf(nibble, _) => nibble.clone(),
+            Self::Extension(nibble, _) => nibble.clone(),
         })
     }
 
@@ -106,7 +107,7 @@ impl<'a> Encodable for MerkleNode<'a> {
 }
 
 /// Represents a merkle value.
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MerkleValue<'a> {
     Empty,
     Full(Box<MerkleNode<'a>>),
