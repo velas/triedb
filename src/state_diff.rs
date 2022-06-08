@@ -1,6 +1,7 @@
 use std::borrow::Borrow;
 use std::sync::RwLock;
 
+use crate::Database;
 use crate::merkle::nibble::NibbleVec;
 use crate::merkle::{MerkleNode, MerkleValue};
 use primitive_types::H256;
@@ -30,7 +31,7 @@ enum Change {
     Removal(H256, Vec<u8>),
 }
 
-impl<DB: Borrow<OptimisticTransactionDB> + Sync + Send> StateTraversal<DB> {
+impl<DB: Database> StateTraversal<DB> {
     pub fn new(db: DB, start_state_root: H256, end_state_root: H256) -> Self {
         StateTraversal {
             db,
@@ -71,12 +72,12 @@ impl<DB: Borrow<OptimisticTransactionDB> + Sync + Send> StateTraversal<DB> {
         if left_tree_cursor != crate::empty_trie_hash() {
             let db = self.db.borrow();
             let bytes = db
-                .get(left_tree_cursor)
-                .map_err(|_| ())?
-                .ok_or_else(|| panic!("paniking in left tree byte parsing"))?;
+                .get(left_tree_cursor);
+                // .map_err(|_| ())?
+                // .ok_or_else(|| panic!("paniking in left tree byte parsing"))?;
             eprintln!("left raw bytes: {:?}", bytes);
 
-            let rlp = Rlp::new(bytes.as_slice());
+            let rlp = Rlp::new(bytes);
             eprintln!("left rlp: {:?}", rlp);
 
             let node = MerkleNode::decode(&rlp).map_err(|e| panic!("left merkle rlp decode"))?;
@@ -88,12 +89,12 @@ impl<DB: Borrow<OptimisticTransactionDB> + Sync + Send> StateTraversal<DB> {
             if right_tree_cursor != crate::empty_trie_hash() {
                 let db = self.db.borrow();
                 let bytes = db
-                    .get(right_tree_cursor)
-                    .map_err(|_| ())?
-                    .ok_or_else(|| panic!("paniking in rigth tree byte parsing"))?;
+                    .get(right_tree_cursor);
+                    // .map_err(|_| ())?
+                    // .ok_or_else(|| panic!("paniking in rigth tree byte parsing"))?;
                 eprintln!("right raw bytes: {:?}", bytes);
 
-                let rlp = Rlp::new(bytes.as_slice());
+                let rlp = Rlp::new(bytes);
                 eprintln!("right rlp: {:?}", rlp);
 
                 let node =
@@ -245,6 +246,10 @@ mod tests {
 
     //     // assert_eq!(chageset, vec![])
     // }
+    fn no_childs(_: &[u8]) -> Vec<H256> {
+        vec![]
+    }
+
 
     #[test]
     fn test_two_same_leaves() {
@@ -268,8 +273,12 @@ mod tests {
 
         let patch = trie.into_patch();
 
-        let st = StateTraversal::new(std::sync::Arc::new(trie), patch.root, patch.root);
+        let db = collection.database.clone();
+        let root_guard = collection.apply_increase(patch, no_childs);
 
-        assert!(true)
+        let differ = StateTraversal::new(db, root_guard.root, root_guard.root);
+        let changeset = differ.get_changeset().unwrap();
+
+        assert_eq!(changeset, vec![])
     }
 }
