@@ -9,6 +9,7 @@ use rlp::Rlp;
 // use crate::rocksdb::OptimisticTransactionDB;
 use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB};
 
+#[derive(Debug)]
 pub struct StateTraversal<DB> {
     pub db: DB,
     pub start_state_root: H256,
@@ -16,11 +17,13 @@ pub struct StateTraversal<DB> {
     changeset: RwLock<Vec<u8>>,
 }
 
+#[derive(Debug, Clone)]
 struct Cursor {
     nibble: NibbleVec,
     current_hash: H256,
 }
 
+#[derive(Debug, Clone)]
 enum Change {
     Insert(H256, Vec<u8>),
     Change(NibbleVec, Vec<u8>),
@@ -217,8 +220,13 @@ impl<DB: Borrow<OptimisticTransactionDB> + Sync + Send> StateTraversal<DB> {
     // }
 }
 
+#[cfg(test)]
 mod tests {
-    use rocksdb_lib::{ColumnFamilyDescriptor, Options};
+    use hex_literal::hex;
+
+    use crate::gc::TrieCollection;
+    use crate::gc::MapWithCounterCached;
+    use crate::mutable::TrieMut;
 
     use super::*;
 
@@ -238,56 +246,30 @@ mod tests {
     //     // assert_eq!(chageset, vec![])
     // }
 
-    fn default_opts() -> Options {
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        opts.create_missing_column_families(true);
-        opts
+    #[test]
+    fn test_two_same_leaves() {
+        let key1 = &hex!("bbaa");
+        let key2 = &hex!("ffaa");
+        let key3 = &hex!("bbcc");
+
+        // make data too long for inline
+        let value1 = b"same data________________________";
+        let value2 = b"same data________________________";
+        let value3 = b"other data_______________________";
+        let value3_1 = b"changed data_____________________";
+        let value2_1 = b"changed data_____________________";
+
+        let collection = TrieCollection::new(MapWithCounterCached::default());
+
+        let mut trie = collection.trie_for(crate::empty_trie_hash());
+        trie.insert(key1, value1);
+        trie.insert(key2, value2);
+        trie.insert(key3, value3);
+
+        let patch = trie.into_patch();
+
+        let st = StateTraversal::new(std::sync::Arc::new(trie), patch.root, patch.root);
+
+        assert!(true)
     }
-
-    fn counter_cf_opts() -> Options {
-        let mut opts = default_opts();
-        opts.set_merge_operator_associative("inc_counter", merge_counter);
-        opts
-    }
-
-    pub fn merge_counter(
-        key: &[u8],
-        existing_val: Option<&[u8]>,
-        operands: &MergeOperands,
-    ) -> Option<Vec<u8>> {
-        let mut val = existing_val.map(deserialize_counter).unwrap_or_default();
-        assert_eq!(key.len(), 32);
-        for op in operands.iter() {
-            let diff = deserialize_counter(op);
-            // this assertion is incorrect because rocks can merge multiple values into one.
-            // assert!(diff == -1 || diff == 1);
-            val += diff;
-        }
-        Some(serialize_counter(val).to_vec())
-    }
-    fn serialize_counter(counter: i64) -> [u8; 8] {
-        counter.to_le_bytes()
-    }
-
-    fn deserialize_counter(counter: &[u8]) -> i64 {
-        let mut bytes = [0; 8];
-        bytes.copy_from_slice(counter);
-        i64::from_le_bytes(bytes)
-    }
-
-    // #[test]
-    // fn test_two_leaves() {
-    //     let dir = tempdir().unwrap();
-    //     let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
-    //     let db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
-
-    //     let cf = db.cf_handle("counter").unwrap();
-
-    //     let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
-
-    //     let mut trie = collection.trie_for(crate::empty_trie_hash());
-    //     trie.insert(key1, value1);
-
-    // }
 }
