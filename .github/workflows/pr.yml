@@ -1,0 +1,45 @@
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    types: [opened, synchronize, edited, reopened, ready_for_review]
+    branches:
+      - master
+
+name: Continuous integration
+
+jobs:
+  ci_checks:
+    runs-on: ubuntu-latest
+    container: rust:1.53
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Installing fmt and clippy
+        run: |
+          rustup component add rustfmt
+          rustup component add clippy
+      - name: Run rustfmt check
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+      - name: Try to use cached dependencies
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Run clippy
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --tests -- -D warnings
+      - name: Run cargo test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
