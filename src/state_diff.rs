@@ -281,4 +281,42 @@ mod tests {
 
         assert_eq!(changeset, vec![])
     }
+
+    fn test_two_different_leaves() {
+        let key1 = &hex!("bbaa");
+        let key2 = &hex!("ffaa");
+        let key3 = &hex!("bbcc");
+
+        // make data too long for inline
+        let value1 = b"same data________________________";
+        let value2 = b"same data________________________";
+        let value3 = b"other data_______________________";
+        let value3_1 = b"changed data_____________________";
+        let value2_1 = b"changed data_____________________";
+
+        let collection = TrieCollection::new(MapWithCounterCached::default());
+
+        let mut trie = collection.trie_for(crate::empty_trie_hash());
+        trie.insert(key1, value1);
+        trie.insert(key2, value2);
+        trie.insert(key3, value3);
+
+        let patch = trie.into_patch();
+
+        let db = collection.database;
+        let root_guard = collection.apply_increase(patch, no_childs);
+
+        let differ = StateTraversal::new(db, root_guard.root, root_guard.root);
+        let changeset = differ.get_changeset().unwrap();
+
+
+        trie.insert(key3, value3_1);
+        assert_eq!(TrieMut::get(&trie, key3), Some(value3_1.to_vec()));
+        let patch = trie.into_patch();
+
+        let another_root = collection.apply_increase(patch, no_childs);
+
+        assert_eq!(changeset, vec![])
+    }
+
 }
