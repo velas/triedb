@@ -40,6 +40,7 @@ pub enum Change {
     Removal(H256, Vec<u8>),
 }
 
+
 trait ChangeSetExt {
     fn remove_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a> >);
     fn insert_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a>>);
@@ -171,6 +172,7 @@ impl<DB: Database + Send+ Sync> StateTraversal<DB> {
             (false, true) => {
                 let bytes = db.get(left_tree_cursor);
                 eprintln!("left raw bytes: {:?}", bytes);
+
 
                 let left_node = KeyedMerkleNode::FullEncoded(left_tree_cursor, bytes);
                 self.deep_remove(left_nibble, left_node)
@@ -585,6 +587,10 @@ mod tests {
 
     //     // assert_eq!(chageset, vec![])
     // }
+    fn no_childs(_: &[u8]) -> Vec<H256> {
+        vec![]
+    }
+
 
     // #[test]
     // fn test_two_same_leaves() {
@@ -663,4 +669,5 @@ mod tests {
         drop(last_root);
         log::info!("second trie dropped")
     }
+
 }
