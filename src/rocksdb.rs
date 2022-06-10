@@ -1062,7 +1062,8 @@ mod tests {
             let mut accounts_map: HashMap<Key, HashMap<Key, FixedData>> = HashMap::new();
             {
                 for (k, storage) in changes.iter() {
-                    let account_storage_mem = accounts_map.entry(*k).or_insert(HashMap::default());
+                    let account_storage_mem =
+                        accounts_map.entry(*k).or_insert_with(HashMap::default);
 
                     for (data_key, data) in storage {
                         let mut account_trie = collection.trie_for(top_level_root.root);
