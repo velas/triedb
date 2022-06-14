@@ -18,7 +18,7 @@ use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB};
 use tracing::instrument;
 
 #[derive(Debug)]
-pub struct StateTraversal<DB> {
+pub struct DiffFinder<DB> {
     pub db: DB,
     changeset: RwLock<Vec<u8>>,
 }
@@ -129,9 +129,9 @@ impl<'a> KeyedMerkleNode<'a> {
     }
 }
 
-impl<DB: Database + Send+ Sync> StateTraversal<DB> {
+impl<DB: Database + Send+ Sync> DiffFinder<DB> {
     pub fn new(db: DB, start_state_root: H256, end_state_root: H256) -> Self {
-        StateTraversal {
+        DiffFinder {
             db,
             changeset: RwLock::new(Vec::new()),
         }
@@ -582,7 +582,7 @@ mod tests {
     //     mtrie.insert("key2bb".as_bytes(), "aval3".as_bytes());
     //     second_root = mtrie.root();
 
-    //     // let differ = StateTraversal::new(mtrie, first_root, second_root);
+    //     // let differ = DiffFinder::new(mtrie, first_root, second_root);
     //     // let changeset = differ.get_changeset();
 
     //     // assert_eq!(chageset, vec![])
@@ -614,7 +614,7 @@ mod tests {
 
     //     let patch = trie.into_patch();
 
-    //     let st = StateTraversal::new(std::sync::Arc::new(trie), patch.root, patch.root);
+    //     let st = DiffFinder::new(std::sync::Arc::new(trie), patch.root, patch.root);
 
     //     assert!(true)
     // }
@@ -665,7 +665,7 @@ mod tests {
 
         let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = StateTraversal::new(&collection.database, first_root.root, last_root.root);
+        let st = DiffFinder::new(&collection.database, first_root.root, last_root.root);
         log::info!("result change = {:?}", st.get_changeset(first_root.root, last_root.root).unwrap());
         drop(last_root);
         log::info!("second trie dropped")
@@ -691,7 +691,7 @@ mod tests {
         let patch = trie.into_patch();
         let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = StateTraversal::new(&collection.database, first_root.root, last_root.root);
+        let st = DiffFinder::new(&collection.database, first_root.root, last_root.root);
         log::info!("result change = {:?}", st.get_changeset(first_root.root, last_root.root).unwrap());
         drop(last_root);
         log::info!("second trie dropped")
@@ -720,7 +720,7 @@ mod tests {
 
         // [Insert(0xacb66b810feb4a4e29ba06ed205fcac7cf4841be1a77d0d9ecc84d715c2151d7, [230, 131, 32, 187, 204, 161, 115, 97, 109, 101, 32, 100, 97, 116, 97, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95])];
 
-        let st = StateTraversal::new(&collection.database, first_root.root, last_root.root);
+        let st = DiffFinder::new(&collection.database, first_root.root, last_root.root);
         log::info!("result change = {:?}", st.get_changeset(first_root.root, last_root.root).unwrap());
         drop(last_root);
         log::info!("second trie dropped")
@@ -757,7 +757,7 @@ mod tests {
 
         let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = StateTraversal::new(&collection.database, first_root.root, last_root.root);
+        let st = DiffFinder::new(&collection.database, first_root.root, last_root.root);
         log::info!("result change = {:?}", st.get_changeset(first_root.root, last_root.root).unwrap());
         drop(last_root);
         log::info!("second trie dropped")
