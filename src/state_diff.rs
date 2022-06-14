@@ -637,7 +637,8 @@ mod tests {
 
         tracing_subscriber::fmt()
         .with_span_events(FmtSpan::ENTER)
-        .with_max_level(LevelFilter::TRACE).init();
+        .with_max_level(LevelFilter::TRACE)
+        .init();
 
         let key1 = &hex!("aaab");
         let key2 = &hex!("aaac");
@@ -670,4 +671,95 @@ mod tests {
         log::info!("second trie dropped")
     }
 
+    #[test]
+    fn test_two_empty_trees() {
+        use tracing_subscriber;
+
+        tracing_subscriber::fmt()
+        .with_span_events(FmtSpan::ENTER)
+        .with_max_level(LevelFilter::TRACE)
+        .init();
+
+        let collection = TrieCollection::new(MapWithCounterCached::default());
+
+        let mut trie = collection.trie_for(crate::empty_trie_hash());
+
+        let patch = trie.into_patch();
+        let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        let mut trie = collection.trie_for(first_root.root);
+        let patch = trie.into_patch();
+        let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        let st = StateTraversal::new(&collection.database, first_root.root, last_root.root);
+        log::info!("result change = {:?}", st.get_changeset(first_root.root, last_root.root).unwrap());
+        drop(last_root);
+        log::info!("second trie dropped")
+    }
+
+    #[test]
+    fn test_empty_tree_and_leave() {
+        use tracing_subscriber;
+
+        tracing_subscriber::fmt()
+        .with_span_events(FmtSpan::ENTER)
+        .with_max_level(LevelFilter::TRACE)
+        .init();
+
+        let collection = TrieCollection::new(MapWithCounterCached::default());
+
+        let mut trie = collection.trie_for(crate::empty_trie_hash());
+
+        let patch = trie.into_patch();
+        let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        let mut trie = collection.trie_for(first_root.root);
+        trie.insert(&hex!("bbcc"), b"same data________________________");
+        let patch = trie.into_patch();
+        let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        // [Insert(0xacb66b810feb4a4e29ba06ed205fcac7cf4841be1a77d0d9ecc84d715c2151d7, [230, 131, 32, 187, 204, 161, 115, 97, 109, 101, 32, 100, 97, 116, 97, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95])];
+
+        let st = StateTraversal::new(&collection.database, first_root.root, last_root.root);
+        log::info!("result change = {:?}", st.get_changeset(first_root.root, last_root.root).unwrap());
+        drop(last_root);
+        log::info!("second trie dropped")
+    }
+
+    #[test]
+    fn test_leave_node_and_extension_node() {
+        use tracing_subscriber;
+
+        tracing_subscriber::fmt()
+        .with_span_events(FmtSpan::ENTER)
+        .with_max_level(LevelFilter::TRACE)
+        .init();
+
+        let key1 = &hex!("aaab");
+        let key2 = &hex!("aaac");
+
+        // make data too long for inline
+        let value1 = b"same data________________________";
+        let value2 = b"same data________________________";
+
+        let collection = TrieCollection::new(MapWithCounterCached::default());
+
+        let mut trie = collection.trie_for(crate::empty_trie_hash());
+        trie.insert(key1, value1);
+
+        let patch = trie.into_patch();
+        let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        let mut trie = collection.trie_for(first_root.root);
+
+        trie.insert(key2, value2);
+        let patch = trie.into_patch();
+
+        let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        let st = StateTraversal::new(&collection.database, first_root.root, last_root.root);
+        log::info!("result change = {:?}", st.get_changeset(first_root.root, last_root.root).unwrap());
+        drop(last_root);
+        log::info!("second trie dropped")
+    }
 }
