@@ -766,13 +766,13 @@ mod tests {
 
 
         log::info!("result change = {:?}", changeset);
-        drop(first_root);
-        drop(last_root);
         log::info!("second trie dropped");
         assert_eq!(expected_changeset, changeset);
 
-        dbg!(collection);
-        dbg!(new_collection);
+        // TrieCollection { database: AsyncCachedHandle { db: MapWithCounter { counter: {0xacb66b810feb4a4e29ba06ed205fcac7cf4841be1a77d0d9ecc84d715c2151d7: 1}, data: {0xacb66b810feb4a4e29ba06ed205fcac7cf4841be1a77d0d9ecc84d715c2151d7: [230, 131, 32, 187, 204, 161, 115, 97, 109, 101, 32, 100, 97, 116, 97, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95]} }, cache: AsyncCache { cache: UnsafeCell { .. }, map: RwLock { data: {0xacb66b810feb4a4e29ba06ed205fcac7cf4841be1a77d0d9ecc84d715c2151d7: 0}, poisoned: false, .. } } } }
+        println!("{:?}", collection);
+        // TrieCollection { database: AsyncCachedHandle { db: MapWithCounter { counter: {}, data: {0xacb66b810feb4a4e29ba06ed205fcac7cf4841be1a77d0d9ecc84d715c2151d7: [230, 131, 32, 187, 204, 161, 115, 97, 109, 101, 32, 100, 97, 116, 97, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95]} }, cache: AsyncCache { cache: UnsafeCell { .. }, map: RwLock { data: {}, poisoned: false, .. } } } }
+        println!("{:?}", new_collection);
     }
 
     #[test]
