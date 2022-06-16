@@ -122,6 +122,7 @@ pub trait DbCounter {
     }
 }
 
+#[derive(Debug)]
 pub struct TrieCollection<D> {
     pub database: D,
 }
@@ -253,7 +254,7 @@ impl<D: Database> DatabaseTrieMut<D> {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct MapWithCounter {
     counter: DashMap<H256, usize>,
     data: DashMap<H256, Vec<u8>>,

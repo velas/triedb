@@ -34,12 +34,11 @@ struct Cursor {
     current_hash: H256,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
     Insert(H256, Vec<u8>),
     Removal(H256, Vec<u8>),
 }
-
 
 trait ChangeSetExt {
     fn remove_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a> >);
@@ -109,7 +108,6 @@ enum KeyedMerkleNode<'a> {
     Partial(MerkleNode<'a>),
     FullEncoded(H256, &'a[u8]),
 }
-
 
 impl<'a> KeyedMerkleNode<'a> {
     fn same_hash(&self, other: &Self) -> bool {
@@ -556,8 +554,10 @@ impl<DB: Database + Send+ Sync> DiffFinder<DB> {
 
 #[cfg(test)]
 mod tests {
+    use std::ascii::AsciiExt;
     use std::cell::UnsafeCell;
     use std::collections::HashMap;
+    use std::str::FromStr;
     use std::sync::Arc;
 
     use hex_literal::hex;
@@ -715,15 +715,64 @@ mod tests {
 
         let mut trie = collection.trie_for(first_root.root);
         trie.insert(&hex!("bbcc"), b"same data________________________");
+
+
         let patch = trie.into_patch();
         let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
         // [Insert(0xacb66b810feb4a4e29ba06ed205fcac7cf4841be1a77d0d9ecc84d715c2151d7, [230, 131, 32, 187, 204, 161, 115, 97, 109, 101, 32, 100, 97, 116, 97, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95])];
+        let key = H256::from_str("0xacb66b810feb4a4e29ba06ed205fcac7cf4841be1a77d0d9ecc84d715c2151d7").unwrap();
+        // let val1 = trie.get(key);
+        let mut trie = collection.trie_for(last_root.root);
+        let val1 = Database::get(&trie, key);
+        dbg!("{:?}", val1);
+        // let val1 = mutable::TrieMut::get(&trie, key);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, last_root.root);
-        log::info!("result change = {:?}", st.get_changeset(first_root.root, last_root.root).unwrap());
+        let val = vec![230, 131, 32, 187, 204, 161, 115, 97, 109, 101, 32, 100, 97, 116, 97, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95];
+        // H256::from_slice(&hex!("bbcc"));
+        let expected_changeset = vec![Change::Insert(key, val)];
+
+        let diff_finder = DiffFinder::new(&collection.database, first_root.root, last_root.root);
+        let changeset = diff_finder.get_changeset(first_root.root, last_root.root).unwrap();
+        let insert = changeset.get(0).unwrap();
+        let (k, raw_v) = match &insert {
+            &Change::Insert(key, val) => {
+               Some((key, val))
+            }
+            _ => None
+        }.unwrap();
+
+        let rlp = Rlp::new(raw_v);
+        let v = MerkleNode::decode(&rlp).unwrap();
+
+        dbg!(v);
+
+        // Take a change from a second trie
+        // Create a change for first tree out of it
+        let mut changes = crate::Change { changes: vec![].into() };
+        let rrr = raw_v.clone();
+        changes.add_raw(*k, rrr.to_vec());
+
+        // Take previous version of a tree
+        let new_collection = TrieCollection::new(MapWithCounterCached::default());
+        let mut trie1 = collection.trie_for(crate::empty_trie_hash());
+
+        // merge changes into it
+        trie1.merge(&changes);
+
+        // compare trie
+        let patch = trie1.into_patch();
+        new_collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+
+        log::info!("result change = {:?}", changeset);
+        drop(first_root);
         drop(last_root);
-        log::info!("second trie dropped")
+        log::info!("second trie dropped");
+        assert_eq!(expected_changeset, changeset);
+
+        dbg!(collection);
+        dbg!(new_collection);
     }
 
     #[test]
