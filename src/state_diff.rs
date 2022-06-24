@@ -151,8 +151,8 @@ impl<DB: Database + Send+ Sync> DiffFinder<DB> {
         left_tree_cursor: H256,
         right_tree_cursor: H256,
     ) -> Result<Vec<Change>, ()> {
-        eprintln!("traversing left tree{:?} ...", left_tree_cursor);
-        eprintln!("traversing rigth tree{:?} ...", right_tree_cursor);
+        // eprintln!("traversing left tree{:?} ...", left_tree_cursor);
+        // eprintln!("traversing rigth tree{:?} ...", right_tree_cursor);
 
         let db = &self.db;
 
@@ -162,14 +162,14 @@ impl<DB: Database + Send+ Sync> DiffFinder<DB> {
             }
             (true, false) => {
                 let bytes = db.get(right_tree_cursor);
-                eprintln!("right raw bytes: {:?}", bytes);
+                // eprintln!("right raw bytes: {:?}", bytes);
 
                 let right_node = KeyedMerkleNode::FullEncoded(right_tree_cursor, bytes);
                 self.deep_insert(right_nibble, right_node)
             }
             (false, true) => {
                 let bytes = db.get(left_tree_cursor);
-                eprintln!("left raw bytes: {:?}", bytes);
+                // eprintln!("left raw bytes: {:?}", bytes);
 
 
                 let left_node = KeyedMerkleNode::FullEncoded(left_tree_cursor, bytes);
@@ -177,11 +177,11 @@ impl<DB: Database + Send+ Sync> DiffFinder<DB> {
             }
             (false, false) => {
                 let bytes = db.get(left_tree_cursor);
-                eprintln!("left raw bytes: {:?}", bytes);
+                // eprintln!("left raw bytes: {:?}", bytes);
                 let left_node = KeyedMerkleNode::FullEncoded(left_tree_cursor, bytes);
 
                 let bytes = db.get(right_tree_cursor);
-                eprintln!("right raw bytes: {:?}", bytes);
+                // eprintln!("right raw bytes: {:?}", bytes);
 
                 let right_node = KeyedMerkleNode::FullEncoded(right_tree_cursor, bytes);
 
@@ -208,7 +208,7 @@ impl<DB: Database + Send+ Sync> DiffFinder<DB> {
         }
 
         let branch_level = Self::check_branch_level(&left_nibble, &right_nibble);
-        match dbg!(branch_level) {
+        match branch_level {
             // We found two completely different paths
             ComparePathResult::Uncomparable => {
                 changes.extend_from_slice(&self.deep_remove(left_nibble, left_node));
@@ -229,21 +229,23 @@ impl<DB: Database + Send+ Sync> DiffFinder<DB> {
             ComparePathResult::RightDeeper | ComparePathResult::SamePath => {}
         };
 
-        match dbg!((left_node.merkle_node(), right_node.merkle_node())) {
+        match (left_node.merkle_node(), right_node.merkle_node()) {
             // One leaf was replaced by other. (data changed)
-            (MerkleNode::Leaf(_lnibbles, ldata), MerkleNode::Leaf(rnibbles, rdata)) => {
-                assert!(
-                    left_nibble != right_nibble || ldata != rdata,
-                    "Found different nodes, with same prefix and data"
-                );
-                assert_eq!(
-                    left_nibble.len(),
-                    right_nibble.len(),
-                    "Diff work only with fixed sized key"
-                );
-                // if node is not same then it replace of new node
-                changes.remove_node(left_node);
-                changes.insert_node(right_node)
+            (MerkleNode::Leaf(lnibbles, ldata), MerkleNode::Leaf(rnibbles, rdata)) => {
+                // assert!(
+                //     lnibbles != rnibbles || ldata != rdata,
+                //     "Found different nodes, with same prefix and data"
+                // );
+                if lnibbles != rnibbles || ldata != rdata {
+                    assert_eq!(
+                        left_nibble.len() + lnibbles.len(),
+                        right_nibble.len() + rnibbles.len(),
+                        "Diff work only with fixed sized key"
+                    );
+                    // if node is not same then it replace of new node
+                    changes.remove_node(left_node);
+                    changes.insert_node(right_node)
+                }
             }
             // Leaf was replaced by subtree.
             (MerkleNode::Leaf(_lnibbles, ldata), rnode) => {
@@ -809,6 +811,40 @@ mod tests {
         let st = DiffFinder::new(&collection.database, first_root.root, last_root.root);
         log::info!("result change = {:?}", st.get_changeset(first_root.root, last_root.root).unwrap());
         drop(last_root);
+        log::info!("second trie dropped")
+    }
+
+    #[test]
+    fn test_two_different_leaf_nodes() {
+        use tracing_subscriber;
+
+        tracing_subscriber::fmt()
+            .with_span_events(FmtSpan::ENTER)
+            .with_max_level(LevelFilter::TRACE)
+            .init();
+
+        let key1 = &hex!("aaab");
+        let key2 = &hex!("aaac");
+
+        // make data too long for inline
+        let value1 = b"same data________________________";
+        let value2 = b"same data________________________";
+
+        let collection = TrieCollection::new(MapWithCounterCached::default());
+
+        let mut trie1 = collection.trie_for(crate::empty_trie_hash());
+        trie1.insert(key1, value1);
+        let patch = trie1.into_patch();
+        let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        let mut trie2 = collection.trie_for(crate::empty_trie_hash());
+        trie2.insert(key2, value2);
+        let patch = trie2.into_patch();
+        let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root);
+        log::info!("result change = {:?}", st.get_changeset(first_root.root, second_root.root).unwrap());
+        drop(second_root);
         log::info!("second trie dropped")
     }
 }
