@@ -44,25 +44,19 @@ impl Params {
 
 impl fmt::Display for Params {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "(l_size={}, l_range={:?}, r_size={}, r_range={:?})",
-            self.l_trie_size, self.l_trie_range, self.r_trie_size, self.r_trie_range
-        )
+        write!(f, "{}x{}", self.l_trie_size, self.r_trie_size)
     }
 }
 
-fn benchmark_diff(c: &mut Criterion) {
-    /// Errors:
-    /// - Params::new(10, (0, 10000), 100, (0, 10000)) - Diff work only with fixed sized key
-    /// - Params::new(100, (0, 10000), 100, (0, 10000)) - Found different nodes, with same prefix and data
-    let mut group = c.benchmark_group("get_changeset");
+fn benchmark_same_key_range(c: &mut Criterion) {
+    let mut group = c.benchmark_group("get_changeset: same key range");
     let mut rng = StdRng::seed_from_u64(0);
     vec![
         (1000, (0, 10_000), 1000, (0, 10_000)),
-        (1000, (0, 10_000), 1000, (usize::MAX - 10_000, usize::MAX)),
-        (10000, (0, 100_000), 10000, (0, 100000)),
-        (10000, (0, 100_000), 10000, (usize::MAX - 100_000, usize::MAX)),
+        (5000, (0, 50_000), 5000, (0, 50_000)),
+        (10000, (0, 100_000), 10000, (0, 100_000)),
+        (15000, (0, 150_000), 15000, (0, 150_000)),
+        (20000, (0, 200_000), 20000, (0, 200_000)),
     ]
     .into_iter()
     .map(|(lsize, lrange, rsize, rrange)| Params::new(lsize, lrange, rsize, rrange))
@@ -116,7 +110,69 @@ fn benchmark_diff(c: &mut Criterion) {
     });
 }
 
-fn benchmark_diff_equal_tries(c: &mut Criterion) {
+fn benchmark_different_key_range(c: &mut Criterion) {
+    let mut group = c.benchmark_group("get_changeset: defferent key range");
+    let mut rng = StdRng::seed_from_u64(0);
+    vec![
+        (1000, (0, 10_000), 1000, (usize::MAX - 10_000, usize::MAX)),
+        (5000, (0, 50_000), 5000, (usize::MAX - 50_000, usize::MAX)),
+        (10000, (0, 100_000), 10000, (usize::MAX - 100_000, usize::MAX)),
+        (15000, (0, 150_000), 15000, (usize::MAX - 150_000, usize::MAX)),
+        (20000, (0, 200_000), 20000, (usize::MAX - 200_000, usize::MAX)),
+    ]
+    .into_iter()
+    .map(|(lsize, lrange, rsize, rrange)| Params::new(lsize, lrange, rsize, rrange))
+    .for_each(|params| {
+        let keys1: Vec<_> = sample(
+            &mut rng,
+            params.l_trie_range.1 - params.l_trie_range.0,
+            params.l_trie_size,
+        )
+        .iter()
+        .map(|n| n + params.l_trie_range.0)
+        .map(|n| n.to_be_bytes())
+        .collect();
+        let keys2: Vec<_> = sample(
+            &mut rng,
+            params.r_trie_range.1 - params.r_trie_range.0,
+            params.r_trie_size,
+        )
+        .iter()
+        .map(|n| n + params.r_trie_range.0)
+        .map(|n| n.to_be_bytes())
+        .collect();
+
+        let collection = TrieCollection::new(MapWithCounterCached::default());
+
+        let mut trie = collection.trie_for(empty_trie_hash());
+        for key in &keys1 {
+            trie.insert(key, key);
+        }
+        let patch = trie.into_patch();
+        let first_root = collection.apply_increase(patch, no_childs);
+
+        let mut trie = collection.trie_for(empty_trie_hash());
+        for key in &keys2 {
+            trie.insert(key, key);
+        }
+        let patch = trie.into_patch();
+        let second_root = collection.apply_increase(patch, no_childs);
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(&params),
+            &params,
+            |b, _params| {
+                b.iter(|| {
+                    let st =
+                        DiffFinder::new(&collection.database, first_root.root, second_root.root);
+                    st.get_changeset(first_root.root, second_root.root).unwrap()
+                })
+            },
+        );
+    });
+}
+
+fn benchmark_equal_tries(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(0);
     let collection = TrieCollection::new(MapWithCounterCached::default());
     let mut trie = collection.trie_for(empty_trie_hash());
@@ -135,5 +191,10 @@ fn benchmark_diff_equal_tries(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, benchmark_diff, benchmark_diff_equal_tries);
+criterion_group!(
+    benches,
+    benchmark_same_key_range,
+    benchmark_different_key_range,
+    benchmark_equal_tries
+);
 criterion_main!(benches);
