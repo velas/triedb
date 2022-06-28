@@ -280,13 +280,15 @@ impl<DB: Database + Send+ Sync> DiffFinder<DB> {
                     right_data.is_none(),
                     "We support only fixed sized keys in diff"
                 );
+                changes.remove_node(&left_node);
+                changes.insert_node(&right_node);
                 for (idx, (left_value, right_value)) in lvalues.into_iter().zip(rvalues).enumerate() {
                     let b_nibble = {
                         let mut rn = right_nibble.clone();
                         rn.push(Nibble::from(idx));
                         rn
                     };
-                    match (right_value.node(self.db.borrow()), left_value.node(self.db.borrow())) {
+                    match (left_value.node(self.db.borrow()), right_value.node(self.db.borrow())) {
                         (Some(lnode), Some(rnode)) => changes.extend_from_slice(
                             &self.compare_nodes(b_nibble.clone(), lnode, b_nibble.clone(), rnode),
                         ),
@@ -633,6 +635,42 @@ mod tests {
     // branch -> extension -> branch
     use crate::gc::testing::MapWithCounterCached;
 
+
+    fn check_changes(
+        changes: &Vec<Change>,
+        initial_trie_data: &Vec<(&[u8], &[u8])>,
+        expected_trie_root: H256,
+        expected_trie_data: &Vec<(&[u8], Option<Vec<u8>>)>,
+    ) {
+        let collection = TrieCollection::new(MapWithCounterCached::default());
+        let mut trie = collection.trie_for(crate::empty_trie_hash());
+        for (key, value) in initial_trie_data {
+            trie.insert(*key, *value);
+        }
+        let patch = trie.into_patch();
+        let initial_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        let mut changes = crate::Change {
+            changes: changes.clone().into_iter().map(|change| {
+                match change {
+                    Change::Insert(key, val) => (key, Some(val)),
+                    Change::Removal(key, _) => (key, None),
+                }
+            }).collect()
+        };
+        for (key, value) in changes.changes.into_iter().rev() {
+            if let Some(value) = value {
+                log::info!("change(insert): key={}, value={:?}", key, value);
+                collection.database.gc_insert_node(key, &value, no_childs);
+            }
+        }
+
+        let new_trie = collection.trie_for(expected_trie_root);
+        for (key, value) in expected_trie_data {
+            assert_eq!(TrieMut::get(&new_trie, *key), *value);
+        }
+    }
+
     #[test]
     fn test_extension_replaced_by_branch_extension() {
         use tracing_subscriber;
@@ -656,19 +694,55 @@ mod tests {
         let mut trie = collection.trie_for(crate::empty_trie_hash());
         trie.insert(key1, value1);
         trie.insert(key2, value2);
-
         let patch = trie.into_patch();
         let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
         let mut trie = collection.trie_for(first_root.root);
-
         trie.insert(key3, value3);
         let patch = trie.into_patch();
-
         let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
         let st = DiffFinder::new(&collection.database, first_root.root, last_root.root);
-        log::info!("result change = {:?}", st.get_changeset(first_root.root, last_root.root).unwrap());
+        let changes = st.get_changeset(first_root.root, last_root.root).unwrap();
+        log::info!("result change = {:?}", changes);
+
+
+        let new_collection = TrieCollection::new(MapWithCounterCached::default());
+        let mut trie = new_collection.trie_for(crate::empty_trie_hash());
+        trie.insert(key1, value1);
+        trie.insert(key2, value2);
+        let patch = trie.into_patch();
+        let first_root = new_collection.apply_increase(patch, crate::gc::tests::no_childs);
+        let mut changes = crate::Change {
+            changes: changes.into_iter().map(|change| {
+                match change {
+                    Change::Insert(key, val) => (key, Some(val)),
+                    Change::Removal(key, _) => (key, None),
+                }
+            }).collect()
+        };
+        for (key, value) in changes.changes.into_iter().rev() {
+            if let Some(value) = value {
+                log::info!("change(insert): key={}, value={:?}", key, value);
+                new_collection.database
+                    .gc_insert_node(key, &value, crate::gc::tests::no_childs);
+            }
+        }
+
+        let new_trie = new_collection.trie_for(last_root.root);
+        assert_eq!(
+            TrieMut::get(&new_trie, &hex!("bbcc")),
+            Some(b"same data________________________".to_vec())
+        );
+        assert_eq!(
+            TrieMut::get(&new_trie, &hex!("aaab")),
+            Some(b"same data________________________".to_vec())
+        );
+        assert_eq!(
+            TrieMut::get(&new_trie, &hex!("aaac")),
+            Some(b"same data________________________".to_vec())
+        );
+
         drop(last_root);
         log::info!("second trie dropped")
     }
@@ -710,25 +784,24 @@ mod tests {
 
         let collection = TrieCollection::new(MapWithCounterCached::default());
 
+        // Set up initial trie
         let mut trie = collection.trie_for(crate::empty_trie_hash());
-
         let patch = trie.into_patch();
         let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
+        // Set up final trie
         let mut trie = collection.trie_for(first_root.root);
         trie.insert(&hex!("bbcc"), b"same data________________________");
-
-
         let patch = trie.into_patch();
         let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
         // [Insert(0xacb66b810feb4a4e29ba06ed205fcac7cf4841be1a77d0d9ecc84d715c2151d7, [230, 131, 32, 187, 204, 161, 115, 97, 109, 101, 32, 100, 97, 116, 97, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95])];
         let key = H256::from_str("0xacb66b810feb4a4e29ba06ed205fcac7cf4841be1a77d0d9ecc84d715c2151d7").unwrap();
         // let val1 = trie.get(key);
-        let mut trie = collection.trie_for(last_root.root);
-        let val1 = Database::get(&trie, key);
+        let mut final_trie = collection.trie_for(last_root.root);
+        let val1 = Database::get(&final_trie, key);
         dbg!("{:?}", val1);
-        // let val1 = mutable::TrieMut::get(&trie, key);
+        // let val1 = mutable::TrieMut::get(&final_trie, key);
 
         let val = vec![230, 131, 32, 187, 204, 161, 115, 97, 109, 101, 32, 100, 97, 116, 97, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95];
         // H256::from_slice(&hex!("bbcc"));
@@ -757,15 +830,21 @@ mod tests {
 
         // Take previous version of a tree
         let new_collection = TrieCollection::new(MapWithCounterCached::default());
-        let mut trie1 = collection.trie_for(crate::empty_trie_hash());
-
-        // merge changes into it
-        trie1.merge(&changes);
+        // Process changes
+        for (key, value) in changes.changes.into_iter().rev() {
+            if let Some(value) = value {
+                log::info!("change(insert): key={}, value={:?}", key, value);
+                new_collection.database
+                    .gc_insert_node(key, &value, crate::gc::tests::no_childs);
+            }
+        }
 
         // compare trie
-        let patch = trie1.into_patch();
-        new_collection.apply_increase(patch, crate::gc::tests::no_childs);
-
+        let mut new_trie = new_collection.trie_for(last_root.root);
+        assert_eq!(
+            TrieMut::get(&new_trie, &hex!("bbcc")),
+            Some(b"same data________________________".to_vec())
+        );
 
         log::info!("result change = {:?}", changeset);
         log::info!("second trie dropped");
@@ -827,8 +906,8 @@ mod tests {
         let key2 = &hex!("aaac");
 
         // make data too long for inline
-        let value1 = b"same data________________________";
-        let value2 = b"same data________________________";
+        let value1 = b"same data________________________1";
+        let value2 = b"same data________________________2";
 
         let collection = TrieCollection::new(MapWithCounterCached::default());
 
@@ -843,7 +922,131 @@ mod tests {
         let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
         let st = DiffFinder::new(&collection.database, first_root.root, second_root.root);
-        log::info!("result change = {:?}", st.get_changeset(first_root.root, second_root.root).unwrap());
+        let changes = st.get_changeset(first_root.root, second_root.root).unwrap();
+        log::info!("result change = {:?}", changes);
+
+        check_changes(
+            &changes,
+            &vec![(key1, value1)],
+            second_root.root,
+            &vec![
+                (&hex!("aaab"), None),
+                (&hex!("aaac"), Some(b"same data________________________2".to_vec())),
+            ]
+        );
+
+        drop(second_root);
+        log::info!("second trie dropped")
+    }
+
+    #[test]
+    fn test_1() {
+        use tracing_subscriber;
+
+        tracing_subscriber::fmt()
+            .with_span_events(FmtSpan::ENTER)
+            .with_max_level(LevelFilter::TRACE)
+            .init();
+
+        let keys1 = vec![
+            (vec![0, 0, 0, 0, 0, 0, 12, 25], b"________________________________1"),
+            (vec![0, 0, 0, 0, 0, 0, 15, 203], b"________________________________2"),
+            (vec![0, 0, 0, 0, 0, 0, 16, 246], b"________________________________3"),
+        ];
+        let keys2 = vec![
+            (vec![0, 0, 0, 0, 0, 0, 13, 52], b"________________________________4"),
+            (vec![0, 0, 0, 0, 0, 0, 15, 55], b"________________________________5"),
+            (vec![0, 0, 0, 0, 0, 0, 15, 203], b"________________________________6"),
+        ];
+
+        let collection = TrieCollection::new(MapWithCounterCached::default());
+
+        let mut trie1 = collection.trie_for(crate::empty_trie_hash());
+        for (key, value) in &keys1 {
+            trie1.insert(key, *value);
+        }
+        let patch = trie1.into_patch();
+        let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        let mut trie2 = collection.trie_for(crate::empty_trie_hash());
+        for (key, value) in &keys2 {
+            trie2.insert(key, *value);
+        }
+        let patch = trie2.into_patch();
+        let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root);
+        let changes = st.get_changeset(first_root.root, second_root.root).unwrap();
+        log::info!("result change = {:?}", changes);
+
+        check_changes(
+            &changes,
+            &keys1.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect(),
+            second_root.root,
+            &vec![
+                (&vec![0, 0, 0, 0, 0, 0, 12, 25], None),
+                (&vec![0, 0, 0, 0, 0, 0, 16, 246], None),
+                (&vec![0, 0, 0, 0, 0, 0, 13, 52], Some(b"________________________________4".to_vec())),
+                (&vec![0, 0, 0, 0, 0, 0, 15, 55], Some(b"________________________________5".to_vec())),
+                (&vec![0, 0, 0, 0, 0, 0, 15, 203], Some(b"________________________________6".to_vec())),
+            ]
+        );
+
+        drop(second_root);
+        log::info!("second trie dropped")
+    }
+
+
+    #[test]
+    fn test_2() {
+        use tracing_subscriber;
+
+        tracing_subscriber::fmt()
+            .with_span_events(FmtSpan::ENTER)
+            .with_max_level(LevelFilter::TRACE)
+            .init();
+
+        let keys1 = vec![
+            (vec![0, 0, 0, 0, 0, 0, 12, 25], b"________________________________1"),
+            (vec![0, 0, 0, 0, 0, 0, 15, 203], b"________________________________2"),
+            (vec![0, 0, 0, 0, 0, 0, 16, 246], b"________________________________3"),
+        ];
+        let keys2 = vec![
+            (vec![0, 0, 0, 0, 0, 0, 13, 52], b"________________________________4"),
+            (vec![0, 0, 0, 0, 0, 0, 15, 203], b"________________________________5"),
+        ];
+
+        let collection = TrieCollection::new(MapWithCounterCached::default());
+
+        let mut trie1 = collection.trie_for(crate::empty_trie_hash());
+        for (key, value) in &keys1 {
+            trie1.insert(key, *value);
+        }
+        let patch = trie1.into_patch();
+        let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        let mut trie2 = collection.trie_for(crate::empty_trie_hash());
+        for (key, value) in &keys2 {
+            trie2.insert(key, *value);
+        }
+        let patch = trie2.into_patch();
+        let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root);
+        let changes = st.get_changeset(first_root.root, second_root.root).unwrap();
+        log::info!("result change = {:?}", changes);
+
+        check_changes(
+            &changes,
+            &keys1.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect(),
+            second_root.root,
+            &vec![
+                (&vec![0, 0, 0, 0, 0, 0, 12, 25], None),
+                (&vec![0, 0, 0, 0, 0, 0, 16, 246], None),
+                (&vec![0, 0, 0, 0, 0, 0, 13, 52], Some(b"________________________________4".to_vec())),
+                (&vec![0, 0, 0, 0, 0, 0, 15, 203], Some(b"________________________________5".to_vec())),
+            ]
+        );
         drop(second_root);
         log::info!("second trie dropped")
     }
