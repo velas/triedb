@@ -996,7 +996,6 @@ mod tests {
         log::info!("second trie dropped")
     }
 
-
     #[test]
     fn test_2() {
         use tracing_subscriber;
@@ -1045,6 +1044,60 @@ mod tests {
                 (&vec![0, 0, 0, 0, 0, 0, 16, 246], None),
                 (&vec![0, 0, 0, 0, 0, 0, 13, 52], Some(b"________________________________4".to_vec())),
                 (&vec![0, 0, 0, 0, 0, 0, 15, 203], Some(b"________________________________5".to_vec())),
+            ]
+        );
+        drop(second_root);
+        log::info!("second trie dropped")
+    }
+
+    #[test]
+    fn test_3() {
+        use tracing_subscriber;
+
+        tracing_subscriber::fmt()
+            .with_span_events(FmtSpan::ENTER)
+            .with_max_level(LevelFilter::TRACE)
+            .init();
+
+        let keys1 = vec![
+            (vec![0, 0, 0, 0, 0, 0, 12, 25], b"________________________________1"),
+            (vec![0, 0, 0, 0, 0, 0, 15, 203], b"________________________________2"),
+            (vec![0, 0, 0, 0, 0, 0, 16, 246], b"________________________________3"),
+        ];
+        // One entry removed which eliminates first branch node
+        let keys2 = vec![
+            (vec![0, 0, 0, 0, 0, 0, 12, 25], b"________________________________1"),
+            (vec![0, 0, 0, 0, 0, 0, 15, 203], b"________________________________2"),
+        ];
+
+        let collection = TrieCollection::new(MapWithCounterCached::default());
+
+        let mut trie1 = collection.trie_for(crate::empty_trie_hash());
+        for (key, value) in &keys1 {
+            trie1.insert(key, *value);
+        }
+        let patch = trie1.into_patch();
+        let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        let mut trie2 = collection.trie_for(crate::empty_trie_hash());
+        for (key, value) in &keys2 {
+            trie2.insert(key, *value);
+        }
+        let patch = trie2.into_patch();
+        let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root);
+        let changes = st.get_changeset(first_root.root, second_root.root).unwrap();
+        log::info!("result change = {:?}", changes);
+
+        check_changes(
+            &changes,
+            &keys1.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect(),
+            second_root.root,
+            &vec![
+                (&vec![0, 0, 0, 0, 0, 0, 16, 246], None),
+                (&vec![0, 0, 0, 0, 0, 0, 12, 25], Some(b"________________________________1".to_vec())),
+                (&vec![0, 0, 0, 0, 0, 0, 15, 203], Some(b"________________________________2".to_vec())),
             ]
         );
         drop(second_root);
