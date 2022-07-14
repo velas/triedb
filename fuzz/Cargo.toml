@@ -39,6 +39,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "state_diff_with_child_extractor"
+path = "fuzz_targets/state_diff_with_child_extractor.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "state_diff"
 path = "fuzz_targets/state_diff.rs"
 test = false

@@ -20,6 +20,11 @@ use triedb::state_diff::{Change, DiffFinder};
 use triedb::TrieMut;
 
 
+pub fn no_childs(_: &[u8]) -> Vec<H256> {
+    vec![]
+}
+
+
 impl<'a> Arbitrary<'a> for Key {
     fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
         // Get an iterator of arbitrary `T`s.
@@ -53,31 +58,21 @@ impl<'a> Arbitrary<'a> for FixedData {
 
 #[derive(Debug)]
 pub struct MyArgs {
-    changes: Vec<(Key, Vec<(Key, FixedData)>)>,
+    changes: Vec<(Key, FixedData)>,
 
-    changes2: Vec<(Key, Vec<(Key, FixedData)>)>,
+    changes2: Vec<(Key, FixedData)>,
 }
 
 impl<'a> Arbitrary<'a> for MyArgs {
     fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
-        let changes: Vec<(Key, Vec<(Key, FixedData)>)> = u.arbitrary()?;
+        let changes: Vec<(Key, FixedData)> = u.arbitrary()?;
         if changes.len() < 5 {
             return Err(Error::NotEnoughData);
         }
-        for change in &changes {
-            if change.1.len() < 5 {
-                return Err(Error::NotEnoughData);
-            }
-        }
 
-        let changes2: Vec<(Key, Vec<(Key, FixedData)>)> = u.arbitrary()?;
+        let changes2: Vec<(Key, FixedData)> = u.arbitrary()?;
         if changes2.len() < 5 {
             return Err(Error::NotEnoughData);
-        }
-        for change in &changes2 {
-            if change.1.len() < 5 {
-                return Err(Error::NotEnoughData);
-            }
         }
 
         Ok(MyArgs { changes, changes2 })
@@ -107,119 +102,88 @@ impl Default for DataWithRoot {
 }
 
 fn test_state_diff(
-    changes: Vec<(Key, Vec<(Key, FixedData)>)>,
-    changes2: Vec<(Key, Vec<(Key, FixedData)>)>,
+    changes: Vec<(Key, FixedData)>,
+    changes2: Vec<(Key, FixedData)>,
 ) {
+    let _ = env_logger::Builder::new().parse_filters("trace").try_init();
     let collection1 = TrieCollection::new(MapWithCounterCached::default());
     let collection2 = TrieCollection::new(MapWithCounterCached::default());
 
     let mut collection1_trie1 = RootGuard::new(
         &collection1.database,
         crate::empty_trie_hash(),
-        DataWithRoot::get_childs,
+        no_childs,
     );
     let mut collection1_trie2 = RootGuard::new(
         &collection1.database,
         crate::empty_trie_hash(),
-        DataWithRoot::get_childs,
+        no_childs,
     );
     let mut collection2_trie1 = RootGuard::new(
         &collection2.database,
         crate::empty_trie_hash(),
-        DataWithRoot::get_childs,
+        no_childs,
     );
 
+    println!("====================== INSERT FIRST TRIE ======================");
+    let mut collection1_trie1 = collection1.trie_for(crate::empty_trie_hash());
+    let mut collection2_trie1 = collection2.trie_for(crate::empty_trie_hash());
     // create trie from 'changes' in both DBs
-    for (k, storage) in changes.iter() {
-        for (data_key, data) in storage {
-            { // Insert to first db
-                let mut account_trie = collection1.trie_for(collection1_trie1.root);
-                let mut account: DataWithRoot = TrieMut::get(&account_trie, &k.0)
-                    .map(|d| bincode::deserialize(&d).unwrap())
-                    .unwrap_or_default();
-                let mut storage_trie = collection1.trie_for(account.root);
-                storage_trie.insert(&data_key.0, &data.0);
-                let storage_patch = storage_trie.into_patch();
-                account.root = storage_patch.root;
-                account_trie.insert(&k.0, &bincode::serialize(&account).unwrap());
-                let mut account_patch = account_trie.into_patch();
-                account_patch.change.merge_child(&storage_patch.change);
-
-                collection1_trie1 = collection1.apply_increase(account_patch, DataWithRoot::get_childs);
-            }
-            { // Insert to second db
-                let mut account_trie = collection2.trie_for(collection2_trie1.root);
-                let mut account: DataWithRoot = TrieMut::get(&account_trie, &k.0)
-                    .map(|d| bincode::deserialize(&d).unwrap())
-                    .unwrap_or_default();
-                let mut storage_trie = collection2.trie_for(account.root);
-                storage_trie.insert(&data_key.0, &data.0);
-                let storage_patch = storage_trie.into_patch();
-                account.root = storage_patch.root;
-                account_trie.insert(&k.0, &bincode::serialize(&account).unwrap());
-                let mut account_patch = account_trie.into_patch();
-                account_patch.change.merge_child(&storage_patch.change);
-
-                collection2_trie1 = collection2.apply_increase(account_patch, DataWithRoot::get_childs);
-            }
-        }
+    for (key, value) in changes.iter() {
+        println!("============= KEY: {:?}, VALUE: {:?}", key, &value.0[..]);
+        collection1_trie1.insert(&key.0, &value.0);
+        collection2_trie1.insert(&key.0, &value.0);
     }
+    let patch = collection1_trie1.into_patch();
+    let collection1_trie1 = collection1.apply_increase(patch, no_childs);
+    let patch = collection2_trie1.into_patch();
+    let collection2_trie1 = collection2.apply_increase(patch, no_childs);
 
-    let mut accounts_map: HashMap<Key, HashMap<Key, FixedData>> = HashMap::new();
+    println!("====================== INSERT SECOND TRIE ======================");
+    let mut kv_map: HashMap<Key, FixedData> = HashMap::new();
+    let mut collection1_trie2 = collection1.trie_for(crate::empty_trie_hash());
     // create trie from 'changes2' in the first DB
-    for (k, storage) in changes2.iter() {
-        let account_updates = accounts_map.entry(*k).or_insert(HashMap::default());
-
-        for (data_key, data) in storage {
-            let mut account_trie = collection1.trie_for(collection1_trie2.root);
-            let mut account: DataWithRoot = TrieMut::get(&account_trie, &k.0)
-                .map(|d| bincode::deserialize(&d).unwrap())
-                .unwrap_or_default();
-            let mut storage_trie = collection1.trie_for(account.root);
-            account_updates.insert(*data_key, *data);
-            storage_trie.insert(&data_key.0, &data.0);
-            let storage_patch = storage_trie.into_patch();
-            account.root = storage_patch.root;
-            account_trie.insert(&k.0, &bincode::serialize(&account).unwrap());
-            let mut account_patch = account_trie.into_patch();
-            account_patch.change.merge_child(&storage_patch.change);
-
-            collection1_trie2 = collection1.apply_increase(account_patch, DataWithRoot::get_childs);
-        }
+    for (key, value) in changes2.iter() {
+        println!("============= KEY: {:?}, VALUE: {:?}", key, &value.0[..]);
+        kv_map.insert(*key, *value);
+        collection1_trie2.insert(&key.0, &value.0);
     }
+    let patch = collection1_trie2.into_patch();
+    let collection1_trie2 = collection1.apply_increase(patch, no_childs);
 
+    println!("====================== GET CHANGES ======================");
     // get diff between two tries in first DB
     let st = DiffFinder::new(&collection1.database, collection1_trie1.root, collection1_trie2.root);
     let changes = st.get_changeset(collection1_trie1.root, collection1_trie2.root).unwrap();
     let changes = triedb::Change {
         changes: changes.clone().into_iter().map(|change| {
             match change {
-                Change::Insert(key, val) => (key, Some(val)),
-                Change::Removal(key, _) => (key, None),
+                Change::Insert(key, val) => {
+                    println!("====================== INSERT: {} ======================", key);
+                    (key, Some(val))
+                },
+                Change::Removal(key, _) => {
+                    println!("====================== REMOVE: {} ======================", key);
+                    (key, None)
+                },
             }
         }).collect()
     };
+    println!("====================== INSERT CHANGES ======================");
     // apply changes over second DB
     for (key, value) in changes.changes.into_iter().rev() {
         if let Some(value) = value {
-            collection2.database.gc_insert_node(key, &value, DataWithRoot::get_childs);
+            collection2.database.gc_insert_node(key, &value, no_childs);
         }
     }
 
-    let accounts_storage = collection2.trie_for(collection1_trie2.root);
-    // println!("accounts_map = {}", accounts_map.len());
-    for (k, storage) in accounts_map {
-        // println!("storage_len = {}", storage.len());
-        let account: DataWithRoot =
-            bincode::deserialize(&TrieMut::get(&accounts_storage, &k.0).unwrap()).unwrap();
-
-        let account_storage_trie = collection2.trie_for(account.root);
-        for data_key in storage.keys() {
-            assert_eq!(
-                &storage[data_key].0[..],
-                &TrieMut::get(&account_storage_trie, &data_key.0).unwrap()
-            );
-        }
+    let trie = collection2.trie_for(collection1_trie2.root);
+    for (key, value) in kv_map {
+        println!("============= DATA KEY: {:?}, VALUE: {:?}", key, &value.0[..]);
+        assert_eq!(
+            &value.0[..],
+            &TrieMut::get(&trie, &key.0).unwrap()
+        );
     }
 }
 
