@@ -213,7 +213,7 @@ fn test_state_diff(
 
     println!("====================== GET CHANGES ======================");
     // get diff between two tries in first DB
-    let st = DiffFinder::new(&collection1.database, collection1_trie1.root, collection1_trie2.root);
+    let st = DiffFinder::new(&collection1.database, collection1_trie1.root, collection1_trie2.root, DataWithRoot::get_childs);
     let changes = st.get_changeset(collection1_trie1.root, collection1_trie2.root).unwrap();
     let changes = triedb::Change {
         changes: changes.clone().into_iter().map(|change| {

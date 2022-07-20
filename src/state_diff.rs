@@ -1,5 +1,5 @@
 use std::borrow::Borrow;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::sync::RwLock;
 
 use crate::Database;
@@ -18,9 +18,10 @@ use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB};
 use tracing::instrument;
 
 #[derive(Debug)]
-pub struct DiffFinder<DB> {
+pub struct DiffFinder<DB, F> {
     pub db: DB,
     changeset: RwLock<Vec<u8>>,
+    child_extractor: F,
 }
 
 
@@ -127,11 +128,12 @@ impl<'a> KeyedMerkleNode<'a> {
     }
 }
 
-impl<DB: Database + Send+ Sync> DiffFinder<DB> {
-    pub fn new(db: DB, start_state_root: H256, end_state_root: H256) -> Self {
+impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sync> DiffFinder<DB, F> {
+    pub fn new(db: DB, start_state_root: H256, end_state_root: H256, child_extractor: F) -> Self {
         DiffFinder {
             db,
             changeset: RwLock::new(Vec::new()),
+            child_extractor,
         }
     }
 
@@ -243,13 +245,13 @@ impl<DB: Database + Send+ Sync> DiffFinder<DB> {
                         "Diff work only with fixed sized key"
                     );
                     // if node is not same then it replace of new node
-                    changes.remove_node(left_node);
-                    changes.insert_node(right_node)
+                    changes.extend_from_slice(&self.deep_remove(left_nibble, left_node));
+                    changes.extend_from_slice(&self.deep_insert(right_nibble, right_node))
                 }
             }
             // Leaf was replaced by subtree.
             (MerkleNode::Leaf(_lnibbles, ldata), rnode) => {
-                changes.remove_node(left_node);
+                changes.extend_from_slice(&self.deep_remove(left_nibble, left_node));
                 changes.extend_from_slice(&self.deep_insert(right_nibble, right_node));
             }
             // We found extension at left part that differ from node from right.
@@ -334,11 +336,11 @@ impl<DB: Database + Send+ Sync> DiffFinder<DB> {
         let merkle_hashes = match node {
             KeyedMerkleNode::FullEncoded(hash, _) => vec![hash],
             KeyedMerkleNode::Partial(node) => {
-                ReachableHashes::collect(&node, tmp_no_child_extractor).childs()
+                ReachableHashes::collect(&node, self.child_extractor.clone()).childs()
             }
         };
-           
-            
+
+
         struct InsertCollector {
             changes: RwLock<Vec<Change>>,
         };
@@ -348,12 +350,35 @@ impl<DB: Database + Send+ Sync> DiffFinder<DB> {
                 Ok(true)
             }
         }
-        let collector = InsertCollector {
-            changes: Default::default()
+        struct ChildCollector<F> {
+            child_hashes: RwLock<Vec<H256>>,
+            child_extractor: F,
         };
-        let walker = crate::walker::Walker::new_raw(self.db.borrow(), collector, crate::walker::inspector::NoopInspector);
-        for hash in merkle_hashes {
-            walker.traverse(hash).unwrap()
+        impl<F: FnMut(&[u8]) -> Vec<H256> + Clone> crate::walker::inspector::TrieDataInsectorRaw for ChildCollector<F> {
+            fn inspect_data_raw<Data: AsRef<[u8]>>(&self, _key: Vec<u8>, value: Data) -> anyhow::Result<()> {
+                let childs = (self.child_extractor.clone())(value.as_ref());
+                self.child_hashes.write().unwrap().extend_from_slice(&childs);
+                Ok(())
+            }
+        }
+        let collector = InsertCollector {
+            changes: Default::default(),
+        };
+        let data_inspector = ChildCollector {
+            child_hashes: Default::default(),
+            child_extractor: self.child_extractor.clone(),
+        };
+        let walker = crate::walker::Walker::new_raw(self.db.borrow(), collector, data_inspector);
+        let mut hashes_to_traverse = merkle_hashes;
+        loop {
+            for hash in hashes_to_traverse {
+                walker.traverse(hash).unwrap()
+            }
+
+            hashes_to_traverse = std::mem::take(walker.data_inspector.child_hashes.write().unwrap().deref_mut());
+            if hashes_to_traverse.is_empty() {
+                break;
+            }
         }
         walker.trie_inspector.changes.into_inner().unwrap()
     }
@@ -367,7 +392,7 @@ impl<DB: Database + Send+ Sync> DiffFinder<DB> {
         let merkle_hashes = match node {
             KeyedMerkleNode::FullEncoded(hash, _) => vec![hash],
             KeyedMerkleNode::Partial(node) => {
-                ReachableHashes::collect(&node, tmp_no_child_extractor).childs()
+                ReachableHashes::collect(&node, self.child_extractor.clone()).childs()
             }
         };
        
@@ -381,12 +406,35 @@ impl<DB: Database + Send+ Sync> DiffFinder<DB> {
                 Ok(true)
             }
         }
+        struct ChildCollector<F> {
+            child_hashes: RwLock<Vec<H256>>,
+            child_extractor: F,
+        };
+        impl<F: FnMut(&[u8]) -> Vec<H256> + Clone> crate::walker::inspector::TrieDataInsectorRaw for ChildCollector<F> {
+            fn inspect_data_raw<Data: AsRef<[u8]>>(&self, _key: Vec<u8>, value: Data) -> anyhow::Result<()> {
+                let childs = (self.child_extractor.clone())(value.as_ref());
+                self.child_hashes.write().unwrap().extend_from_slice(&childs);
+                Ok(())
+            }
+        }
         let collector = RemoveCollector {
             changes: Default::default()
         };
-        let walker = crate::walker::Walker::new_raw(self.db.borrow(), collector, crate::walker::inspector::NoopInspector);
-        for hash in merkle_hashes {
-            walker.traverse(hash).unwrap()
+        let data_inspector = ChildCollector {
+            child_hashes: Default::default(),
+            child_extractor: self.child_extractor.clone(),
+        };
+        let walker = crate::walker::Walker::new_raw(self.db.borrow(), collector, data_inspector);
+        let mut hashes_to_traverse = merkle_hashes;
+        loop {
+            for hash in hashes_to_traverse {
+                walker.traverse(hash).unwrap()
+            }
+
+            hashes_to_traverse = std::mem::take(walker.data_inspector.child_hashes.write().unwrap().deref_mut());
+            if hashes_to_traverse.is_empty() {
+                break;
+            }
         }
         walker.trie_inspector.changes.into_inner().unwrap()
     }
@@ -730,7 +778,7 @@ mod tests {
         let patch = trie.into_patch();
         let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, last_root.root);
+        let st = DiffFinder::new(&collection.database, first_root.root, last_root.root, tmp_no_child_extractor);
         let changes = st.get_changeset(first_root.root, last_root.root).unwrap();
         log::info!("result change = {:?}", changes);
 
@@ -795,7 +843,7 @@ mod tests {
         let patch = trie.into_patch();
         let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, last_root.root);
+        let st = DiffFinder::new(&collection.database, first_root.root, last_root.root, tmp_no_child_extractor);
         log::info!("result change = {:?}", st.get_changeset(first_root.root, last_root.root).unwrap());
         drop(last_root);
         log::info!("second trie dropped")
@@ -835,7 +883,7 @@ mod tests {
         // H256::from_slice(&hex!("bbcc"));
         let expected_changeset = vec![Change::Insert(key, val)];
 
-        let diff_finder = DiffFinder::new(&collection.database, first_root.root, last_root.root);
+        let diff_finder = DiffFinder::new(&collection.database, first_root.root, last_root.root, tmp_no_child_extractor);
         let changeset = diff_finder.get_changeset(first_root.root, last_root.root).unwrap();
         let insert = changeset.get(0).unwrap();
         let (k, raw_v) = match &insert {
@@ -915,7 +963,7 @@ mod tests {
 
         let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, last_root.root);
+        let st = DiffFinder::new(&collection.database, first_root.root, last_root.root, tmp_no_child_extractor);
         log::info!("result change = {:?}", st.get_changeset(first_root.root, last_root.root).unwrap());
         drop(last_root);
         log::info!("second trie dropped")
@@ -949,7 +997,7 @@ mod tests {
         let patch = trie2.into_patch();
         let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root);
+        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root, tmp_no_child_extractor);
         let changes = st.get_changeset(first_root.root, second_root.root).unwrap();
         log::info!("result change = {:?}", changes);
 
@@ -1003,7 +1051,7 @@ mod tests {
         let patch = trie2.into_patch();
         let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root);
+        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root, tmp_no_child_extractor);
         let changes = st.get_changeset(first_root.root, second_root.root).unwrap();
         log::info!("result change = {:?}", changes);
 
@@ -1059,7 +1107,7 @@ mod tests {
         let patch = trie2.into_patch();
         let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root);
+        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root, tmp_no_child_extractor);
         let changes = st.get_changeset(first_root.root, second_root.root).unwrap();
         log::info!("result change = {:?}", changes);
 
@@ -1114,7 +1162,7 @@ mod tests {
         let patch = trie2.into_patch();
         let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root);
+        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root, tmp_no_child_extractor);
         let changes = st.get_changeset(first_root.root, second_root.root).unwrap();
         log::info!("result change = {:?}", changes);
 
@@ -1172,7 +1220,7 @@ mod tests {
         let patch = trie2.into_patch();
         let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root);
+        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root, tmp_no_child_extractor);
         let changes = st.get_changeset(first_root.root, second_root.root).unwrap();
         log::info!("result change = {:?}", changes);
 
@@ -1241,9 +1289,20 @@ mod tests {
 
         let keys1 = vec![
             (
-                vec![0, 0, 7, 119],
+                vec![0, 0, 0, 0],
                 vec![
-                    (vec![119, 119, 119, 119], vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 0, 0, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 0, 0, 15], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 0, 3, 0], vec![255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 0, 48, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 0, 243, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 7, 240, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 15, 0, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![3, 0, 0, 0], vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![15, 51, 255, 255], vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![240, 255, 240, 127], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![255, 255, 255, 240], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![255, 255, 255, 255], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
                 ]
             ),
         ];
@@ -1252,7 +1311,28 @@ mod tests {
             (
                 vec![0, 0, 0, 0],
                 vec![
-                    (vec![0, 3, 112, 7], vec![255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 0, 0, 0], vec![255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 0, 0, 15], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 0, 3, 0], vec![255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 0, 15, 51], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 0, 48, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 0, 243, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 7, 240, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 15, 0, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![3, 0, 0, 0], vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![15, 51, 255, 255], vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![240, 255, 240, 127], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![255, 255, 255, 240], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![255, 255, 255, 255], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                ]
+            ),
+            (
+                vec![0, 0, 0, 48],
+                vec![
+                    (vec![0, 0, 0, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 7, 240, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![3, 0, 0, 0], vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    (vec![0, 0, 15, 255], vec![255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
                 ]
             ),
         ];
@@ -1333,8 +1413,9 @@ mod tests {
             }
         }
 
-        let st = DiffFinder::new(&collection1.database, collection1_trie1.root, collection1_trie2.root);
+        let st = DiffFinder::new(&collection1.database, collection1_trie1.root, collection1_trie2.root, DataWithRoot::get_childs);
         let changes = st.get_changeset(collection1_trie1.root, collection1_trie2.root).unwrap();
+        log::info!("result change = {:?}", changes);
         let changes = crate::Change {
             changes: changes.clone().into_iter().map(|change| {
                 match change {
