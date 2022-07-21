@@ -48,6 +48,10 @@ impl fmt::Display for Params {
     }
 }
 
+/*
+    Benchmark diff between two tries of the same size.
+    Keys for both tries are generated randomly on the same key range.
+ */
 fn benchmark_same_key_range(c: &mut Criterion) {
     let mut group = c.benchmark_group("get_changeset: same key range");
     let mut rng = StdRng::seed_from_u64(0);
@@ -110,6 +114,13 @@ fn benchmark_same_key_range(c: &mut Criterion) {
     });
 }
 
+/*
+    Benchmark diff between two tries of the same size.
+    Keys for both tries are generated randomly on two non-intersecting key ranges.
+    Keys in the first trie are starting with 0, 0, 0, ... while
+    keys in the second trie are starting with f, f, f, ...
+    So in this case diff must be faster then bench with the same key ranges.
+ */
 fn benchmark_different_key_range(c: &mut Criterion) {
     let mut group = c.benchmark_group("get_changeset: defferent key range");
     let mut rng = StdRng::seed_from_u64(0);
@@ -172,6 +183,7 @@ fn benchmark_different_key_range(c: &mut Criterion) {
     });
 }
 
+// Benchmark diff on two equal tries
 fn benchmark_equal_tries(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(0);
     let collection = TrieCollection::new(MapWithCounterCached::default());
