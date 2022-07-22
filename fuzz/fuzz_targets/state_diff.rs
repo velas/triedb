@@ -109,77 +109,48 @@ fn test_state_diff(
     let collection1 = TrieCollection::new(MapWithCounterCached::default());
     let collection2 = TrieCollection::new(MapWithCounterCached::default());
 
-    let mut collection1_trie1 = RootGuard::new(
-        &collection1.database,
-        crate::empty_trie_hash(),
-        no_childs,
-    );
-    let mut collection1_trie2 = RootGuard::new(
-        &collection1.database,
-        crate::empty_trie_hash(),
-        no_childs,
-    );
-    let mut collection2_trie1 = RootGuard::new(
-        &collection2.database,
-        crate::empty_trie_hash(),
-        no_childs,
-    );
-
-    println!("====================== INSERT FIRST TRIE ======================");
+    // Insert first trie into collections
     let mut collection1_trie1 = collection1.trie_for(crate::empty_trie_hash());
-    let mut collection2_trie1 = collection2.trie_for(crate::empty_trie_hash());
     // create trie from 'changes' in both DBs
     for (key, value) in changes.iter() {
-        println!("============= KEY: {:?}, VALUE: {:?}", key, &value.0[..]);
         collection1_trie1.insert(&key.0, &value.0);
-        collection2_trie1.insert(&key.0, &value.0);
     }
     let patch = collection1_trie1.into_patch();
-    let collection1_trie1 = collection1.apply_increase(patch, no_childs);
-    let patch = collection2_trie1.into_patch();
+    let collection1_trie1 = collection1.apply_increase(patch.clone(), no_childs);
     let collection2_trie1 = collection2.apply_increase(patch, no_childs);
 
-    println!("====================== INSERT SECOND TRIE ======================");
+    // Insert second trie into first collection and into HashMap to be able to check results
     let mut kv_map: HashMap<Key, FixedData> = HashMap::new();
     let mut collection1_trie2 = collection1.trie_for(crate::empty_trie_hash());
     // create trie from 'changes2' in the first DB
     for (key, value) in changes2.iter() {
-        println!("============= KEY: {:?}, VALUE: {:?}", key, &value.0[..]);
         kv_map.insert(*key, *value);
         collection1_trie2.insert(&key.0, &value.0);
     }
     let patch = collection1_trie2.into_patch();
     let collection1_trie2 = collection1.apply_increase(patch, no_childs);
 
-    println!("====================== GET CHANGES ======================");
-    // get diff between two tries in first DB
+    // Get diff between two tries in the first collection
     let st = DiffFinder::new(&collection1.database, collection1_trie1.root, collection1_trie2.root, no_childs);
     let changes = st.get_changeset(collection1_trie1.root, collection1_trie2.root).unwrap();
     let changes = triedb::Change {
         changes: changes.clone().into_iter().map(|change| {
             match change {
                 Change::Insert(key, val) => {
-                    println!("====================== INSERT: {} ======================", key);
                     (key, Some(val))
                 },
                 Change::Removal(key, _) => {
-                    println!("====================== REMOVE: {} ======================", key);
                     (key, None)
                 },
             }
         }).collect()
     };
-    println!("====================== INSERT CHANGES ======================");
-    // apply changes over second DB
-    for (key, value) in changes.changes.into_iter().rev() {
-        if let Some(value) = value {
-            collection2.database.gc_insert_node(key, &value, no_childs);
-        }
-    }
+    // Apply changes over the initial trie in the second collection
+    collection2.apply_changes(changes, no_childs);
 
+    // Compare contents of HashMap and final trie in the second collection
     let trie = collection2.trie_for(collection1_trie2.root);
     for (key, value) in kv_map {
-        println!("============= DATA KEY: {:?}, VALUE: {:?}", key, &value.0[..]);
         assert_eq!(
             &value.0[..],
             &TrieMut::get(&trie, &key.0).unwrap()

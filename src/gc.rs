@@ -162,6 +162,22 @@ impl<D: DbCounter + Database> TrieCollection<D> {
 
         root_guard
     }
+
+    pub fn apply_changes<F>(
+        &self,
+        change: Change,
+        mut child_extractor: F,
+    )
+        where
+            F: FnMut(&[u8]) -> Vec<H256> + Clone,
+    {
+        // we collect changs from bottom to top, but insert should be done from root to child.
+        for (key, value) in change.changes.into_iter().rev() {
+            if let Some(value) = value {
+                self.database.gc_insert_node(key, &value, &mut child_extractor);
+            }
+        }
+    }
 }
 
 pub struct DatabaseTrieMut<D> {
@@ -172,7 +188,7 @@ pub struct DatabaseTrieMut<D> {
     root: H256,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct DatabaseTrieMutPatch {
     pub root: H256,
     pub change: Change,
