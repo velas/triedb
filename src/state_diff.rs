@@ -63,6 +63,43 @@ impl ChangeSetExt for Vec<Change> {
     }
 }
 
+#[derive(Default)]
+struct InsertCollector {
+    changes: RwLock<Vec<Change>>,
+}
+
+impl crate::walker::inspector::TrieInspector for InsertCollector {
+    fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> anyhow::Result<bool > {
+        self.changes.write().unwrap().push(Change::Insert(trie_key, node.as_ref().to_vec()));
+        Ok(true)
+    }
+}
+
+#[derive(Default)]
+struct RemoveCollector {
+    changes: RwLock<Vec<Change>>,
+}
+
+impl crate::walker::inspector::TrieInspector for RemoveCollector {
+    fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> anyhow::Result<bool > {
+        self.changes.write().unwrap().push(Change::Removal(trie_key, node.as_ref().to_vec()));
+        Ok(true)
+    }
+}
+
+struct ChildCollector<F> {
+    child_hashes: RwLock<Vec<H256>>,
+    child_extractor: F,
+}
+
+impl<F: FnMut(&[u8]) -> Vec<H256> + Clone> crate::walker::inspector::TrieDataInsectorRaw for ChildCollector<F> {
+    fn inspect_data_raw<Data: AsRef<[u8]>>(&self, _key: Vec<u8>, value: Data) -> anyhow::Result<()> {
+        let childs = (self.child_extractor.clone())(value.as_ref());
+        self.child_hashes.write().unwrap().extend_from_slice(&childs);
+        Ok(())
+    }
+}
+
 trait MerkleValueExt<'a> {
     fn node(&self, database: &'a impl Database) -> Option<KeyedMerkleNode<'a>> ;
 }
@@ -329,10 +366,11 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
     }
 
     #[cfg_attr(feature="tracing-enable", instrument(skip(self)))]
-    fn deep_insert(&self,
-        nibble: NibbleVec,
-        node: KeyedMerkleNode) -> Vec<Change> {
-
+    fn deep_insert(
+        &self,
+        _nibble: NibbleVec,
+        node: KeyedMerkleNode
+    ) -> Vec<Change> {
         let merkle_hashes = match node {
             KeyedMerkleNode::FullEncoded(hash, _) => vec![hash],
             KeyedMerkleNode::Partial(node) => {
@@ -340,30 +378,7 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
             }
         };
 
-
-        struct InsertCollector {
-            changes: RwLock<Vec<Change>>,
-        };
-        impl crate::walker::inspector::TrieInspector for InsertCollector {
-            fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> anyhow::Result<bool > {
-                self.changes.write().unwrap().push(Change::Insert(trie_key, node.as_ref().to_vec()));
-                Ok(true)
-            }
-        }
-        struct ChildCollector<F> {
-            child_hashes: RwLock<Vec<H256>>,
-            child_extractor: F,
-        };
-        impl<F: FnMut(&[u8]) -> Vec<H256> + Clone> crate::walker::inspector::TrieDataInsectorRaw for ChildCollector<F> {
-            fn inspect_data_raw<Data: AsRef<[u8]>>(&self, _key: Vec<u8>, value: Data) -> anyhow::Result<()> {
-                let childs = (self.child_extractor.clone())(value.as_ref());
-                self.child_hashes.write().unwrap().extend_from_slice(&childs);
-                Ok(())
-            }
-        }
-        let collector = InsertCollector {
-            changes: Default::default(),
-        };
+        let collector = InsertCollector::default();
         let data_inspector = ChildCollector {
             child_hashes: Default::default(),
             child_extractor: self.child_extractor.clone(),
@@ -384,42 +399,19 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
     }
 
     #[cfg_attr(feature="tracing-enable", instrument(skip(self)))]
-    fn deep_remove(&self,
-        nibble: NibbleVec,
-        node: KeyedMerkleNode) -> Vec<Change> {
-
-
+    fn deep_remove(
+        &self,
+        _nibble: NibbleVec,
+        node: KeyedMerkleNode
+    ) -> Vec<Change> {
         let merkle_hashes = match node {
             KeyedMerkleNode::FullEncoded(hash, _) => vec![hash],
             KeyedMerkleNode::Partial(node) => {
                 ReachableHashes::collect(&node, self.child_extractor.clone()).childs()
             }
         };
-       
-        
-        struct RemoveCollector {
-            changes: RwLock<Vec<Change>>,
-        };
-        impl crate::walker::inspector::TrieInspector for RemoveCollector {
-            fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> anyhow::Result<bool > {
-                self.changes.write().unwrap().push(Change::Removal(trie_key, node.as_ref().to_vec()));
-                Ok(true)
-            }
-        }
-        struct ChildCollector<F> {
-            child_hashes: RwLock<Vec<H256>>,
-            child_extractor: F,
-        };
-        impl<F: FnMut(&[u8]) -> Vec<H256> + Clone> crate::walker::inspector::TrieDataInsectorRaw for ChildCollector<F> {
-            fn inspect_data_raw<Data: AsRef<[u8]>>(&self, _key: Vec<u8>, value: Data) -> anyhow::Result<()> {
-                let childs = (self.child_extractor.clone())(value.as_ref());
-                self.child_hashes.write().unwrap().extend_from_slice(&childs);
-                Ok(())
-            }
-        }
-        let collector = RemoveCollector {
-            changes: Default::default()
-        };
+
+        let collector = RemoveCollector::default();
         let data_inspector = ChildCollector {
             child_hashes: Default::default(),
             child_extractor: self.child_extractor.clone(),
