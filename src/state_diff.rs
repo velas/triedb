@@ -734,12 +734,7 @@ mod tests {
                 }
             }).collect()
         };
-        for (key, value) in changes.changes.into_iter().rev() {
-            if let Some(value) = value {
-                log::info!("change(insert): key={}, value={:?}", key, value);
-                collection.database.gc_insert_node(key, &value, no_childs);
-            }
-        }
+        collection.apply_changes(changes, no_childs);
 
         let new_trie = collection.trie_for(expected_trie_root);
         for (key, value) in expected_trie_data {

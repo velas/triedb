@@ -163,6 +163,7 @@ impl<D: DbCounter + Database> TrieCollection<D> {
         root_guard
     }
 
+    /// Sort changes from root to leaf and apply
     pub fn apply_changes<F>(
         &self,
         change: Change,
@@ -171,11 +172,38 @@ impl<D: DbCounter + Database> TrieCollection<D> {
         where
             F: FnMut(&[u8]) -> Vec<H256> + Clone,
     {
-        // we collect changs from bottom to top, but insert should be done from root to child.
+        let mut sorted: Vec<(H256, Vec<u8>)> = vec![];
         for (key, value) in change.changes.into_iter().rev() {
             if let Some(value) = value {
-                self.database.gc_insert_node(key, &value, &mut child_extractor);
+                let rlp = Rlp::new(&value);
+                let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                let child = sorted.iter().enumerate().find(|(i, (key, _))| {
+                    match &node {
+                        MerkleNode::Branch(values, _) => {
+                            values.iter().any(|value| {
+                                if let MerkleValue::Hash(k) = value {
+                                    return *k == *key;
+                                }
+                                false
+                            })
+                        }
+                        MerkleNode::Extension(_, value) => {
+                            if let MerkleValue::Hash(k) = value {
+                                return *k == *key;
+                            }
+                            false
+                        }
+                        MerkleNode::Leaf(_, _) => false
+                    }
+                });
+                match child {
+                    None => sorted.push((key, value)),
+                    Some((i, _)) => sorted.insert(i, (key, value)),
+                }
             }
+        }
+        for (key, value) in sorted.into_iter() {
+            self.database.gc_insert_node(key, &value, &mut child_extractor);
         }
     }
 }
