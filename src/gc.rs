@@ -173,10 +173,14 @@ impl<D: DbCounter + Database> TrieCollection<D> {
             F: FnMut(&[u8]) -> Vec<H256> + Clone,
     {
         let mut sorted: Vec<(H256, Vec<u8>)> = vec![];
+        let mut referenced = vec![];
         for (key, value) in change.changes.into_iter().rev() {
             if let Some(value) = value {
                 let rlp = Rlp::new(&value);
                 let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                referenced.extend_from_slice(
+                    &ReachableHashes::collect(&node, child_extractor.clone()).childs()
+                );
                 let child = sorted.iter().enumerate().find(|(i, (key, _))| {
                     match &node {
                         MerkleNode::Branch(values, _) => {
@@ -204,6 +208,9 @@ impl<D: DbCounter + Database> TrieCollection<D> {
         }
         for (key, value) in sorted.into_iter() {
             self.database.gc_insert_node(key, &value, &mut child_extractor);
+        }
+        for hash in referenced {
+            assert!(self.database.node_exist(hash));
         }
     }
 }
@@ -913,6 +920,28 @@ pub mod tests {
 
         assert_eq!(shared_db.data.len(), 0);
         assert_eq!(shared_db.counter.len(), 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_apply_invalid_changes() {
+        let collection1 = TrieCollection::new(MapWithCounterCached::default());
+        let collection2 = TrieCollection::new(MapWithCounterCached::default());
+
+        let mut trie = collection1.trie_for(crate::empty_trie_hash());
+        trie.insert(&hex!("bbaa"), b"same data________________________");
+        trie.insert(&hex!("ffaa"), b"same data________________________");
+        trie.insert(&hex!("bbcc"), b"same data________________________");
+        let patch = trie.into_patch();
+        let root_guard = collection1.apply_increase(patch, no_childs);
+
+        let node = collection1.database.get(root_guard.root);
+        let changes = Change {
+            changes: vec![(root_guard.root, Some(node.to_vec()))].into()
+        };
+
+        // Change contains only root node so assert will fail
+        collection2.apply_changes(changes, no_childs);
     }
 
     #[quickcheck]
