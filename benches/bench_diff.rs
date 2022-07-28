@@ -106,7 +106,7 @@ fn benchmark_same_key_range(c: &mut Criterion) {
             |b, _params| {
                 b.iter(|| {
                     let st =
-                        DiffFinder::new(&collection.database, first_root.root, second_root.root);
+                        DiffFinder::new(&collection.database, first_root.root, second_root.root, no_childs);
                     st.get_changeset(first_root.root, second_root.root).unwrap()
                 })
             },
@@ -175,7 +175,7 @@ fn benchmark_different_key_range(c: &mut Criterion) {
             |b, _params| {
                 b.iter(|| {
                     let st =
-                        DiffFinder::new(&collection.database, first_root.root, second_root.root);
+                        DiffFinder::new(&collection.database, first_root.root, second_root.root, no_childs);
                     st.get_changeset(first_root.root, second_root.root).unwrap()
                 })
             },
@@ -197,7 +197,7 @@ fn benchmark_equal_tries(c: &mut Criterion) {
 
     c.bench_function("get_changeset equal", |b| {
         b.iter(|| {
-            let st = DiffFinder::new(&collection.database, first_root.root, first_root.root);
+            let st = DiffFinder::new(&collection.database, first_root.root, first_root.root, no_childs);
             st.get_changeset(first_root.root, first_root.root).unwrap()
         })
     });
