@@ -587,7 +587,8 @@ mod tests {
         assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
 
         println!("Debug cf");
-        for (k, v) in db.iterator_cf(cf, IteratorMode::Start) {
+        for item in db.iterator_cf(cf, IteratorMode::Start) {
+            let (k, v) = item.unwrap();
             println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
         }
         assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);
@@ -719,7 +720,8 @@ mod tests {
         assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
 
         println!("Debug cf");
-        for (k, v) in db.iterator_cf(cf, IteratorMode::Start) {
+        for item in db.iterator_cf(cf, IteratorMode::Start) {
+            let (k, v) = item.unwrap();
             println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
         }
         assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);
@@ -790,7 +792,8 @@ mod tests {
         assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
 
         println!("Debug cf");
-        for (k, v) in db.iterator_cf(cf, IteratorMode::Start) {
+        for item in db.iterator_cf(cf, IteratorMode::Start) {
+            let (k, v) = item.unwrap();
             println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
         }
         assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);
@@ -870,7 +873,8 @@ mod tests {
         let cf = shared_db.cf_handle("counter").unwrap();
         assert_eq!(shared_db.iterator(IteratorMode::Start).count(), 0);
 
-        for (k, v) in shared_db.iterator_cf(cf, IteratorMode::Start) {
+        for item in shared_db.iterator_cf(cf, IteratorMode::Start) {
+            let (k, v) = item.unwrap();
             println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
         }
         assert_eq!(shared_db.iterator_cf(cf, IteratorMode::Start).count(), 0);
@@ -1179,7 +1183,8 @@ mod tests {
         let cf = db.cf_handle("counter").unwrap();
         assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
 
-        for (k, v) in db.iterator_cf(cf, IteratorMode::Start) {
+        for item in db.iterator_cf(cf, IteratorMode::Start) {
+            let (k, v) = item.unwrap();
             println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
         }
         assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);
