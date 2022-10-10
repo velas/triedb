@@ -42,9 +42,15 @@ impl<DB, TI, DI> Walker<DB, TI, DI> {
     }
 }
 
+/// An immutable database handle to.
+pub trait WalkableDatabase {
+    /// Get a raw value from the database.
+    fn get(&self, key: H256) -> Result<(), ()>;
+}
+
 impl<DB, TI, DI> Walker<DB, TI, DI>
 where
-    DB: Database + Sync + Send,
+    DB: Database + Send + Sync,
     TI: TrieInspector + Sync + Send,
     DI: TrieDataInsectorRaw + Sync + Send,
 {
