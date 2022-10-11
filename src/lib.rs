@@ -26,7 +26,7 @@ mod impls;
 mod memory;
 mod mutable;
 mod ops;
-pub mod walker;
+mod walker;
 
 use ops::{build, delete, get, insert};
 
