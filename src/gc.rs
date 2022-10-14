@@ -472,8 +472,10 @@ pub mod testing {
     use dashmap::mapref::entry::Entry;
     use log::trace;
     use primitive_types::H256;
+    use rocksdb_lib::OptimisticTransactionDB;
     use super::*;
 
+    use crate::rocksdb;
     use crate::{Database, CachedDatabaseHandle};
 
     use super::{MapWithCounter, DbCounter};
@@ -484,6 +486,32 @@ pub mod testing {
         cache: AsyncCache,
     }
 
+    impl<D> AsyncCachedHandle<D> {
+        pub fn new(db: D) -> Self {
+            AsyncCachedHandle {
+                db,
+                cache: AsyncCache::default()
+            }
+        }
+    }
+
+    #[derive(Default, Debug)]
+    pub struct AsyncCachedDatabaseHandle<D> { db: D }
+
+    impl<D: Borrow<OptimisticTransactionDB>> AsyncCachedDatabaseHandle<D> {
+        pub fn new(db: D) -> Self { AsyncCachedDatabaseHandle { db } }
+    }
+
+    // Same implementation as for RocksDatabaseHandle<'a, D>
+    impl<D: Borrow<OptimisticTransactionDB>> CachedDatabaseHandle for AsyncCachedDatabaseHandle<D> {
+        fn get(&self, key: H256) -> Vec<u8> {
+            self.db
+                .borrow()
+                .get(key.as_ref())
+                .expect("Error on reading database")
+                .unwrap_or_else(|| panic!("Value for {} not found in database", key))
+        }
+    }
 
     #[derive(Default, Debug)]
     pub struct AsyncCache {
