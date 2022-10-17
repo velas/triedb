@@ -11,7 +11,6 @@ use rlp::Rlp;
 
 
 use sha3::{Digest, Keccak256};
-// use crate::rocksdb::OptimisticTransactionDB;
 use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB};
 
 #[cfg(feature="tracing-enable")]
@@ -166,7 +165,7 @@ impl<'a> KeyedMerkleNode<'a> {
 }
 
 impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sync> DiffFinder<DB, F> {
-    pub fn new(db: DB, start_state_root: H256, end_state_root: H256, child_extractor: F) -> Self {
+    pub fn new(db: DB, child_extractor: F) -> Self {
         DiffFinder {
             db,
             changeset: RwLock::new(Vec::new()),
