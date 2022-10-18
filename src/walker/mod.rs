@@ -1,14 +1,17 @@
-use std::{borrow::Borrow, sync::Arc};
+use std::borrow::Borrow;
 
+use crate::{
+    merkle::{MerkleNode, MerkleValue},
+    Database,
+};
 use primitive_types::H256;
 use rlp::Rlp;
-use crate::{merkle::{MerkleNode, MerkleValue}, Database};
 
-use anyhow::{anyhow, Result};
-use log::*;
 use crate::merkle::nibble::NibbleVec;
+use anyhow::Result;
+use log::*;
 
-use inspector::{encoding, TrieDataInsectorRaw, TrieInspector};
+use inspector::{TrieDataInsectorRaw, TrieInspector};
 
 pub mod inspector;
 
@@ -18,20 +21,6 @@ pub struct Walker<DB, TI, DI> {
     pub data_inspector: DI,
 }
 
-impl<DB, I, K, V> Walker<DB, Arc<I>, encoding::SecTrie<Arc<I>, K, V>> {
-    // Create walker with shared inspector that allow cloning.
-    pub fn new_shared(db: DB, inspector: I) -> Self {
-        let inspector = Arc::new(inspector);
-
-        Self::new_raw(db, inspector.clone(), encoding::SecTrie::new(inspector))
-    }
-}
-
-impl<DB, TI, DI, K, V> Walker<DB, TI, encoding::SecTrie<DI, K, V>> {
-    pub fn new_sec_encoding(db: DB, trie_inspector: TI, data_inspector: DI) -> Self {
-        Self::new_raw(db, trie_inspector, encoding::SecTrie::new(data_inspector))
-    }
-}
 impl<DB, TI, DI> Walker<DB, TI, DI> {
     pub fn new_raw(db: DB, trie_inspector: TI, data_inspector: DI) -> Self {
         Self {
@@ -55,8 +44,7 @@ where
         debug!("traversing {:?} ...", hash);
         if hash != crate::empty_trie_hash() {
             let db = self.db.borrow();
-            let bytes = db
-                .get(hash);
+            let bytes = db.get(hash);
             trace!("raw bytes: {:?}", bytes);
 
             let rlp = Rlp::new(bytes);

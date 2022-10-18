@@ -2,18 +2,14 @@ use std::borrow::Borrow;
 use std::ops::{Deref, DerefMut};
 use std::sync::RwLock;
 
-use crate::Database;
 use crate::gc::ReachableHashes;
 use crate::merkle::nibble::{self, Nibble, NibbleSlice, NibbleVec};
 use crate::merkle::{MerkleNode, MerkleValue};
+use crate::Database;
 use primitive_types::H256;
 use rlp::Rlp;
 
-
-use sha3::{Digest, Keccak256};
-use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB};
-
-#[cfg(feature="tracing-enable")]
+#[cfg(feature = "tracing-enable")]
 use tracing::instrument;
 
 #[derive(Debug)]
@@ -23,11 +19,6 @@ pub struct DiffFinder<DB, F> {
     child_extractor: F,
 }
 
-
-fn tmp_no_child_extractor(data: &[u8]) -> Vec<H256>{
-    log::error!("Replace with real child extractor");
-    vec![]
-}
 #[derive(Debug, Clone)]
 struct Cursor {
     nibble: NibbleVec,
@@ -41,19 +32,19 @@ pub enum Change {
 }
 
 trait ChangeSetExt {
-    fn remove_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a> >);
+    fn remove_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a>>);
     fn insert_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a>>);
 }
 impl ChangeSetExt for Vec<Change> {
-    fn remove_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a> >) {
+    fn remove_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a>>) {
         if let KeyedMerkleNode::FullEncoded(hash, data) = node.borrow() {
             self.push(Change::Removal(*hash, data.to_vec()))
-        }else {
+        } else {
             log::trace!("Skipping to remove inline node")
         }
     }
 
-    fn insert_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a>>){
+    fn insert_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a>>) {
         if let KeyedMerkleNode::FullEncoded(hash, data) = node.borrow() {
             self.push(Change::Insert(*hash, data.to_vec()))
         } else {
@@ -68,8 +59,11 @@ struct InsertCollector {
 }
 
 impl crate::walker::inspector::TrieInspector for InsertCollector {
-    fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> anyhow::Result<bool > {
-        self.changes.write().unwrap().push(Change::Insert(trie_key, node.as_ref().to_vec()));
+    fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> anyhow::Result<bool> {
+        self.changes
+            .write()
+            .unwrap()
+            .push(Change::Insert(trie_key, node.as_ref().to_vec()));
         Ok(true)
     }
 }
@@ -80,8 +74,11 @@ struct RemoveCollector {
 }
 
 impl crate::walker::inspector::TrieInspector for RemoveCollector {
-    fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> anyhow::Result<bool > {
-        self.changes.write().unwrap().push(Change::Removal(trie_key, node.as_ref().to_vec()));
+    fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> anyhow::Result<bool> {
+        self.changes
+            .write()
+            .unwrap()
+            .push(Change::Removal(trie_key, node.as_ref().to_vec()));
         Ok(true)
     }
 }
@@ -91,26 +88,35 @@ struct ChildCollector<F> {
     child_extractor: F,
 }
 
-impl<F: FnMut(&[u8]) -> Vec<H256> + Clone> crate::walker::inspector::TrieDataInsectorRaw for ChildCollector<F> {
-    fn inspect_data_raw<Data: AsRef<[u8]>>(&self, _key: Vec<u8>, value: Data) -> anyhow::Result<()> {
+impl<F: FnMut(&[u8]) -> Vec<H256> + Clone> crate::walker::inspector::TrieDataInsectorRaw
+    for ChildCollector<F>
+{
+    fn inspect_data_raw<Data: AsRef<[u8]>>(
+        &self,
+        _key: Vec<u8>,
+        value: Data,
+    ) -> anyhow::Result<()> {
         let childs = (self.child_extractor.clone())(value.as_ref());
-        self.child_hashes.write().unwrap().extend_from_slice(&childs);
+        self.child_hashes
+            .write()
+            .unwrap()
+            .extend_from_slice(&childs);
         Ok(())
     }
 }
 
 trait MerkleValueExt<'a> {
-    fn node(&self, database: &'a impl Database) -> Option<KeyedMerkleNode<'a>> ;
+    fn node(&self, database: &'a impl Database) -> Option<KeyedMerkleNode<'a>>;
 }
 impl<'a> MerkleValueExt<'a> for MerkleValue<'a> {
     fn node(&self, database: &'a impl Database) -> Option<KeyedMerkleNode<'a>> {
         Some(match self {
             Self::Empty => return None,
             Self::Full(n) => KeyedMerkleNode::Partial(n.deref().clone()),
-            Self::Hash(h) =>{
+            Self::Hash(h) => {
                 let bytes = database.get(*h);
                 KeyedMerkleNode::FullEncoded(*h, bytes)
-            } 
+            }
         })
     }
 }
@@ -143,20 +149,20 @@ enum ComparePathResult {
 enum KeyedMerkleNode<'a> {
     // Merkle node is only exist as inlined node
     Partial(MerkleNode<'a>),
-    FullEncoded(H256, &'a[u8]),
+    FullEncoded(H256, &'a [u8]),
 }
 
 impl<'a> KeyedMerkleNode<'a> {
     fn same_hash(&self, other: &Self) -> bool {
         match (self, other) {
-        (Self::FullEncoded(h, _),Self::FullEncoded(h2, _)) => h == h2,
-        _ => false
+            (Self::FullEncoded(h, _), Self::FullEncoded(h2, _)) => h == h2,
+            _ => false,
         }
     }
     fn merkle_node(&self) -> MerkleNode {
         match self {
             Self::Partial(n) => n.clone(),
-            Self::FullEncoded(_, n) =>  {
+            Self::FullEncoded(_, n) => {
                 let rlp = Rlp::new(n);
                 MerkleNode::decode(&rlp).expect("Cannot deserialize value")
             }
@@ -164,7 +170,9 @@ impl<'a> KeyedMerkleNode<'a> {
     }
 }
 
-impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sync> DiffFinder<DB, F> {
+impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sync>
+    DiffFinder<DB, F>
+{
     pub fn new(db: DB, child_extractor: F) -> Self {
         DiffFinder {
             db,
@@ -173,7 +181,11 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
         }
     }
 
-    pub fn get_changeset(&self, start_state_root: H256, end_state_root: H256) -> Result<Vec<Change>, ()> {
+    pub fn get_changeset(
+        &self,
+        start_state_root: H256,
+        end_state_root: H256,
+    ) -> Result<Vec<Change>, ()> {
         self.traverse_inner(
             Default::default(),
             Default::default(),
@@ -194,42 +206,45 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
 
         let db = &self.db;
 
-        Ok(match (left_tree_cursor == crate::empty_trie_hash(), right_tree_cursor == crate::empty_trie_hash()) {
-            (true, true) => {
-                vec![]
-            }
-            (true, false) => {
-                let bytes = db.get(right_tree_cursor);
-                // eprintln!("right raw bytes: {:?}", bytes);
+        Ok(
+            match (
+                left_tree_cursor == crate::empty_trie_hash(),
+                right_tree_cursor == crate::empty_trie_hash(),
+            ) {
+                (true, true) => {
+                    vec![]
+                }
+                (true, false) => {
+                    let bytes = db.get(right_tree_cursor);
+                    // eprintln!("right raw bytes: {:?}", bytes);
 
-                let right_node = KeyedMerkleNode::FullEncoded(right_tree_cursor, bytes);
-                self.deep_insert(right_nibble, right_node)
-            }
-            (false, true) => {
-                let bytes = db.get(left_tree_cursor);
-                // eprintln!("left raw bytes: {:?}", bytes);
+                    let right_node = KeyedMerkleNode::FullEncoded(right_tree_cursor, bytes);
+                    self.deep_insert(right_nibble, right_node)
+                }
+                (false, true) => {
+                    let bytes = db.get(left_tree_cursor);
+                    // eprintln!("left raw bytes: {:?}", bytes);
 
+                    let left_node = KeyedMerkleNode::FullEncoded(left_tree_cursor, bytes);
+                    self.deep_remove(left_nibble, left_node)
+                }
+                (false, false) => {
+                    let bytes = db.get(left_tree_cursor);
+                    // eprintln!("left raw bytes: {:?}", bytes);
+                    let left_node = KeyedMerkleNode::FullEncoded(left_tree_cursor, bytes);
 
-                let left_node = KeyedMerkleNode::FullEncoded(left_tree_cursor, bytes);
-                self.deep_remove(left_nibble, left_node)
-            }
-            (false, false) => {
-                let bytes = db.get(left_tree_cursor);
-                // eprintln!("left raw bytes: {:?}", bytes);
-                let left_node = KeyedMerkleNode::FullEncoded(left_tree_cursor, bytes);
+                    let bytes = db.get(right_tree_cursor);
+                    // eprintln!("right raw bytes: {:?}", bytes);
 
-                let bytes = db.get(right_tree_cursor);
-                // eprintln!("right raw bytes: {:?}", bytes);
+                    let right_node = KeyedMerkleNode::FullEncoded(right_tree_cursor, bytes);
 
-                let right_node = KeyedMerkleNode::FullEncoded(right_tree_cursor, bytes);
-
-                self.compare_nodes(left_nibble, left_node, right_nibble, right_node)
-            }
-
-        })
+                    self.compare_nodes(left_nibble, left_node, right_nibble, right_node)
+                }
+            },
+        )
     }
 
-    #[cfg_attr(feature="tracing-enable", instrument(skip(self)))]
+    #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
     fn compare_nodes(
         &self,
         left_nibble: NibbleVec,
@@ -286,16 +301,16 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
                 }
             }
             // Leaf was replaced by subtree.
-            (MerkleNode::Leaf(_lnibbles, ldata), rnode) => {
+            (MerkleNode::Leaf(_lnibbles, _ldata), _rnode) => {
                 changes.extend_from_slice(&self.deep_remove(left_nibble, left_node));
                 changes.extend_from_slice(&self.deep_insert(right_nibble, right_node));
             }
             // We found extension at left part that differ from node from right.
             // Go deeper to find any branch or leaf.
-            (MerkleNode::Extension(lnibbles, ldata), rnode) => {
+            (MerkleNode::Extension(lnibbles, ldata), _rnode) => {
                 changes.remove_node(&left_node);
                 let e_nibbles = {
-                    let mut ln = left_nibble.clone();
+                    let mut ln = left_nibble;
                     ln.extend_from_slice(&lnibbles);
                     ln
                 };
@@ -320,27 +335,30 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
                 );
                 changes.remove_node(&left_node);
                 changes.insert_node(&right_node);
-                for (idx, (left_value, right_value)) in lvalues.into_iter().zip(rvalues).enumerate() {
+                for (idx, (left_value, right_value)) in lvalues.iter().zip(rvalues).enumerate() {
                     let b_nibble = {
                         let mut rn = right_nibble.clone();
                         rn.push(Nibble::from(idx));
                         rn
                     };
-                    match (left_value.node(self.db.borrow()), right_value.node(self.db.borrow())) {
+                    match (
+                        left_value.node(self.db.borrow()),
+                        right_value.node(self.db.borrow()),
+                    ) {
                         (Some(lnode), Some(rnode)) => changes.extend_from_slice(
                             &self.compare_nodes(b_nibble.clone(), lnode, b_nibble.clone(), rnode),
                         ),
-                        (Some(lnode), None) => changes.extend_from_slice(
-                            &self.deep_remove(b_nibble.clone(), lnode)
-                        ),
-                        (None, Some(rnode)) => changes.extend_from_slice(
-                            &self.deep_insert(b_nibble.clone(), rnode)
-                        ),
+                        (Some(lnode), None) => {
+                            changes.extend_from_slice(&self.deep_remove(b_nibble.clone(), lnode))
+                        }
+                        (None, Some(rnode)) => {
+                            changes.extend_from_slice(&self.deep_insert(b_nibble.clone(), rnode))
+                        }
                         (None, None) => {}
                     }
                 }
             }
-            (MerkleNode::Branch(values, mb_data), rnode) => {
+            (MerkleNode::Branch(values, mb_data), _rnode) => {
                 changes.remove_node(&left_node);
                 changes.extend_from_slice(&self.walk_branch(
                     left_nibble,
@@ -361,15 +379,12 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
               // (lnode, MerkleNode::Branch(..))
               // were already covered by above match branches.
         }
-        return changes;
+
+        changes
     }
 
-    #[cfg_attr(feature="tracing-enable", instrument(skip(self)))]
-    fn deep_insert(
-        &self,
-        _nibble: NibbleVec,
-        node: KeyedMerkleNode
-    ) -> Vec<Change> {
+    #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
+    fn deep_insert(&self, _nibble: NibbleVec, node: KeyedMerkleNode) -> Vec<Change> {
         let merkle_hashes = match node {
             KeyedMerkleNode::FullEncoded(hash, _) => vec![hash],
             KeyedMerkleNode::Partial(node) => {
@@ -389,7 +404,14 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
                 walker.traverse(hash).unwrap()
             }
 
-            hashes_to_traverse = std::mem::take(walker.data_inspector.child_hashes.write().unwrap().deref_mut());
+            hashes_to_traverse = std::mem::take(
+                walker
+                    .data_inspector
+                    .child_hashes
+                    .write()
+                    .unwrap()
+                    .deref_mut(),
+            );
             if hashes_to_traverse.is_empty() {
                 break;
             }
@@ -397,12 +419,8 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
         walker.trie_inspector.changes.into_inner().unwrap()
     }
 
-    #[cfg_attr(feature="tracing-enable", instrument(skip(self)))]
-    fn deep_remove(
-        &self,
-        _nibble: NibbleVec,
-        node: KeyedMerkleNode
-    ) -> Vec<Change> {
+    #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
+    fn deep_remove(&self, _nibble: NibbleVec, node: KeyedMerkleNode) -> Vec<Change> {
         let merkle_hashes = match node {
             KeyedMerkleNode::FullEncoded(hash, _) => vec![hash],
             KeyedMerkleNode::Partial(node) => {
@@ -422,7 +440,14 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
                 walker.traverse(hash).unwrap()
             }
 
-            hashes_to_traverse = std::mem::take(walker.data_inspector.child_hashes.write().unwrap().deref_mut());
+            hashes_to_traverse = std::mem::take(
+                walker
+                    .data_inspector
+                    .child_hashes
+                    .write()
+                    .unwrap()
+                    .deref_mut(),
+            );
             if hashes_to_traverse.is_empty() {
                 break;
             }
@@ -430,13 +455,15 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
         walker.trie_inspector.changes.into_inner().unwrap()
     }
 
-    #[cfg_attr(feature="tracing-enable", instrument)]
+    #[cfg_attr(feature = "tracing-enable", instrument)]
     fn reverse_changes(changes: Vec<Change>) -> Vec<Change> {
-        changes.into_iter().map(|i|
-        match i {
-            Change::Insert(h, d) => Change::Removal(h, d),
-            Change::Removal(h, d) => Change::Insert(h, d),
-        }).collect()
+        changes
+            .into_iter()
+            .map(|i| match i {
+                Change::Insert(h, d) => Change::Removal(h, d),
+                Change::Removal(h, d) => Change::Insert(h, d),
+            })
+            .collect()
     }
     fn check_branch_level(left_slice: NibbleSlice, right_slice: NibbleSlice) -> ComparePathResult {
         let common = nibble::common(&left_slice, &right_slice);
@@ -452,7 +479,7 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
     }
 
     // Find branch for right_ndoe and walk deeper into one of branch
-    #[cfg_attr(feature="tracing-enable", instrument(skip(self)))]
+    #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
     fn walk_branch(
         &self,
         left_nibble_prefix: NibbleVec,
@@ -474,7 +501,7 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
             right_nibble_with_postfix.extend_from_slice(&rnibble_postfix)
         }
 
-        let (common, left_postfix, right_postfix) =
+        let (_common, left_postfix, right_postfix) =
             nibble::common_with_sub(&left_nibble_prefix, &right_nibble_with_postfix);
         assert!(
             left_postfix.is_empty(),
@@ -482,7 +509,9 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
         );
         let r_index = right_postfix[0]; // find first different nibble
         let r_index_usize: usize = r_index.into();
-        if let Some(b_node) = <MerkleValue as MerkleValueExt>::node(&left_values[r_index_usize], self.db.borrow()) {
+        if let Some(b_node) =
+            <MerkleValue as MerkleValueExt>::node(&left_values[r_index_usize], self.db.borrow())
+        {
             let b_nibble = {
                 let mut ln = left_nibble_prefix.clone();
                 ln.push(r_index);
@@ -495,10 +524,10 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
                 right_node,
             ));
         } else {
-            changes.extend_from_slice(&self.deep_insert(right_nibble,right_node))
+            changes.extend_from_slice(&self.deep_insert(right_nibble, right_node))
         }
 
-        for (index, value) in left_values.into_iter().enumerate() {
+        for (index, value) in left_values.iter().enumerate() {
             let b_nibble = {
                 let mut ln = left_nibble_prefix.clone();
                 ln.push(Nibble::from(index));
@@ -521,7 +550,7 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
     }
 
     // Walk deeper into extension
-    #[cfg_attr(feature="tracing-enable", instrument(skip(self)))]
+    #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
     fn walk_extension(
         &self,
         left_nibble: NibbleVec,
@@ -534,92 +563,23 @@ impl<DB: Database + Send+ Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sy
             .expect("Extension should never link to empty value");
         self.compare_nodes(left_nibble, left_node, right_nibble, right_node)
     }
-
-    // We should compare the tags of MerkleNode and understarand if two
-    // tags are different. In this case we might traverse the fresh tree and
-    // and collect all inserts into the changeset.
-    // 32 байта
-    // fn process_node(&self, mut nibble: NibbleVec, node: &MerkleNode) -> Result<Vec<u8>, ()> {
-    //     // Leaf Extension =>
-    //     // Extension Branch
-    //     // Branch Leaf
-    //     // Leaf Branch =>
-    //     //     Branch Branch
-
-    //     match node {
-    //         MerkleNode::Leaf(nibbles, data) => {
-    //             nibble.extend_from_slice(&*nibbles);
-    //             let key = triedb::merkle::nibble::into_key(&nibble);
-    //             // self.changeset.push(key, data); optional
-    //             Ok(vec![])
-    //         }
-    //         MerkleNode::Extension(nibbles, value) => {
-    //             nibble.extend_from_slice(&*nibbles);
-    //             self.process_value(nibble, value);
-    //             Ok(vec![])
-    //         }
-    //         MerkleNode::Branch(values, mb_data) => {
-    //             // lack of copy on result, forces setting array manually
-    //             let mut values_result = [
-    //                 None, None, None, None, None, None, None, None, None, None, None, None, None,
-    //                 None, None, None,
-    //             ];
-    //             let result : Result<Vec<u8>, ()> = rayon::scope(|s| {
-    //                 for (nibbl, (value, result)) in
-    //                     values.iter().zip(&mut values_result).enumerate()
-    //                 {
-    //                     let mut cloned_nibble = nibble.clone();
-    //                     s.spawn(move |_| {
-    //                         cloned_nibble.push(nibbl.into());
-    //                         *result = Some(self.process_value(cloned_nibble, value))
-    //                     });
-    //                 }
-    //                 if let Some(data) = mb_data {
-    //                     let key = triedb::merkle::nibble::into_key(&nibble);
-    //                     // self.changeset.push(key, data); optional
-    //                     Ok(vec![])
-    //                 } else {
-    //                     Ok(vec![])
-    //                 }
-    //             });
-    //             for result in values_result {
-    //                 result.unwrap()?;
-    //             }
-    //             Ok(vec![])
-    //         }
-    //     }
-    // }
-
-    // fn process_value(&self, nibble: NibbleVec, value: &MerkleValue) -> Result<Vec<u8>, ()> {
-    //     match value {
-    //         MerkleValue::Empty => Ok(vec![]),
-    //         MerkleValue::Full(node) => self.process_node(nibble, node),
-    //         MerkleValue::Hash(hash) => self.traverse_inner(nibble, *hash, *hash),
-    //     }
-    // }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ascii::AsciiExt;
-    use std::cell::UnsafeCell;
     use std::collections::HashMap;
     use std::str::FromStr;
-    use std::sync::Arc;
 
     use hex_literal::hex;
     use serde::{Deserialize, Serialize};
     use tracing::metadata::LevelFilter;
     use tracing_subscriber::fmt::format::FmtSpan;
 
-    use crate::CachedDatabaseHandle;
-    use crate::gc::{DbCounter, RootGuard};
-    use crate::gc::MapWithCounter;
     use crate::gc::TrieCollection;
+    use crate::gc::{DbCounter, RootGuard};
     use crate::mutable::TrieMut;
 
     use super::*;
-
 
     #[derive(Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
     pub struct DataWithRoot {
@@ -643,65 +603,21 @@ mod tests {
         }
     }
 
-    // Possible inmemory test
-    // #[test]
-    // fn test_two_leaves() {
-    //     let mut mtrie = MemoryTrieMut::default();
-    //     mtrie.insert("key1".as_bytes(), "aval1".as_bytes());
-    //     first_root = mtrie.root();
-
-    //     mtrie.insert("key2bb".as_bytes(), "aval3".as_bytes());
-    //     second_root = mtrie.root();
-
-    //     // let differ = DiffFinder::new(mtrie, first_root, second_root);
-    //     // let changeset = differ.get_changeset();
-
-    //     // assert_eq!(chageset, vec![])
-    // }
     fn no_childs(_: &[u8]) -> Vec<H256> {
         vec![]
     }
 
 
-    // #[test]
-    // fn test_two_same_leaves() {
-    //     let key1 = &hex!("bbaa");
-    //     let key2 = &hex!("ffaa");
-    //     let key3 = &hex!("bbcc");
-
-    //     // make data too long for inline
-    //     let value1 = b"same data________________________";
-    //     let value2 = b"same data________________________";
-    //     let value3 = b"other data_______________________";
-    //     let value3_1 = b"changed data_____________________";
-    //     let value2_1 = b"changed data_____________________";
-
-    //     let collection = TrieCollection::new(MapWithCounterCached::default());
-
-    //     let mut trie = collection.trie_for(crate::empty_trie_hash());
-    //     trie.insert(key1, value1);
-    //     trie.insert(key2, value2);
-    //     trie.insert(key3, value3);
-
-    //     let patch = trie.into_patch();
-
-    //     let st = DiffFinder::new(std::sync::Arc::new(trie), patch.root, patch.root);
-
-    //     assert!(true)
-    // }
-
-    //
     // compare_nodes: (Remove(Extension('aaa')), compare_nodes(2))
     // compare_nodes: reverse(compare_nodes(3))
     // compare_nodes: (Remove(Branch('2['a','b']')), compare_nodes(4))
     // compare_nodes: (Remove(Extension('aa')), compare_nodes(5))
     // compare_nodes: same_node => {}
     // 'aaa' -> ['a', 'b']
-    // extension -> branch 
+    // extension -> branch
     // ['a','b'] -> 'aa' -> ['a', 'b']
     // branch -> extension -> branch
     use crate::gc::testing::MapWithCounterCached;
-
 
     fn check_changes(
         changes: &Vec<Change>,
@@ -718,12 +634,14 @@ mod tests {
         let initial_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
         let mut changes = crate::Change {
-            changes: changes.clone().into_iter().map(|change| {
-                match change {
+            changes: changes
+                .clone()
+                .into_iter()
+                .map(|change| match change {
                     Change::Insert(key, val) => (key, Some(val)),
                     Change::Removal(key, _) => (key, None),
-                }
-            }).collect()
+                })
+                .collect(),
         };
         collection.apply_changes(changes, no_childs);
 
@@ -738,9 +656,9 @@ mod tests {
         use tracing_subscriber;
 
         tracing_subscriber::fmt()
-        .with_span_events(FmtSpan::ENTER)
-        .with_max_level(LevelFilter::TRACE)
-        .init();
+            .with_span_events(FmtSpan::ENTER)
+            .with_max_level(LevelFilter::TRACE)
+            .init();
 
         let key1 = &hex!("aaab");
         let key2 = &hex!("aaac");
@@ -764,10 +682,9 @@ mod tests {
         let patch = trie.into_patch();
         let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, last_root.root, tmp_no_child_extractor);
+        let st = DiffFinder::new(&collection.database, no_childs);
         let changes = st.get_changeset(first_root.root, last_root.root).unwrap();
         log::info!("result change = {:?}", changes);
-
 
         let new_collection = TrieCollection::new(MapWithCounterCached::default());
         let mut trie = new_collection.trie_for(crate::empty_trie_hash());
@@ -776,17 +693,19 @@ mod tests {
         let patch = trie.into_patch();
         let first_root = new_collection.apply_increase(patch, crate::gc::tests::no_childs);
         let mut changes = crate::Change {
-            changes: changes.into_iter().map(|change| {
-                match change {
+            changes: changes
+                .into_iter()
+                .map(|change| match change {
                     Change::Insert(key, val) => (key, Some(val)),
                     Change::Removal(key, _) => (key, None),
-                }
-            }).collect()
+                })
+                .collect(),
         };
         for (key, value) in changes.changes.into_iter().rev() {
             if let Some(value) = value {
                 log::info!("change(insert): key={}, value={:?}", key, value);
-                new_collection.database
+                new_collection
+                    .database
                     .gc_insert_node(key, &value, crate::gc::tests::no_childs);
             }
         }
@@ -814,9 +733,9 @@ mod tests {
         use tracing_subscriber;
 
         tracing_subscriber::fmt()
-        .with_span_events(FmtSpan::ENTER)
-        .with_max_level(LevelFilter::TRACE)
-        .init();
+            .with_span_events(FmtSpan::ENTER)
+            .with_max_level(LevelFilter::TRACE)
+            .init();
 
         let collection = TrieCollection::new(MapWithCounterCached::default());
 
@@ -829,8 +748,11 @@ mod tests {
         let patch = trie.into_patch();
         let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, last_root.root, tmp_no_child_extractor);
-        log::info!("result change = {:?}", st.get_changeset(first_root.root, last_root.root).unwrap());
+        let st = DiffFinder::new(&collection.database, no_childs);
+        log::info!(
+            "result change = {:?}",
+            st.get_changeset(first_root.root, last_root.root).unwrap()
+        );
         drop(last_root);
         log::info!("second trie dropped")
     }
@@ -840,9 +762,9 @@ mod tests {
         use tracing_subscriber;
 
         tracing_subscriber::fmt()
-        .with_span_events(FmtSpan::ENTER)
-        .with_max_level(LevelFilter::TRACE)
-        .init();
+            .with_span_events(FmtSpan::ENTER)
+            .with_max_level(LevelFilter::TRACE)
+            .init();
 
         let collection = TrieCollection::new(MapWithCounterCached::default());
 
@@ -858,26 +780,32 @@ mod tests {
         let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
         // [Insert(0xacb66b810feb4a4e29ba06ed205fcac7cf4841be1a77d0d9ecc84d715c2151d7, [230, 131, 32, 187, 204, 161, 115, 97, 109, 101, 32, 100, 97, 116, 97, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95])];
-        let key = H256::from_str("0xacb66b810feb4a4e29ba06ed205fcac7cf4841be1a77d0d9ecc84d715c2151d7").unwrap();
+        let key =
+            H256::from_str("0xacb66b810feb4a4e29ba06ed205fcac7cf4841be1a77d0d9ecc84d715c2151d7")
+                .unwrap();
         // let val1 = trie.get(key);
         let mut final_trie = collection.trie_for(last_root.root);
         let val1 = Database::get(&final_trie, key);
         dbg!("{:?}", val1);
         // let val1 = mutable::TrieMut::get(&final_trie, key);
 
-        let val = vec![230, 131, 32, 187, 204, 161, 115, 97, 109, 101, 32, 100, 97, 116, 97, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95];
+        let val = vec![
+            230, 131, 32, 187, 204, 161, 115, 97, 109, 101, 32, 100, 97, 116, 97, 95, 95, 95, 95,
+            95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95, 95,
+        ];
         // H256::from_slice(&hex!("bbcc"));
         let expected_changeset = vec![Change::Insert(key, val)];
 
-        let diff_finder = DiffFinder::new(&collection.database, first_root.root, last_root.root, tmp_no_child_extractor);
-        let changeset = diff_finder.get_changeset(first_root.root, last_root.root).unwrap();
+        let diff_finder = DiffFinder::new(&collection.database, no_childs);
+        let changeset = diff_finder
+            .get_changeset(first_root.root, last_root.root)
+            .unwrap();
         let insert = changeset.get(0).unwrap();
         let (k, raw_v) = match &insert {
-            &Change::Insert(key, val) => {
-               Some((key, val))
-            }
-            _ => None
-        }.unwrap();
+            &Change::Insert(key, val) => Some((key, val)),
+            _ => None,
+        }
+        .unwrap();
 
         let rlp = Rlp::new(raw_v);
         let v = MerkleNode::decode(&rlp).unwrap();
@@ -886,7 +814,9 @@ mod tests {
 
         // Take a change from a second trie
         // Create a change for first tree out of it
-        let mut changes = crate::Change { changes: vec![].into() };
+        let mut changes = crate::Change {
+            changes: vec![].into(),
+        };
         let rrr = raw_v.clone();
         changes.add_raw(*k, rrr.to_vec());
 
@@ -896,7 +826,8 @@ mod tests {
         for (key, value) in changes.changes.into_iter().rev() {
             if let Some(value) = value {
                 log::info!("change(insert): key={}, value={:?}", key, value);
-                new_collection.database
+                new_collection
+                    .database
                     .gc_insert_node(key, &value, crate::gc::tests::no_childs);
             }
         }
@@ -923,9 +854,9 @@ mod tests {
         use tracing_subscriber;
 
         tracing_subscriber::fmt()
-        .with_span_events(FmtSpan::ENTER)
-        .with_max_level(LevelFilter::TRACE)
-        .init();
+            .with_span_events(FmtSpan::ENTER)
+            .with_max_level(LevelFilter::TRACE)
+            .init();
 
         let key1 = &hex!("aaab");
         let key2 = &hex!("aaac");
@@ -949,8 +880,11 @@ mod tests {
 
         let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, last_root.root, tmp_no_child_extractor);
-        log::info!("result change = {:?}", st.get_changeset(first_root.root, last_root.root).unwrap());
+        let st = DiffFinder::new(&collection.database, no_childs);
+        log::info!(
+            "result change = {:?}",
+            st.get_changeset(first_root.root, last_root.root).unwrap()
+        );
         drop(last_root);
         log::info!("second trie dropped")
     }
@@ -983,7 +917,7 @@ mod tests {
         let patch = trie2.into_patch();
         let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root, tmp_no_child_extractor);
+        let st = DiffFinder::new(&collection.database, no_childs);
         let changes = st.get_changeset(first_root.root, second_root.root).unwrap();
         log::info!("result change = {:?}", changes);
 
@@ -993,8 +927,11 @@ mod tests {
             second_root.root,
             &vec![
                 (&hex!("aaab"), None),
-                (&hex!("aaac"), Some(b"same data________________________2".to_vec())),
-            ]
+                (
+                    &hex!("aaac"),
+                    Some(b"same data________________________2".to_vec()),
+                ),
+            ],
         );
 
         drop(second_root);
@@ -1011,14 +948,32 @@ mod tests {
             .init();
 
         let keys1 = vec![
-            (vec![0, 0, 0, 0, 0, 0, 12, 25], b"________________________________1"),
-            (vec![0, 0, 0, 0, 0, 0, 15, 203], b"________________________________2"),
-            (vec![0, 0, 0, 0, 0, 0, 16, 246], b"________________________________3"),
+            (
+                vec![0, 0, 0, 0, 0, 0, 12, 25],
+                b"________________________________1",
+            ),
+            (
+                vec![0, 0, 0, 0, 0, 0, 15, 203],
+                b"________________________________2",
+            ),
+            (
+                vec![0, 0, 0, 0, 0, 0, 16, 246],
+                b"________________________________3",
+            ),
         ];
         let keys2 = vec![
-            (vec![0, 0, 0, 0, 0, 0, 13, 52], b"________________________________4"),
-            (vec![0, 0, 0, 0, 0, 0, 15, 55], b"________________________________5"),
-            (vec![0, 0, 0, 0, 0, 0, 15, 203], b"________________________________6"),
+            (
+                vec![0, 0, 0, 0, 0, 0, 13, 52],
+                b"________________________________4",
+            ),
+            (
+                vec![0, 0, 0, 0, 0, 0, 15, 55],
+                b"________________________________5",
+            ),
+            (
+                vec![0, 0, 0, 0, 0, 0, 15, 203],
+                b"________________________________6",
+            ),
         ];
 
         let collection = TrieCollection::new(MapWithCounterCached::default());
@@ -1037,21 +992,33 @@ mod tests {
         let patch = trie2.into_patch();
         let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root, tmp_no_child_extractor);
+        let st = DiffFinder::new(&collection.database, no_childs);
         let changes = st.get_changeset(first_root.root, second_root.root).unwrap();
         log::info!("result change = {:?}", changes);
 
         check_changes(
             &changes,
-            &keys1.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect(),
+            &keys1
+                .iter()
+                .map(|(k, v)| (k.as_slice(), v.as_slice()))
+                .collect(),
             second_root.root,
             &vec![
                 (&vec![0, 0, 0, 0, 0, 0, 12, 25], None),
                 (&vec![0, 0, 0, 0, 0, 0, 16, 246], None),
-                (&vec![0, 0, 0, 0, 0, 0, 13, 52], Some(b"________________________________4".to_vec())),
-                (&vec![0, 0, 0, 0, 0, 0, 15, 55], Some(b"________________________________5".to_vec())),
-                (&vec![0, 0, 0, 0, 0, 0, 15, 203], Some(b"________________________________6".to_vec())),
-            ]
+                (
+                    &vec![0, 0, 0, 0, 0, 0, 13, 52],
+                    Some(b"________________________________4".to_vec()),
+                ),
+                (
+                    &vec![0, 0, 0, 0, 0, 0, 15, 55],
+                    Some(b"________________________________5".to_vec()),
+                ),
+                (
+                    &vec![0, 0, 0, 0, 0, 0, 15, 203],
+                    Some(b"________________________________6".to_vec()),
+                ),
+            ],
         );
 
         drop(second_root);
@@ -1068,13 +1035,28 @@ mod tests {
             .init();
 
         let keys1 = vec![
-            (vec![0, 0, 0, 0, 0, 0, 12, 25], b"________________________________1"),
-            (vec![0, 0, 0, 0, 0, 0, 15, 203], b"________________________________2"),
-            (vec![0, 0, 0, 0, 0, 0, 16, 246], b"________________________________3"),
+            (
+                vec![0, 0, 0, 0, 0, 0, 12, 25],
+                b"________________________________1",
+            ),
+            (
+                vec![0, 0, 0, 0, 0, 0, 15, 203],
+                b"________________________________2",
+            ),
+            (
+                vec![0, 0, 0, 0, 0, 0, 16, 246],
+                b"________________________________3",
+            ),
         ];
         let keys2 = vec![
-            (vec![0, 0, 0, 0, 0, 0, 13, 52], b"________________________________4"),
-            (vec![0, 0, 0, 0, 0, 0, 15, 203], b"________________________________5"),
+            (
+                vec![0, 0, 0, 0, 0, 0, 13, 52],
+                b"________________________________4",
+            ),
+            (
+                vec![0, 0, 0, 0, 0, 0, 15, 203],
+                b"________________________________5",
+            ),
         ];
 
         let collection = TrieCollection::new(MapWithCounterCached::default());
@@ -1093,20 +1075,29 @@ mod tests {
         let patch = trie2.into_patch();
         let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root, tmp_no_child_extractor);
+        let st = DiffFinder::new(&collection.database, no_childs);
         let changes = st.get_changeset(first_root.root, second_root.root).unwrap();
         log::info!("result change = {:?}", changes);
 
         check_changes(
             &changes,
-            &keys1.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect(),
+            &keys1
+                .iter()
+                .map(|(k, v)| (k.as_slice(), v.as_slice()))
+                .collect(),
             second_root.root,
             &vec![
                 (&vec![0, 0, 0, 0, 0, 0, 12, 25], None),
                 (&vec![0, 0, 0, 0, 0, 0, 16, 246], None),
-                (&vec![0, 0, 0, 0, 0, 0, 13, 52], Some(b"________________________________4".to_vec())),
-                (&vec![0, 0, 0, 0, 0, 0, 15, 203], Some(b"________________________________5".to_vec())),
-            ]
+                (
+                    &vec![0, 0, 0, 0, 0, 0, 13, 52],
+                    Some(b"________________________________4".to_vec()),
+                ),
+                (
+                    &vec![0, 0, 0, 0, 0, 0, 15, 203],
+                    Some(b"________________________________5".to_vec()),
+                ),
+            ],
         );
         drop(second_root);
         log::info!("second trie dropped")
@@ -1122,14 +1113,29 @@ mod tests {
             .init();
 
         let keys1 = vec![
-            (vec![0, 0, 0, 0, 0, 0, 12, 25], b"________________________________1"),
-            (vec![0, 0, 0, 0, 0, 0, 15, 203], b"________________________________2"),
-            (vec![0, 0, 0, 0, 0, 0, 16, 246], b"________________________________3"),
+            (
+                vec![0, 0, 0, 0, 0, 0, 12, 25],
+                b"________________________________1",
+            ),
+            (
+                vec![0, 0, 0, 0, 0, 0, 15, 203],
+                b"________________________________2",
+            ),
+            (
+                vec![0, 0, 0, 0, 0, 0, 16, 246],
+                b"________________________________3",
+            ),
         ];
         // One entry removed which eliminates first branch node
         let keys2 = vec![
-            (vec![0, 0, 0, 0, 0, 0, 12, 25], b"________________________________1"),
-            (vec![0, 0, 0, 0, 0, 0, 15, 203], b"________________________________2"),
+            (
+                vec![0, 0, 0, 0, 0, 0, 12, 25],
+                b"________________________________1",
+            ),
+            (
+                vec![0, 0, 0, 0, 0, 0, 15, 203],
+                b"________________________________2",
+            ),
         ];
 
         let collection = TrieCollection::new(MapWithCounterCached::default());
@@ -1148,19 +1154,28 @@ mod tests {
         let patch = trie2.into_patch();
         let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root, tmp_no_child_extractor);
+        let st = DiffFinder::new(&collection.database, no_childs);
         let changes = st.get_changeset(first_root.root, second_root.root).unwrap();
         log::info!("result change = {:?}", changes);
 
         check_changes(
             &changes,
-            &keys1.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect(),
+            &keys1
+                .iter()
+                .map(|(k, v)| (k.as_slice(), v.as_slice()))
+                .collect(),
             second_root.root,
             &vec![
                 (&vec![0, 0, 0, 0, 0, 0, 16, 246], None),
-                (&vec![0, 0, 0, 0, 0, 0, 12, 25], Some(b"________________________________1".to_vec())),
-                (&vec![0, 0, 0, 0, 0, 0, 15, 203], Some(b"________________________________2".to_vec())),
-            ]
+                (
+                    &vec![0, 0, 0, 0, 0, 0, 12, 25],
+                    Some(b"________________________________1".to_vec()),
+                ),
+                (
+                    &vec![0, 0, 0, 0, 0, 0, 15, 203],
+                    Some(b"________________________________2".to_vec()),
+                ),
+            ],
         );
         drop(second_root);
         log::info!("second trie dropped")
@@ -1206,21 +1221,36 @@ mod tests {
         let patch = trie2.into_patch();
         let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let st = DiffFinder::new(&collection.database, first_root.root, second_root.root, tmp_no_child_extractor);
+        let st = DiffFinder::new(&collection.database, no_childs);
         let changes = st.get_changeset(first_root.root, second_root.root).unwrap();
         log::info!("result change = {:?}", changes);
 
         check_changes(
             &changes,
-            &keys1.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect(),
+            &keys1
+                .iter()
+                .map(|(k, v)| (k.as_slice(), v.as_slice()))
+                .collect(),
             second_root.root,
             &vec![
-                (&vec![51, 51, 51, 51], Some(b"________________________________1".to_vec())),
-                (&vec![51, 51, 59, 48], Some(b"________________________________2".to_vec())),
-                (&vec![243, 51, 51, 51], Some(b"________________________________2".to_vec())),
-                (&vec![51, 51, 51, 59], Some(b"________________________________1".to_vec())),
+                (
+                    &vec![51, 51, 51, 51],
+                    Some(b"________________________________1".to_vec()),
+                ),
+                (
+                    &vec![51, 51, 59, 48],
+                    Some(b"________________________________2".to_vec()),
+                ),
+                (
+                    &vec![243, 51, 51, 51],
+                    Some(b"________________________________2".to_vec()),
+                ),
+                (
+                    &vec![51, 51, 51, 59],
+                    Some(b"________________________________1".to_vec()),
+                ),
                 (&vec![176, 3, 51, 51], None),
-            ]
+            ],
         );
         drop(second_root);
         log::info!("second trie dropped")
@@ -1273,53 +1303,225 @@ mod tests {
             .with_max_level(LevelFilter::TRACE)
             .init();
 
-        let keys1 = vec![
-            (
-                vec![0, 0, 0, 0],
-                vec![
-                    (vec![0, 0, 0, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 0, 0, 15], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 0, 3, 0], vec![255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 0, 48, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 0, 243, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 7, 240, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 15, 0, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![3, 0, 0, 0], vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![15, 51, 255, 255], vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![240, 255, 240, 127], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![255, 255, 255, 240], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![255, 255, 255, 255], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                ]
-            ),
-        ];
+        let keys1 = vec![(
+            vec![0, 0, 0, 0],
+            vec![
+                (
+                    vec![0, 0, 0, 0],
+                    vec![
+                        238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0,
+                    ],
+                ),
+                (
+                    vec![0, 0, 0, 15],
+                    vec![
+                        238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0,
+                    ],
+                ),
+                (
+                    vec![0, 0, 3, 0],
+                    vec![
+                        255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0,
+                    ],
+                ),
+                (
+                    vec![0, 0, 48, 0],
+                    vec![
+                        238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0,
+                    ],
+                ),
+                (
+                    vec![0, 0, 243, 0],
+                    vec![
+                        238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0,
+                    ],
+                ),
+                (
+                    vec![0, 7, 240, 0],
+                    vec![
+                        238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0,
+                    ],
+                ),
+                (
+                    vec![0, 15, 0, 0],
+                    vec![
+                        238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0,
+                    ],
+                ),
+                (
+                    vec![3, 0, 0, 0],
+                    vec![
+                        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0,
+                    ],
+                ),
+                (
+                    vec![15, 51, 255, 255],
+                    vec![
+                        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0,
+                    ],
+                ),
+                (
+                    vec![240, 255, 240, 127],
+                    vec![
+                        238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0,
+                    ],
+                ),
+                (
+                    vec![255, 255, 255, 240],
+                    vec![
+                        238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0,
+                    ],
+                ),
+                (
+                    vec![255, 255, 255, 255],
+                    vec![
+                        238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0,
+                    ],
+                ),
+            ],
+        )];
 
         let keys2 = vec![
             (
                 vec![0, 0, 0, 0],
                 vec![
-                    (vec![0, 0, 0, 0], vec![255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 0, 0, 15], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 0, 3, 0], vec![255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 0, 15, 51], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 0, 48, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 0, 243, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 7, 240, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 15, 0, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![3, 0, 0, 0], vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![15, 51, 255, 255], vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![240, 255, 240, 127], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![255, 255, 255, 240], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![255, 255, 255, 255], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                ]
+                    (
+                        vec![0, 0, 0, 0],
+                        vec![
+                            255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![0, 0, 0, 15],
+                        vec![
+                            238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![0, 0, 3, 0],
+                        vec![
+                            255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![0, 0, 15, 51],
+                        vec![
+                            238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![0, 0, 48, 0],
+                        vec![
+                            238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![0, 0, 243, 0],
+                        vec![
+                            238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![0, 7, 240, 0],
+                        vec![
+                            238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![0, 15, 0, 0],
+                        vec![
+                            238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![3, 0, 0, 0],
+                        vec![
+                            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![15, 51, 255, 255],
+                        vec![
+                            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![240, 255, 240, 127],
+                        vec![
+                            238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![255, 255, 255, 240],
+                        vec![
+                            238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![255, 255, 255, 255],
+                        vec![
+                            238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                ],
             ),
             (
                 vec![0, 0, 0, 48],
                 vec![
-                    (vec![0, 0, 0, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 7, 240, 0], vec![238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![3, 0, 0, 0], vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                    (vec![0, 0, 15, 255], vec![255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-                ]
+                    (
+                        vec![0, 0, 0, 0],
+                        vec![
+                            238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![0, 7, 240, 0],
+                        vec![
+                            238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![3, 0, 0, 0],
+                        vec![
+                            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                    (
+                        vec![0, 0, 15, 255],
+                        vec![
+                            255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        ],
+                    ),
+                ],
             ),
         ];
 
@@ -1343,7 +1545,8 @@ mod tests {
 
         for (k, storage) in keys1.iter() {
             for (data_key, data) in storage {
-                { // Insert to first db
+                {
+                    // Insert to first db
                     let mut account_trie = collection1.trie_for(collection1_trie1.root);
                     let mut account: DataWithRoot = TrieMut::get(&account_trie, &k)
                         .map(|d| bincode::deserialize(&d).unwrap())
@@ -1351,15 +1554,21 @@ mod tests {
                     let mut storage_trie = collection1.trie_for(account.root);
                     storage_trie.insert(&data_key, &data);
                     let storage_patch = storage_trie.into_patch();
-                    log::trace!("1 Update account root: old {}, new {}", account.root, storage_patch.root);
+                    log::trace!(
+                        "1 Update account root: old {}, new {}",
+                        account.root,
+                        storage_patch.root
+                    );
                     account.root = storage_patch.root;
                     account_trie.insert(&k, &bincode::serialize(&account).unwrap());
                     let mut account_patch = account_trie.into_patch();
                     account_patch.change.merge_child(&storage_patch.change);
 
-                    collection1_trie1 = collection1.apply_increase(account_patch, DataWithRoot::get_childs);
+                    collection1_trie1 =
+                        collection1.apply_increase(account_patch, DataWithRoot::get_childs);
                 }
-                { // Insert to second db
+                {
+                    // Insert to second db
                     let mut account_trie = collection2.trie_for(collection2_trie1.root);
                     let mut account: DataWithRoot = TrieMut::get(&account_trie, &k)
                         .map(|d| bincode::deserialize(&d).unwrap())
@@ -1372,7 +1581,8 @@ mod tests {
                     let mut account_patch = account_trie.into_patch();
                     account_patch.change.merge_child(&storage_patch.change);
 
-                    collection2_trie1 = collection2.apply_increase(account_patch, DataWithRoot::get_childs);
+                    collection2_trie1 =
+                        collection2.apply_increase(account_patch, DataWithRoot::get_childs);
                 }
             }
         }
@@ -1389,37 +1599,54 @@ mod tests {
                 account_updates.insert(data_key.clone(), data.clone());
                 storage_trie.insert(&data_key, &data);
                 let storage_patch = storage_trie.into_patch();
-                log::trace!("2 Update account root: old {}, new {}", account.root, storage_patch.root);
+                log::trace!(
+                    "2 Update account root: old {}, new {}",
+                    account.root,
+                    storage_patch.root
+                );
                 account.root = storage_patch.root;
                 account_trie.insert(&k, &bincode::serialize(&account).unwrap());
                 let mut account_patch = account_trie.into_patch();
                 account_patch.change.merge_child(&storage_patch.change);
 
-                collection1_trie2 = collection1.apply_increase(account_patch, DataWithRoot::get_childs);
+                collection1_trie2 =
+                    collection1.apply_increase(account_patch, DataWithRoot::get_childs);
             }
         }
 
-        let st = DiffFinder::new(&collection1.database, collection1_trie1.root, collection1_trie2.root, DataWithRoot::get_childs);
-        let changes = st.get_changeset(collection1_trie1.root, collection1_trie2.root).unwrap();
+        let st = DiffFinder::new(&collection1.database, DataWithRoot::get_childs);
+        let changes = st
+            .get_changeset(collection1_trie1.root, collection1_trie2.root)
+            .unwrap();
         log::info!("result change = {:?}", changes);
         let changes = crate::Change {
-            changes: changes.clone().into_iter().map(|change| {
-                match change {
+            changes: changes
+                .clone()
+                .into_iter()
+                .map(|change| match change {
                     Change::Insert(key, val) => {
-                        println!("====================== INSERT: {} ======================", key);
+                        println!(
+                            "====================== INSERT: {} ======================",
+                            key
+                        );
                         (key, Some(val))
-                    },
+                    }
                     Change::Removal(key, _) => {
-                        println!("====================== REMOVE: {} ======================", key);
+                        println!(
+                            "====================== REMOVE: {} ======================",
+                            key
+                        );
                         (key, None)
-                    },
-                }
-            }).collect()
+                    }
+                })
+                .collect(),
         };
 
         for (key, value) in changes.changes.into_iter().rev() {
             if let Some(value) = value {
-                collection2.database.gc_insert_node(key, &value, DataWithRoot::get_childs);
+                collection2
+                    .database
+                    .gc_insert_node(key, &value, DataWithRoot::get_childs);
             }
         }
 

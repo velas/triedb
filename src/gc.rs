@@ -1,5 +1,5 @@
 use std::borrow::Borrow;
-use std::collections::{hash_map, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::merkle::MerkleValue;
@@ -164,13 +164,9 @@ impl<D: DbCounter + Database> TrieCollection<D> {
     }
 
     /// Sort changes from root to leaf and apply
-    pub fn apply_changes<F>(
-        &self,
-        change: Change,
-        mut child_extractor: F,
-    )
-        where
-            F: FnMut(&[u8]) -> Vec<H256> + Clone,
+    pub fn apply_changes<F>(&self, change: Change, mut child_extractor: F)
+    where
+        F: FnMut(&[u8]) -> Vec<H256> + Clone,
     {
         let mut sorted: Vec<(H256, Vec<u8>)> = vec![];
         let mut referenced = vec![];
@@ -179,27 +175,26 @@ impl<D: DbCounter + Database> TrieCollection<D> {
                 let rlp = Rlp::new(&value);
                 let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
                 referenced.extend_from_slice(
-                    &ReachableHashes::collect(&node, child_extractor.clone()).childs()
+                    &ReachableHashes::collect(&node, child_extractor.clone()).childs(),
                 );
-                let child = sorted.iter().enumerate().find(|(i, (key, _))| {
-                    match &node {
-                        MerkleNode::Branch(values, _) => {
-                            values.iter().any(|value| {
-                                if let MerkleValue::Hash(k) = value {
-                                    return *k == *key;
-                                }
-                                false
-                            })
-                        }
+                let child = sorted
+                    .iter()
+                    .enumerate()
+                    .find(|(_i, (key, _))| match &node {
+                        MerkleNode::Branch(values, _) => values.iter().any(|value| {
+                            if let MerkleValue::Hash(k) = value {
+                                return *k == *key;
+                            }
+                            false
+                        }),
                         MerkleNode::Extension(_, value) => {
                             if let MerkleValue::Hash(k) = value {
                                 return *k == *key;
                             }
                             false
                         }
-                        MerkleNode::Leaf(_, _) => false
-                    }
-                });
+                        MerkleNode::Leaf(_, _) => false,
+                    });
                 match child {
                     None => sorted.push((key, value)),
                     Some((i, _)) => sorted.insert(i, (key, value)),
@@ -207,7 +202,8 @@ impl<D: DbCounter + Database> TrieCollection<D> {
             }
         }
         for (key, value) in sorted.into_iter() {
-            self.database.gc_insert_node(key, &value, &mut child_extractor);
+            self.database
+                .gc_insert_node(key, &value, &mut child_extractor);
         }
         for hash in referenced {
             assert!(self.database.node_exist(hash));
@@ -465,105 +461,16 @@ impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> Drop for RootGua
 }
 
 pub mod testing {
-    use std::cell::UnsafeCell;
-    use std::collections::HashMap;
-    use std::sync::Arc;
-    use std::sync::RwLock;
+    use super::*;
     use dashmap::mapref::entry::Entry;
     use log::trace;
     use primitive_types::H256;
-    use rocksdb_lib::OptimisticTransactionDB;
-    use super::*;
+    use std::sync::Arc;
 
-    use crate::rocksdb;
-    use crate::{Database, CachedDatabaseHandle};
+    use crate::cache::AsyncCachedHandle;
 
-    use super::{MapWithCounter, DbCounter};
+    use super::{DbCounter, MapWithCounter};
 
-    #[derive(Default, Debug)]
-    pub struct AsyncCachedHandle<D> {
-        pub db: D,
-        cache: AsyncCache,
-    }
-
-    impl<D> AsyncCachedHandle<D> {
-        pub fn new(db: D) -> Self {
-            AsyncCachedHandle {
-                db,
-                cache: AsyncCache::default()
-            }
-        }
-    }
-
-    #[derive(Default, Debug)]
-    pub struct AsyncCachedDatabaseHandle<D> { db: D }
-
-    impl<D: Borrow<OptimisticTransactionDB>> AsyncCachedDatabaseHandle<D> {
-        pub fn new(db: D) -> Self { AsyncCachedDatabaseHandle { db } }
-    }
-
-    // Same implementation as for RocksDatabaseHandle<'a, D>
-    impl<D: Borrow<OptimisticTransactionDB>> CachedDatabaseHandle for AsyncCachedDatabaseHandle<D> {
-        fn get(&self, key: H256) -> Vec<u8> {
-            self.db
-                .borrow()
-                .get(key.as_ref())
-                .expect("Error on reading database")
-                .unwrap_or_else(|| panic!("Value for {} not found in database", key))
-        }
-    }
-
-    #[derive(Default, Debug)]
-    pub struct AsyncCache {
-        cache: UnsafeCell<Vec<Vec<u8>>>,
-        map: RwLock<HashMap<H256, usize>>,
-    }
-
-    unsafe impl Sync for AsyncCache {}
-    unsafe impl Send for AsyncCache {}
-
-    impl AsyncCache {
-        pub fn new() -> AsyncCache {
-            AsyncCache {
-                cache: UnsafeCell::new(Vec::new()),
-                map: RwLock::new(HashMap::new()),
-            }
-        }
-
-        pub fn insert(&self, key: H256, value: Vec<u8>) -> &[u8] {
-            let mut map = self.map.write().unwrap();
-            let cache = unsafe { &mut *self.cache.get() };
-            let index = cache.len();
-            map.insert(key, index);
-            cache.push(value);
-            &cache[index]
-        }
-
-        pub fn get(&self, key: H256) -> Option<&[u8]> {
-            let cache = unsafe { &mut *self.cache.get() };
-            let map = self.map.read().unwrap();
-            match map.get(&key) {
-                Some(index) => Some(&cache[*index]),
-                None => None,
-            }
-        }
-
-        pub fn contains_key(&self, key: H256) -> bool {
-            let map = self.map.read().unwrap();
-            map.contains_key(&key)
-        }
-    }
-
-
-    impl<D: CachedDatabaseHandle> Database for AsyncCachedHandle<D> {
-        fn get(&self, key: H256) -> &[u8] {
-            if !self.cache.contains_key(key) {
-                self.cache.insert(key, self.db.get(key))
-            } else {
-                self.cache.get(key).unwrap()
-            }
-        }
-    }
     pub type MapWithCounterCached = AsyncCachedHandle<Arc<MapWithCounter>>;
     impl DbCounter for MapWithCounterCached {
         // Insert value into db.
@@ -965,7 +872,7 @@ pub mod tests {
 
         let node = collection1.database.get(root_guard.root);
         let changes = Change {
-            changes: vec![(root_guard.root, Some(node.to_vec()))].into()
+            changes: vec![(root_guard.root, Some(node.to_vec()))].into(),
         };
 
         // Change contains only root node so assert will fail

@@ -1,12 +1,8 @@
-use std::borrow::Borrow;
-
 use std::sync::Arc;
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{ensure, Result};
 use log::*;
 use primitive_types::H256;
-
-use super::Walker;
 
 pub trait TrieInspector {
     fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> Result<bool>;
@@ -32,15 +28,6 @@ pub mod encoding {
     pub struct SecTrie<T, K, V> {
         pub inner: T,
         _pd: PhantomData<(K, V)>,
-    }
-
-    impl<T, K, V> SecTrie<T, K, V> {
-        pub fn new(inner: T) -> Self {
-            Self {
-                inner,
-                _pd: PhantomData,
-            }
-        }
     }
 
     impl<T, K, V> TrieDataInsectorRaw for SecTrie<T, K, V>
@@ -100,7 +87,6 @@ pub mod encoding {
     }
 }
 
-
 impl<K, V> DataInspector<K, V> for NoopInspector {
     fn inspect_data(&self, _key: K, _value: V) -> Result<()> {
         Ok(())
@@ -118,7 +104,6 @@ impl TrieDataInsectorRaw for NoopInspector {
         Ok(())
     }
 }
-
 
 impl<K, V, T: DataInspector<K, V>> DataInspector<K, V> for Arc<T> {
     fn inspect_data(&self, key: K, value: V) -> Result<()> {
