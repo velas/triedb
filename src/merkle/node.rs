@@ -1,10 +1,10 @@
-use std::{borrow::Borrow, ops::Deref};
+use std::borrow::Borrow;
 
 use primitive_types::H256;
 use rlp::{self, Encodable, Prototype, Rlp, RlpStream};
 
 use super::nibble::{self, NibbleType, NibbleVec};
-use crate::{Result, Database};
+use crate::Result;
 
 /// Represents a merkle node.
 #[derive(Debug, PartialEq, Eq)]
