@@ -1,15 +1,10 @@
 //! Merkle trie implementation for Ethereum.
 
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use primitive_types::H256;
-use rlp::Rlp;
-use sha3::{Digest, Keccak256};
 
-use merkle::{nibble, MerkleNode, MerkleValue};
+use merkle::MerkleNode;
 pub use rocksdb_lib;
 pub mod gc;
 pub mod merkle;
@@ -19,6 +14,7 @@ pub use mutable::*;
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;
 
+mod change;
 mod cache;
 mod error;
 mod impls;
@@ -26,7 +22,9 @@ mod memory;
 mod mutable;
 mod ops;
 
-use ops::{build, delete, get, insert};
+pub (crate) use ops::{insert, delete, build, get};
+
+pub use change::Change;
 
 type Result<T> = std::result::Result<T, error::Error>;
 
@@ -51,176 +49,24 @@ impl<T: Database> Database for Arc<T> {
     }
 }
 
-/// Change for a merkle trie operation.
-#[derive(Default, Debug, Clone)]
-pub struct Change {
-    /// Additions to the database.
-    pub changes: VecDeque<(H256, Option<Vec<u8>>)>,
+/// Represents a trie that is mutable.
+pub trait TrieMut {
+    /// Get the root hash of the current trie.
+    fn root(&self) -> H256;
+    /// Insert a value to the trie.
+    fn insert(&mut self, key: &[u8], value: &[u8]);
+    /// Delete a value in the trie.
+    fn delete(&mut self, key: &[u8]);
+    /// Get a value in the trie.
+    fn get(&self, key: &[u8]) -> Option<Vec<u8>>;
 }
 
-impl Change {
-    /// Change to add a new raw value.
-    pub fn add_raw(&mut self, key: H256, value: Vec<u8>) {
-        self.changes.push_back((key, Some(value)));
-    }
-
-    /// Change to add a new node.
-    pub fn add_node(&mut self, node: &MerkleNode<'_>) {
-        let subnode = rlp::encode(node).to_vec();
-        let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
-        self.add_raw(hash, subnode);
-    }
-
-    /// Change to add a new node, and return the value added.
-    pub fn add_value<'a, 'b, 'c>(&'a mut self, node: &'c MerkleNode<'b>) -> MerkleValue<'b> {
-        if node.inlinable() {
-            MerkleValue::Full(Box::new(node.clone()))
-        } else {
-            let subnode = rlp::encode(node).to_vec();
-            let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
-            self.add_raw(hash, subnode);
-            MerkleValue::Hash(hash)
-        }
-    }
-
-    /// Change to remove a raw key.
-    pub fn remove_raw(&mut self, key: H256) {
-        self.changes.push_back((key, None));
-    }
-
-    /// Change to remove a node. Return whether there's any node being
-    /// removed.
-    pub fn remove_node(&mut self, node: &MerkleNode<'_>) -> bool {
-        if node.inlinable() {
-            false
-        } else {
-            let subnode = rlp::encode(node).to_vec();
-            let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
-            self.remove_raw(hash);
-            true
-        }
-    }
-
-    /// Merge another change to this change.
-    pub fn merge(&mut self, other: &Change) {
-        for (key, v) in &other.changes {
-            if let Some(v) = v {
-                self.add_raw(*key, v.clone());
-            } else {
-                self.remove_raw(*key);
-            }
-        }
-    }
-
-    /// Merge child tree change into this change.
-    /// Changes inserts are ordered from child to root, so when we merge child subtree
-    /// we should push merge it in front.
-    pub fn merge_child(&mut self, other: &Change) {
-        for (key, v) in other.changes.iter().rev() {
-            self.changes.push_front((*key, v.clone()))
-        }
-    }
-}
 
 /// Get the empty trie hash for merkle trie.
 pub fn empty_trie_hash() -> H256 {
     empty_trie_hash!()
 }
 
-/// Insert to a merkle trie. Return the new root hash and the changes.
-pub fn insert<D: Database>(root: H256, database: &D, key: &[u8], value: &[u8]) -> (H256, Change) {
-    let mut change = Change::default();
-    let nibble = nibble::from_key(key);
-
-    let (new, subchange) = if root == empty_trie_hash!() {
-        insert::insert_by_empty(nibble, value)
-    } else {
-        let old =
-            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
-        change.remove_raw(root);
-        insert::insert_by_node(old, nibble, value, database)
-    };
-    change.merge(&subchange);
-    change.add_node(&new);
-
-    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new).to_vec()).as_slice());
-    (hash, change)
-}
-
-/// Insert to an empty merkle trie. Return the new root hash and the
-/// changes.
-pub fn insert_empty<D: Database>(key: &[u8], value: &[u8]) -> (H256, Change) {
-    let mut change = Change::default();
-    let nibble = nibble::from_key(key);
-
-    let (new, subchange) = insert::insert_by_empty(nibble, value);
-    change.merge(&subchange);
-    change.add_node(&new);
-
-    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new).to_vec()).as_slice());
-    (hash, change)
-}
-
-/// Delete a key from a markle trie. Return the new root hash and the
-/// changes.
-pub fn delete<D: Database>(root: H256, database: &D, key: &[u8]) -> (H256, Change) {
-    let mut change = Change::default();
-    let nibble = nibble::from_key(key);
-
-    let (new, subchange) = if root == empty_trie_hash!() {
-        return (root, change);
-    } else {
-        let old =
-            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
-        change.remove_raw(root);
-        delete::delete_by_node(old, nibble, database)
-    };
-    change.merge(&subchange);
-
-    match new {
-        Some(new) => {
-            change.add_node(&new);
-
-            let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new).to_vec()).as_slice());
-            (hash, change)
-        }
-        None => (empty_trie_hash!(), change),
-    }
-}
-
-/// Build a merkle trie from a map. Return the root hash and the
-/// changes.
-pub fn build(map: &HashMap<Vec<u8>, Vec<u8>>) -> (H256, Change) {
-    let mut change = Change::default();
-
-    if map.is_empty() {
-        return (empty_trie_hash!(), change);
-    }
-
-    let mut node_map = HashMap::new();
-    for (key, value) in map {
-        node_map.insert(nibble::from_key(key.as_ref()), value.as_ref());
-    }
-
-    let (node, subchange) = build::build_node(&node_map);
-    change.merge(&subchange);
-    change.add_node(&node);
-
-    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&node).to_vec()).as_slice());
-    (hash, change)
-}
-
-/// Get a value given the root hash and the database.
-pub fn get<'a, 'b, D: Database>(root: H256, database: &'a D, key: &'b [u8]) -> Option<&'a [u8]> {
-    if root == empty_trie_hash!() {
-        None
-    } else {
-        let nibble = nibble::from_key(key);
-        let node =
-            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
-        get::get_by_node(node, nibble, database)
-    }
-}
 
 #[doc(hidden)]
 #[macro_export]

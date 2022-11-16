@@ -1,18 +1,6 @@
-use std::collections::HashMap;
-
-use primitive_types::H256;
-
-use crate::Database;
-
-impl Database for HashMap<H256, Vec<u8>> {
-    fn get(&self, key: H256) -> &[u8] {
-        self.get(&key)
-            .unwrap_or_else(|| panic!("Key {} not found", key))
-    }
-}
 
 #[cfg(test)]
-pub mod tests {
+pub mod test_types {
     use std::convert::TryFrom;
 
     use quickcheck::{Arbitrary, Gen};

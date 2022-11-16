@@ -2,18 +2,8 @@ use std::marker::PhantomData;
 
 use primitive_types::H256;
 use sha3::{Digest, Keccak256};
+use crate::TrieMut;
 
-/// Represents a trie that is mutable.
-pub trait TrieMut {
-    /// Get the root hash of the current trie.
-    fn root(&self) -> H256;
-    /// Insert a value to the trie.
-    fn insert(&mut self, key: &[u8], value: &[u8]);
-    /// Delete a value in the trie.
-    fn delete(&mut self, key: &[u8]);
-    /// Get a value in the trie.
-    fn get(&self, key: &[u8]) -> Option<Vec<u8>>;
-}
 
 /// Represents a mutable trie that is operated on any RLP values.
 #[derive(Clone, Default, Debug)]

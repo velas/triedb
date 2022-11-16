@@ -2,24 +2,40 @@
 
 //use asterix to avoid unresolved import https://github.com/rust-analyzer/rust-analyzer/issues/7459#issuecomment-907714513
 use derivative::*;
-use std::borrow::Borrow;
 
-use crate::merkle::MerkleNode;
+use std::borrow::Borrow;
 use log::*;
 use primitive_types::H256;
-use rlp::Rlp;
-use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB, Transaction};
+use rocksdb_lib::{ColumnFamily, OptimisticTransactionDB, Transaction};
 
 // We use optimistica transaction, to allow regular `get` operation execute without lock timeouts.
 pub type DB = OptimisticTransactionDB;
 
 use crate::{
     cache::CachedHandle,
-    gc::{DbCounter, ReachableHashes},
     CachedDatabaseHandle,
 };
 
+#[macro_use]
+mod retry;
+mod counter_type;
+mod db_counter;
+use counter_type::{serialize_counter, deserialize_counter};
+
+pub use counter_type::merge_counter;
 const EXCLUSIVE: bool = true;
+
+pub type RocksHandle<'a, D> = CachedHandle<RocksDatabaseHandle<'a, D>>;
+
+impl<'a, D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandle<'a, D> {
+    fn get(&self, key: H256) -> Vec<u8> {
+        self.db
+            .borrow()
+            .get(key.as_ref())
+            .expect("Error on reading database")
+            .unwrap_or_else(|| panic!("Value for {} not found in database", key))
+    }
+}
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -123,192 +139,9 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
     }
 }
 
-pub fn merge_counter(
-    key: &[u8],
-    existing_val: Option<&[u8]>,
-    operands: &MergeOperands,
-) -> Option<Vec<u8>> {
-    let mut val = existing_val.map(deserialize_counter).unwrap_or_default();
-    assert_eq!(key.len(), 32);
-    for op in operands.iter() {
-        let diff = deserialize_counter(op);
-        // this assertion is incorrect because rocks can merge multiple values into one.
-        // assert!(diff == -1 || diff == 1);
-        val += diff;
-    }
-    Some(serialize_counter(val).to_vec())
-}
-fn serialize_counter(counter: i64) -> [u8; 8] {
-    counter.to_le_bytes()
-}
-
-fn deserialize_counter(counter: &[u8]) -> i64 {
-    let mut bytes = [0; 8];
-    bytes.copy_from_slice(counter);
-    i64::from_le_bytes(bytes)
-}
-
-impl<'a, D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandle<'a, D> {
-    fn get(&self, key: H256) -> Vec<u8> {
-        self.db
-            .borrow()
-            .get(key.as_ref())
-            .expect("Error on reading database")
-            .unwrap_or_else(|| panic!("Value for {} not found in database", key))
-    }
-}
-
-/// Retry is used because optimistic transactions can fail if other thread change some value.
-macro_rules! retry {
-    {$($tokens:tt)*} => {
-        const NUM_RETRY: usize = 500; // ~10ms-100ms
-        #[allow(unused_mut)]
-        let mut retry = move || -> Result<_, anyhow::Error> {
-            let result = { $($tokens)* };
-            Ok(result)
-        };
-        let mut e = None; //use option because rust think that this variable can be uninit
-        for retry_count in 0..NUM_RETRY {
-            e = Some(retry().map(|v|(v, retry_count)));
-            match e.as_ref().unwrap() {
-                Ok(_) => break,
-                Err(e) => log::trace!("Error during transaction execution retry_count:{} reason:{}", retry_count + 1,  e)
-
-            }
-        }
-        let (result, num_retry) = e.unwrap()
-        .expect(&format!("Failed to retry operation for {} times", NUM_RETRY));
-        if num_retry > 1 && num_retry < NUM_RETRY - 1 { log::warn!("Error transaction execution failed multiple time retry_count:{}", num_retry + 1)}
-        result
-
-    };
-}
-pub type RocksHandle<'a, D> = CachedHandle<RocksDatabaseHandle<'a, D>>;
-
-impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
-    // Insert value into db.
-    // Check if value exist before, if not exist, increment child counter.
-    fn gc_insert_node<F>(&self, key: H256, value: &[u8], mut child_extractor: F)
-    where
-        F: FnMut(&[u8]) -> Vec<H256>,
-    {
-        let rlp = Rlp::new(&value);
-        let node = MerkleNode::decode(&rlp).expect("Data should be decodable node");
-        let childs = ReachableHashes::collect(&node, &mut child_extractor).childs();
-        retry! {
-            let db = self.db.db.borrow();
-            let mut tx = db.transaction();
-            // let mut write_batch = WriteBatch::default();
-            if tx
-                .get_for_update(key.as_ref(), EXCLUSIVE)
-                .map_err(|e| anyhow::format_err!("Cannot get key {}", e))?
-                .is_none()
-            {
-                trace!("inserting node {}=>{:?}", key, node);
-                for hash in &childs {
-                    self.db.increase(&mut tx, *hash)?;
-                }
-
-                tx.put(key.as_ref(), value)?;
-                self.db.create_counter(&mut tx, key)?;
-                tx.commit()?;
-            }
-        }
-    }
-    fn gc_count(&self, key: H256) -> usize {
-        let db = self.db.db.borrow();
-        let mut tx = db.transaction();
-        self.db
-            .get_counter_in_tx(&mut tx, key)
-            .expect("Cannot read value") as usize
-    }
-
-    // Return true if node data is exist, and it counter more than 0;
-    fn node_exist(&self, key: H256) -> bool {
-        self.db
-            .db
-            .borrow()
-            .get(key.as_ref())
-            .unwrap_or_default()
-            .is_some()
-            && self.gc_count(key) > 0
-    }
-
-    // atomic operation:
-    // 1. check if key counter didn't increment in other thread.
-    // 2. remove key if counter == 0.
-    // 3. find all childs
-    // 4. decrease child counters
-    // 5. return list of childs with counter == 0
-    fn gc_try_cleanup_node<F>(&self, key: H256, mut child_extractor: F) -> Vec<H256>
-    where
-        F: FnMut(&[u8]) -> Vec<H256>,
-    {
-        let db = self.db.db.borrow();
-        if self.db.counter_cf.is_none() {
-            return vec![];
-        };
-
-        // To make second retry execute faster, cache child keys.
-        let mut cached_childs = None;
-        trace!("try removing node {}", key);
-        retry! {
-            let mut nodes = Vec::with_capacity(16);
-            //TODO: retry
-
-            let mut tx = db.transaction();
-            if let Some(value) = tx.get_for_update(key.as_ref(), EXCLUSIVE)? {
-                let count = self.db.get_counter_in_tx(&mut tx, key)?;
-                if count > 0 {
-                    trace!("ignore removing node {}, counter: {}", key, count);
-                    return Ok(vec![]);
-                }
-                tx.delete(&key.as_ref())?;
-                self.db.remove_counter(&mut tx, key)?;
 
 
-                let childs = cached_childs.take().unwrap_or_else(||{
-                    let rlp = Rlp::new(&value);
-                    let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-                    ReachableHashes::collect(&node, &mut child_extractor).childs()
-                });
 
-                for hash in &childs {
-                    let child_count = self.db.decrease(&mut tx, *hash)?;
-                    if child_count <= 0 {
-                        nodes.push(*hash);
-                    }
-                }
-
-                cached_childs = Some(childs);
-
-                tx.commit()?;
-            }
-            nodes
-        }
-    }
-
-    fn gc_pin_root(&self, key: H256) {
-        trace!("Pin root:{}", key);
-        retry! {
-            let db = self.db.db.borrow();
-            let mut tx = db.transaction();
-            self.db.increase(&mut tx, key)?;
-            tx.commit()?;
-        }
-    }
-
-    fn gc_unpin_root(&self, key: H256) -> bool {
-        trace!("Unpin root:{}", key);
-        retry! {
-            let db = self.db.db.borrow();
-            let mut tx = db.transaction();
-            self.db.decrease(&mut tx, key)?;
-            tx.commit()?;
-            self.gc_count(key) == 0
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -318,6 +151,8 @@ mod tests {
 
     use crate::empty_trie_hash;
     use crate::gc::TrieCollection;
+    use crate::gc::DbCounter;
+    use crate::gc::reachable_hashes::ReachableHashes;
     use crate::merkle::MerkleNode;
     use hex_literal::hex;
     use quickcheck::TestResult;
@@ -331,8 +166,8 @@ mod tests {
     use super::*;
     use crate::gc::tests::{FixedData, Key};
     use crate::gc::RootGuard;
-    use crate::impls::tests::{Data, K};
-    use crate::mutable::TrieMut;
+    use crate::impls::test_types::{Data, K};
+    use crate::TrieMut;
     use crate::Database;
 
     fn no_childs(_: &[u8]) -> Vec<H256> {
