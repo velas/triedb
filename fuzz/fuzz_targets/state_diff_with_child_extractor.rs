@@ -178,7 +178,7 @@ fn test_state_diff(
     }
 
     // Get diff between two tries in the first collection
-    let st = DiffFinder::new(&collection1.database, collection1_trie1.root, collection1_trie2.root, DataWithRoot::get_childs);
+    let st = DiffFinder::new(&collection1.database, DataWithRoot::get_childs);
     let changes = st.get_changeset(collection1_trie1.root, collection1_trie2.root).unwrap();
     let changes = triedb::Change {
         changes: changes.clone().into_iter().map(|change| {
