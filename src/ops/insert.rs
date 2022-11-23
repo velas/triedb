@@ -118,12 +118,12 @@ pub fn insert_by_node<'a, D: Database>(
     let mut change = Change::default();
 
     let new = match node {
-        MerkleNode::Leaf(ref node_nibble, ref node_value) => {
+        MerkleNode::Leaf(ref node_nibble, node_value) => {
             if node_nibble == &nibble {
                 MerkleNode::Leaf(nibble, value)
             } else {
                 let (common, nibble_sub, node_nibble_sub) =
-                    nibble::common_with_sub(&nibble, &node_nibble);
+                    nibble::common_with_sub(&nibble, node_nibble);
 
                 let (branch, subchange) =
                     two_leaf_branch(node_nibble_sub, node_value, nibble_sub, value);
@@ -148,7 +148,7 @@ pub fn insert_by_node<'a, D: Database>(
                 MerkleNode::Extension(node_nibble.clone(), subvalue)
             } else {
                 let (common, nibble_sub, node_nibble_sub) =
-                    nibble::common_with_sub(&nibble, &node_nibble);
+                    nibble::common_with_sub(&nibble, node_nibble);
 
                 let (branch, subchange) =
                     value_and_leaf_branch(node_nibble_sub, node_value.clone(), nibble_sub, value);
