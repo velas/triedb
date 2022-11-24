@@ -572,14 +572,25 @@ mod tests {
 
     use hex_literal::hex;
     use serde::{Deserialize, Serialize};
-    use tracing::metadata::LevelFilter;
-    use tracing_subscriber::fmt::format::FmtSpan;
 
     use crate::gc::TrieCollection;
     use crate::gc::{DbCounter, RootGuard};
     use crate::mutable::TrieMut;
 
     use super::*;
+
+    #[cfg(feature = "tracing-enable")]
+    fn tracing_sub_init() {
+        use tracing::metadata::LevelFilter;
+        use tracing_subscriber::fmt::format::FmtSpan;
+        tracing_subscriber::fmt()
+            .with_span_events(FmtSpan::ENTER)
+            .with_max_level(LevelFilter::TRACE)
+            .init();
+    }
+    #[cfg(not(feature = "tracing-enable"))]
+    fn tracing_sub_init() {
+    }
 
     #[derive(Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
     pub struct DataWithRoot {
@@ -653,12 +664,7 @@ mod tests {
 
     #[test]
     fn test_extension_replaced_by_branch_extension() {
-        use tracing_subscriber;
-
-        tracing_subscriber::fmt()
-            .with_span_events(FmtSpan::ENTER)
-            .with_max_level(LevelFilter::TRACE)
-            .init();
+        tracing_sub_init();
 
         let key1 = &hex!("aaab");
         let key2 = &hex!("aaac");
@@ -730,12 +736,7 @@ mod tests {
 
     #[test]
     fn test_two_empty_trees() {
-        use tracing_subscriber;
-
-        tracing_subscriber::fmt()
-            .with_span_events(FmtSpan::ENTER)
-            .with_max_level(LevelFilter::TRACE)
-            .init();
+        tracing_sub_init();
 
         let collection = TrieCollection::new(MapWithCounterCached::default());
 
@@ -759,12 +760,8 @@ mod tests {
 
     #[test]
     fn test_empty_tree_and_leave() {
-        use tracing_subscriber;
 
-        tracing_subscriber::fmt()
-            .with_span_events(FmtSpan::ENTER)
-            .with_max_level(LevelFilter::TRACE)
-            .init();
+        tracing_sub_init();
 
         let collection = TrieCollection::new(MapWithCounterCached::default());
 
@@ -851,12 +848,7 @@ mod tests {
 
     #[test]
     fn test_leave_node_and_extension_node() {
-        use tracing_subscriber;
-
-        tracing_subscriber::fmt()
-            .with_span_events(FmtSpan::ENTER)
-            .with_max_level(LevelFilter::TRACE)
-            .init();
+        tracing_sub_init();
 
         let key1 = &hex!("aaab");
         let key2 = &hex!("aaac");
@@ -891,12 +883,7 @@ mod tests {
 
     #[test]
     fn test_two_different_leaf_nodes() {
-        use tracing_subscriber;
-
-        tracing_subscriber::fmt()
-            .with_span_events(FmtSpan::ENTER)
-            .with_max_level(LevelFilter::TRACE)
-            .init();
+        tracing_sub_init();
 
         let key1 = &hex!("aaab");
         let key2 = &hex!("aaac");
@@ -940,12 +927,7 @@ mod tests {
 
     #[test]
     fn test_1() {
-        use tracing_subscriber;
-
-        tracing_subscriber::fmt()
-            .with_span_events(FmtSpan::ENTER)
-            .with_max_level(LevelFilter::TRACE)
-            .init();
+        tracing_sub_init();
 
         let keys1 = vec![
             (
@@ -1027,12 +1009,7 @@ mod tests {
 
     #[test]
     fn test_2() {
-        use tracing_subscriber;
-
-        tracing_subscriber::fmt()
-            .with_span_events(FmtSpan::ENTER)
-            .with_max_level(LevelFilter::TRACE)
-            .init();
+        tracing_sub_init();
 
         let keys1 = vec![
             (
@@ -1105,12 +1082,7 @@ mod tests {
 
     #[test]
     fn test_3() {
-        use tracing_subscriber;
-
-        tracing_subscriber::fmt()
-            .with_span_events(FmtSpan::ENTER)
-            .with_max_level(LevelFilter::TRACE)
-            .init();
+        tracing_sub_init();
 
         let keys1 = vec![
             (
@@ -1183,11 +1155,7 @@ mod tests {
 
     #[test]
     fn test_4() {
-        use tracing_subscriber;
-        tracing_subscriber::fmt()
-            .with_span_events(FmtSpan::ENTER)
-            .with_max_level(LevelFilter::TRACE)
-            .init();
+        tracing_sub_init();
 
         let keys1 = vec![
             (vec![176, 3, 51, 51], b"________________________________1"),
@@ -1258,11 +1226,7 @@ mod tests {
 
     #[test]
     fn test_insert_by_existing_key() {
-        use tracing_subscriber;
-        tracing_subscriber::fmt()
-            .with_span_events(FmtSpan::ENTER)
-            .with_max_level(LevelFilter::TRACE)
-            .init();
+        tracing_sub_init();
 
         let keys1 = vec![
             (vec![112, 0, 0, 0], b"________________________________2"),
@@ -1297,11 +1261,7 @@ mod tests {
 
     #[test]
     fn test_diff_with_child_extractor() {
-        use tracing_subscriber;
-        tracing_subscriber::fmt()
-            .with_span_events(FmtSpan::ENTER)
-            .with_max_level(LevelFilter::TRACE)
-            .init();
+        tracing_sub_init();
 
         let keys1 = vec![(
             vec![0, 0, 0, 0],
