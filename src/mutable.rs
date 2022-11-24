@@ -185,7 +185,7 @@ impl<T: TrieMut> AnySecureTrieMut<T> {
 
     /// Insert a value to the trie.
     pub fn insert<K: AsRef<[u8]>, V: rlp::Encodable>(&mut self, key: &K, value: &V) {
-        self.0.insert(&key, &rlp::encode(value).to_vec())
+        self.0.insert(&key, &rlp::encode(value))
     }
 
     /// Delete a value in the trie.

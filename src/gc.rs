@@ -40,13 +40,13 @@ where
 
     fn process_node(&mut self, merkle_node: &MerkleNode) {
         match merkle_node {
-            MerkleNode::Leaf(_, d) => self.childs.extend_from_slice(&(self.child_extractor)(*d)),
+            MerkleNode::Leaf(_, d) => self.childs.extend_from_slice(&(self.child_extractor)(d)),
             MerkleNode::Extension(_, merkle_value) => {
                 self.process_value(merkle_value);
             }
             MerkleNode::Branch(merkle_values, data) => {
                 if let Some(d) = data {
-                    self.childs.extend_from_slice(&(self.child_extractor)(*d))
+                    self.childs.extend_from_slice(&(self.child_extractor)(d))
                 }
                 for merkle_value in merkle_values {
                     self.process_value(merkle_value);
@@ -206,7 +206,7 @@ impl<D: Database> TrieMut for DatabaseTrieMut<D> {
 impl<D: Database> Database for DatabaseTrieMut<D> {
     fn get(&self, key: H256) -> &[u8] {
         if let Some(bytes) = self.change_data.get(&key) {
-            &**bytes
+            bytes
         } else {
             self.database.borrow().get(key)
         }
@@ -298,7 +298,7 @@ impl DbCounter for MapWithCounterCached {
         match self.db.data.entry(key) {
             Entry::Occupied(_) => {}
             Entry::Vacant(v) => {
-                let rlp = Rlp::new(&value);
+                let rlp = Rlp::new(value);
                 let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
                 trace!("inserting node {}=>{:?}", key, node);
                 for hash in ReachableHashes::collect(&node, child_extractor).childs() {
@@ -534,7 +534,7 @@ pub mod tests {
         // CHECK CHILDS counts
         println!("root={}", root_guard.root);
         let node = collection.database.get(root_guard.root);
-        let rlp = Rlp::new(&node);
+        let rlp = Rlp::new(node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(childs.len(), 2); // "bb..", "ffaa", check test doc comments
@@ -557,7 +557,7 @@ pub mod tests {
         assert_eq!(collection.database.gc_count(another_root.root), 1);
 
         let node = collection.database.get(another_root.root);
-        let rlp = Rlp::new(&node);
+        let rlp = Rlp::new(node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(another_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
@@ -595,7 +595,7 @@ pub mod tests {
         let latest_root = collection.apply_increase(patch, no_childs);
 
         let node = collection.database.get(latest_root.root);
-        let rlp = Rlp::new(&node);
+        let rlp = Rlp::new(node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(latest_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
