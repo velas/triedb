@@ -1,5 +1,5 @@
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map};
 use std::sync::Arc;
 
 use crate::merkle::MerkleValue;
@@ -215,7 +215,7 @@ pub struct DatabaseTrieMut<D> {
     database: D,
     change: Change,
     // latest state of changed data.
-    change_data: HashMap<H256, Vec<u8>>,
+    change_data: HashMap<H256, (Vec<u8>, usize)>,
     root: H256,
 }
 
@@ -253,7 +253,7 @@ impl<D: Database> TrieMut for DatabaseTrieMut<D> {
 
 impl<D: Database> Database for DatabaseTrieMut<D> {
     fn get(&self, key: H256) -> &[u8] {
-        if let Some(bytes) = self.change_data.get(&key) {
+        if let Some((bytes, _)) = self.change_data.get(&key) {
             &**bytes
         } else {
             self.database.borrow().get(key)
@@ -264,8 +264,24 @@ impl<D: Database> Database for DatabaseTrieMut<D> {
 impl<D: Database> DatabaseTrieMut<D> {
     pub fn merge(&mut self, change: &Change) {
         for (key, v) in &change.changes {
+            let entry = self.change_data.entry(*key);
             if let Some(v) = v {
-                self.change_data.insert(*key, v.clone());
+                match entry {
+                    hash_map::Entry::Occupied(e) => {
+                        e.into_mut().1 += 1;
+                    }
+                    hash_map::Entry::Vacant(e) => {
+                        e.insert((v.clone(), 1));
+                    }
+                };
+            } else {
+                if let hash_map::Entry::Occupied(e) = entry {
+                    if e.get().1 <= 1 {
+                        e.remove_entry();
+                    } else {
+                        e.into_mut().1 -= 1;
+                    }
+                }
             }
         }
         self.change.merge(change)
