@@ -15,15 +15,9 @@ use tracing::instrument;
 #[derive(Debug)]
 pub struct DiffFinder<DB, F> {
     pub db: DB,
-    changeset: RwLock<Vec<u8>>,
     child_extractor: F,
 }
 
-#[derive(Debug, Clone)]
-struct Cursor {
-    nibble: NibbleVec,
-    current_hash: H256,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
@@ -176,11 +170,11 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
     pub fn new(db: DB, child_extractor: F) -> Self {
         DiffFinder {
             db,
-            changeset: RwLock::new(Vec::new()),
             child_extractor,
         }
     }
 
+    #[allow(clippy::result_unit_err)]
     pub fn get_changeset(
         &self,
         start_state_root: H256,
@@ -466,7 +460,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
             .collect()
     }
     fn check_branch_level(left_slice: NibbleSlice, right_slice: NibbleSlice) -> ComparePathResult {
-        let common = nibble::common(&left_slice, &right_slice);
+        let common = nibble::common(left_slice, right_slice);
         match (
             common.len() != left_slice.len(),
             common.len() != right_slice.len(),
@@ -631,7 +625,7 @@ mod tests {
     use crate::gc::testing::MapWithCounterCached;
 
     fn check_changes(
-        changes: &Vec<Change>,
+        changes: &[Change],
         initial_trie_data: &Vec<(&[u8], &[u8])>,
         expected_trie_root: H256,
         expected_trie_data: &Vec<(&[u8], Option<Vec<u8>>)>,
@@ -639,16 +633,15 @@ mod tests {
         let collection = TrieCollection::new(MapWithCounterCached::default());
         let mut trie = collection.trie_for(crate::empty_trie_hash());
         for (key, value) in initial_trie_data {
-            trie.insert(*key, *value);
+            trie.insert(key, value);
         }
         let patch = trie.into_patch();
-        let initial_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+        let _initial_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let mut changes = crate::Change {
+        let changes = crate::Change {
             changes: changes
-                .clone()
-                .into_iter()
-                .map(|change| match change {
+                .iter()
+                .map(|change| match change.clone() {
                     Change::Insert(key, val) => (key, Some(val)),
                     Change::Removal(key, _) => (key, None),
                 })
@@ -658,7 +651,7 @@ mod tests {
 
         let new_trie = collection.trie_for(expected_trie_root);
         for (key, value) in expected_trie_data {
-            assert_eq!(TrieMut::get(&new_trie, *key), *value);
+            assert_eq!(TrieMut::get(&new_trie, key), *value);
         }
     }
 
@@ -697,8 +690,8 @@ mod tests {
         trie.insert(key1, value1);
         trie.insert(key2, value2);
         let patch = trie.into_patch();
-        let first_root = new_collection.apply_increase(patch, crate::gc::tests::no_childs);
-        let mut changes = crate::Change {
+        let _first_root = new_collection.apply_increase(patch, crate::gc::tests::no_childs);
+        let changes = crate::Change {
             changes: changes
                 .into_iter()
                 .map(|change| match change {
@@ -740,12 +733,12 @@ mod tests {
 
         let collection = TrieCollection::new(MapWithCounterCached::default());
 
-        let mut trie = collection.trie_for(crate::empty_trie_hash());
+        let trie = collection.trie_for(crate::empty_trie_hash());
 
         let patch = trie.into_patch();
         let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
-        let mut trie = collection.trie_for(first_root.root);
+        let trie = collection.trie_for(first_root.root);
         let patch = trie.into_patch();
         let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
@@ -766,7 +759,7 @@ mod tests {
         let collection = TrieCollection::new(MapWithCounterCached::default());
 
         // Set up initial trie
-        let mut trie = collection.trie_for(crate::empty_trie_hash());
+        let trie = collection.trie_for(crate::empty_trie_hash());
         let patch = trie.into_patch();
         let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
@@ -781,7 +774,7 @@ mod tests {
             H256::from_str("0xacb66b810feb4a4e29ba06ed205fcac7cf4841be1a77d0d9ecc84d715c2151d7")
                 .unwrap();
         // let val1 = trie.get(key);
-        let mut final_trie = collection.trie_for(last_root.root);
+        let final_trie = collection.trie_for(last_root.root);
         let val1 = Database::get(&final_trie, key);
         dbg!("{:?}", val1);
         // let val1 = mutable::TrieMut::get(&final_trie, key);
@@ -830,7 +823,7 @@ mod tests {
         }
 
         // compare trie
-        let mut new_trie = new_collection.trie_for(last_root.root);
+        let new_trie = new_collection.trie_for(last_root.root);
         assert_eq!(
             TrieMut::get(&new_trie, &hex!("bbcc")),
             Some(b"same data________________________".to_vec())
@@ -962,6 +955,7 @@ mod tests {
 
         let mut trie1 = collection.trie_for(crate::empty_trie_hash());
         for (key, value) in &keys1 {
+            #[allow(clippy::explicit_auto_deref)]
             trie1.insert(key, *value);
         }
         let patch = trie1.into_patch();
@@ -969,6 +963,7 @@ mod tests {
 
         let mut trie2 = collection.trie_for(crate::empty_trie_hash());
         for (key, value) in &keys2 {
+            #[allow(clippy::explicit_auto_deref)]
             trie2.insert(key, *value);
         }
         let patch = trie2.into_patch();
@@ -986,18 +981,18 @@ mod tests {
                 .collect(),
             second_root.root,
             &vec![
-                (&vec![0, 0, 0, 0, 0, 0, 12, 25], None),
-                (&vec![0, 0, 0, 0, 0, 0, 16, 246], None),
+                (&[0, 0, 0, 0, 0, 0, 12, 25], None),
+                (&[0, 0, 0, 0, 0, 0, 16, 246], None),
                 (
-                    &vec![0, 0, 0, 0, 0, 0, 13, 52],
+                    &[0, 0, 0, 0, 0, 0, 13, 52],
                     Some(b"________________________________4".to_vec()),
                 ),
                 (
-                    &vec![0, 0, 0, 0, 0, 0, 15, 55],
+                    &[0, 0, 0, 0, 0, 0, 15, 55],
                     Some(b"________________________________5".to_vec()),
                 ),
                 (
-                    &vec![0, 0, 0, 0, 0, 0, 15, 203],
+                    &[0, 0, 0, 0, 0, 0, 15, 203],
                     Some(b"________________________________6".to_vec()),
                 ),
             ],
@@ -1040,6 +1035,7 @@ mod tests {
 
         let mut trie1 = collection.trie_for(crate::empty_trie_hash());
         for (key, value) in &keys1 {
+            #[allow(clippy::explicit_auto_deref)]
             trie1.insert(key, *value);
         }
         let patch = trie1.into_patch();
@@ -1047,6 +1043,7 @@ mod tests {
 
         let mut trie2 = collection.trie_for(crate::empty_trie_hash());
         for (key, value) in &keys2 {
+            #[allow(clippy::explicit_auto_deref)]
             trie2.insert(key, *value);
         }
         let patch = trie2.into_patch();
@@ -1064,14 +1061,14 @@ mod tests {
                 .collect(),
             second_root.root,
             &vec![
-                (&vec![0, 0, 0, 0, 0, 0, 12, 25], None),
-                (&vec![0, 0, 0, 0, 0, 0, 16, 246], None),
+                (&[0, 0, 0, 0, 0, 0, 12, 25], None),
+                (&[0, 0, 0, 0, 0, 0, 16, 246], None),
                 (
-                    &vec![0, 0, 0, 0, 0, 0, 13, 52],
+                    &[0, 0, 0, 0, 0, 0, 13, 52],
                     Some(b"________________________________4".to_vec()),
                 ),
                 (
-                    &vec![0, 0, 0, 0, 0, 0, 15, 203],
+                    &[0, 0, 0, 0, 0, 0, 15, 203],
                     Some(b"________________________________5".to_vec()),
                 ),
             ],
@@ -1114,6 +1111,7 @@ mod tests {
 
         let mut trie1 = collection.trie_for(crate::empty_trie_hash());
         for (key, value) in &keys1 {
+            #[allow(clippy::explicit_auto_deref)]
             trie1.insert(key, *value);
         }
         let patch = trie1.into_patch();
@@ -1121,6 +1119,7 @@ mod tests {
 
         let mut trie2 = collection.trie_for(crate::empty_trie_hash());
         for (key, value) in &keys2 {
+            #[allow(clippy::explicit_auto_deref)]
             trie2.insert(key, *value);
         }
         let patch = trie2.into_patch();
@@ -1138,13 +1137,13 @@ mod tests {
                 .collect(),
             second_root.root,
             &vec![
-                (&vec![0, 0, 0, 0, 0, 0, 16, 246], None),
+                (&[0, 0, 0, 0, 0, 0, 16, 246], None),
                 (
-                    &vec![0, 0, 0, 0, 0, 0, 12, 25],
+                    &[0, 0, 0, 0, 0, 0, 12, 25],
                     Some(b"________________________________1".to_vec()),
                 ),
                 (
-                    &vec![0, 0, 0, 0, 0, 0, 15, 203],
+                    &[0, 0, 0, 0, 0, 0, 15, 203],
                     Some(b"________________________________2".to_vec()),
                 ),
             ],
@@ -1177,6 +1176,7 @@ mod tests {
 
         let mut trie1 = collection.trie_for(crate::empty_trie_hash());
         for (key, value) in &keys1 {
+            #[allow(clippy::explicit_auto_deref)]
             trie1.insert(key, *value);
         }
         let patch = trie1.into_patch();
@@ -1184,6 +1184,7 @@ mod tests {
 
         let mut trie2 = collection.trie_for(crate::empty_trie_hash());
         for (key, value) in &keys2 {
+            #[allow(clippy::explicit_auto_deref)]
             trie2.insert(key, *value);
         }
         let patch = trie2.into_patch();
@@ -1202,22 +1203,22 @@ mod tests {
             second_root.root,
             &vec![
                 (
-                    &vec![51, 51, 51, 51],
+                    &[51, 51, 51, 51],
                     Some(b"________________________________1".to_vec()),
                 ),
                 (
-                    &vec![51, 51, 59, 48],
+                    &[51, 51, 59, 48],
                     Some(b"________________________________2".to_vec()),
                 ),
                 (
-                    &vec![243, 51, 51, 51],
+                    &[243, 51, 51, 51],
                     Some(b"________________________________2".to_vec()),
                 ),
                 (
-                    &vec![51, 51, 51, 59],
+                    &[51, 51, 51, 59],
                     Some(b"________________________________1".to_vec()),
                 ),
-                (&vec![176, 3, 51, 51], None),
+                (&[176, 3, 51, 51], None),
             ],
         );
         drop(second_root);
@@ -1239,6 +1240,7 @@ mod tests {
 
         let mut trie1 = collection.trie_for(crate::empty_trie_hash());
         for (key, value) in &keys1 {
+            #[allow(clippy::explicit_auto_deref)]
             trie1.insert(key, *value);
         }
         let patch = trie1.into_patch();
@@ -1508,11 +1510,11 @@ mod tests {
                 {
                     // Insert to first db
                     let mut account_trie = collection1.trie_for(collection1_trie1.root);
-                    let mut account: DataWithRoot = TrieMut::get(&account_trie, &k)
+                    let mut account: DataWithRoot = TrieMut::get(&account_trie, k)
                         .map(|d| bincode::deserialize(&d).unwrap())
                         .unwrap_or_default();
                     let mut storage_trie = collection1.trie_for(account.root);
-                    storage_trie.insert(&data_key, &data);
+                    storage_trie.insert(data_key, data);
                     let storage_patch = storage_trie.into_patch();
                     log::trace!(
                         "1 Update account root: old {}, new {}",
@@ -1520,7 +1522,7 @@ mod tests {
                         storage_patch.root
                     );
                     account.root = storage_patch.root;
-                    account_trie.insert(&k, &bincode::serialize(&account).unwrap());
+                    account_trie.insert(k, &bincode::serialize(&account).unwrap());
                     let mut account_patch = account_trie.into_patch();
                     account_patch.change.merge_child(&storage_patch.change);
 
@@ -1530,14 +1532,14 @@ mod tests {
                 {
                     // Insert to second db
                     let mut account_trie = collection2.trie_for(collection2_trie1.root);
-                    let mut account: DataWithRoot = TrieMut::get(&account_trie, &k)
+                    let mut account: DataWithRoot = TrieMut::get(&account_trie, k)
                         .map(|d| bincode::deserialize(&d).unwrap())
                         .unwrap_or_default();
                     let mut storage_trie = collection2.trie_for(account.root);
-                    storage_trie.insert(&data_key, &data);
+                    storage_trie.insert(data_key, data);
                     let storage_patch = storage_trie.into_patch();
                     account.root = storage_patch.root;
-                    account_trie.insert(&k, &bincode::serialize(&account).unwrap());
+                    account_trie.insert(k, &bincode::serialize(&account).unwrap());
                     let mut account_patch = account_trie.into_patch();
                     account_patch.change.merge_child(&storage_patch.change);
 
@@ -1549,15 +1551,15 @@ mod tests {
 
         let mut accounts_map: HashMap<Vec<u8>, HashMap<Vec<u8>, Vec<u8>>> = HashMap::new();
         for (k, storage) in keys2.iter() {
-            let account_updates = accounts_map.entry(k.clone()).or_insert(HashMap::default());
+            let account_updates = accounts_map.entry(k.clone()).or_default();
             for (data_key, data) in storage {
                 let mut account_trie = collection1.trie_for(collection1_trie2.root);
-                let mut account: DataWithRoot = TrieMut::get(&account_trie, &k)
+                let mut account: DataWithRoot = TrieMut::get(&account_trie, k)
                     .map(|d| bincode::deserialize(&d).unwrap())
                     .unwrap_or_default();
                 let mut storage_trie = collection1.trie_for(account.root);
                 account_updates.insert(data_key.clone(), data.clone());
-                storage_trie.insert(&data_key, &data);
+                storage_trie.insert(data_key, data);
                 let storage_patch = storage_trie.into_patch();
                 log::trace!(
                     "2 Update account root: old {}, new {}",
@@ -1565,7 +1567,7 @@ mod tests {
                     storage_patch.root
                 );
                 account.root = storage_patch.root;
-                account_trie.insert(&k, &bincode::serialize(&account).unwrap());
+                account_trie.insert(k, &bincode::serialize(&account).unwrap());
                 let mut account_patch = account_trie.into_patch();
                 account_patch.change.merge_child(&storage_patch.change);
 
@@ -1581,7 +1583,6 @@ mod tests {
         log::info!("result change = {:?}", changes);
         let changes = crate::Change {
             changes: changes
-                .clone()
                 .into_iter()
                 .map(|change| match change {
                     Change::Insert(key, val) => {
@@ -1619,7 +1620,7 @@ mod tests {
             for data_key in storage.keys() {
                 assert_eq!(
                     &storage[data_key][..],
-                    &TrieMut::get(&account_storage_trie, &data_key).unwrap()
+                    &TrieMut::get(&account_storage_trie, data_key).unwrap()
                 );
             }
         }

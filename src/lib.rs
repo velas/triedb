@@ -145,7 +145,7 @@ pub fn insert<D: Database>(root: H256, database: &D, key: &[u8], value: &[u8]) -
     change.merge(&subchange);
     change.add_node(&new);
 
-    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new).to_vec()).as_slice());
+    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new)).as_slice());
     (hash, change)
 }
 
@@ -159,7 +159,7 @@ pub fn insert_empty<D: Database>(key: &[u8], value: &[u8]) -> (H256, Change) {
     change.merge(&subchange);
     change.add_node(&new);
 
-    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new).to_vec()).as_slice());
+    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new)).as_slice());
     (hash, change)
 }
 
@@ -183,7 +183,7 @@ pub fn delete<D: Database>(root: H256, database: &D, key: &[u8]) -> (H256, Chang
         Some(new) => {
             change.add_node(&new);
 
-            let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new).to_vec()).as_slice());
+            let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new)).as_slice());
             (hash, change)
         }
         None => (empty_trie_hash!(), change),
@@ -208,7 +208,7 @@ pub fn build(map: &HashMap<Vec<u8>, Vec<u8>>) -> (H256, Change) {
     change.merge(&subchange);
     change.add_node(&node);
 
-    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&node).to_vec()).as_slice());
+    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&node)).as_slice());
     (hash, change)
 }
 

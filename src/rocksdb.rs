@@ -52,7 +52,7 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         key: H256,
     ) -> Result<(), rocksdb_lib::Error> {
         if let Some(counter_cf) = self.counter_cf {
-            b.delete_cf(counter_cf, &key)?
+            b.delete_cf(counter_cf, key)?
         }
         Ok(())
     }
@@ -63,8 +63,8 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         key: H256,
     ) -> Result<(), rocksdb_lib::Error> {
         if let Some(counter_cf) = self.counter_cf {
-            if b.get_for_update_cf(counter_cf, &key, EXCLUSIVE)?.is_none() {
-                b.put_cf(counter_cf, &key, &serialize_counter(0))?
+            if b.get_for_update_cf(counter_cf, key, EXCLUSIVE)?.is_none() {
+                b.put_cf(counter_cf, key, serialize_counter(0))?
             }
         }
         Ok(())
@@ -77,7 +77,7 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         if let Some(counter_cf) = self.counter_cf {
             self.db
                 .borrow()
-                .merge_cf(counter_cf, &key.as_ref(), &serialize_counter(1))?
+                .merge_cf(counter_cf, key.as_ref(), serialize_counter(1))?
         }
         Ok(())
     }
@@ -88,7 +88,7 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         if let Some(counter_cf) = self.counter_cf {
             self.db
                 .borrow()
-                .merge_cf(counter_cf, &key.as_ref(), &serialize_counter(-1))?
+                .merge_cf(counter_cf, key.as_ref(), serialize_counter(-1))?
         }
         Ok(())
     }
@@ -96,7 +96,7 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         if let Some(counter_cf) = self.counter_cf {
             let mut value = self.get_counter_in_tx(b, key)?;
             value += 1;
-            b.put_cf(counter_cf, &key.as_ref(), &serialize_counter(value))?;
+            b.put_cf(counter_cf, key.as_ref(), serialize_counter(value))?;
             trace!("increase node {}=>{}", key, value);
         }
         Ok(())
@@ -105,7 +105,7 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         if let Some(counter_cf) = self.counter_cf {
             let mut value = self.get_counter_in_tx(b, key)?;
             value -= 1;
-            b.put_cf(counter_cf, &key.as_ref(), &serialize_counter(value))?;
+            b.put_cf(counter_cf, key.as_ref(), serialize_counter(value))?;
             trace!("decrease node {}=>{}", key, value);
             return Ok(value);
         }
@@ -196,7 +196,7 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
     where
         F: FnMut(&[u8]) -> Vec<H256>,
     {
-        let rlp = Rlp::new(&value);
+        let rlp = Rlp::new(value);
         let node = MerkleNode::decode(&rlp).expect("Data should be decodable node");
         let childs = ReachableHashes::collect(&node, &mut child_extractor).childs();
         retry! {
@@ -267,7 +267,7 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
                     trace!("ignore removing node {}, counter: {}", key, count);
                     return Ok(vec![]);
                 }
-                tx.delete(&key.as_ref())?;
+                tx.delete(key.as_ref())?;
                 self.db.remove_counter(&mut tx, key)?;
 
 
@@ -389,7 +389,7 @@ mod tests {
         // CHECK CHILDS counts
         println!("root={}", root_guard.root);
         let node = collection.database.get(root_guard.root);
-        let rlp = Rlp::new(&node);
+        let rlp = Rlp::new(node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(childs.len(), 2); // "bb..", "ffaa", check test doc comments
@@ -412,7 +412,7 @@ mod tests {
         assert_eq!(collection.database.gc_count(another_root_guard.root), 1);
 
         let node = collection.database.get(another_root_guard.root);
-        let rlp = Rlp::new(&node);
+        let rlp = Rlp::new(node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(another_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
@@ -452,7 +452,7 @@ mod tests {
         collection.database.gc_pin_root(latest_root_guard.root);
 
         let node = collection.database.get(latest_root_guard.root);
-        let rlp = Rlp::new(&node);
+        let rlp = Rlp::new(node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(latest_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
@@ -490,7 +490,7 @@ mod tests {
             let cloned_elems = elems.clone();
             elems = collection.database.gc_cleanup_layer(&elems, no_childs);
             for child in cloned_elems {
-                assert!(collection.database.db.db.get(&child).unwrap().is_none());
+                assert!(collection.database.db.db.get(child).unwrap().is_none());
             }
         }
 
@@ -778,7 +778,7 @@ mod tests {
 
         for (k, data) in kvs_2.iter() {
             let mut trie = collection.trie_for(root);
-            trie.insert(&k.to_bytes(), &&bincode::serialize(data).unwrap());
+            trie.insert(&k.to_bytes(), &bincode::serialize(data).unwrap());
             let patch = trie.into_patch();
             root_guard = collection.apply_increase(patch, no_childs);
             root = root_guard.root;

@@ -55,7 +55,7 @@ where
             self.process_node(nibble, &node)?;
 
             // process node after inspection, to copy root later than it's data, to make sure that all roots are correct links
-            self.trie_inspector.inspect_node(hash, &bytes)?;
+            self.trie_inspector.inspect_node(hash, bytes)?;
         } else {
             debug!("skip empty trie");
         }
@@ -66,12 +66,12 @@ where
     fn process_node(&self, mut nibble: NibbleVec, node: &MerkleNode) -> Result<()> {
         match node {
             MerkleNode::Leaf(nibbles, data) => {
-                nibble.extend_from_slice(&*nibbles);
+                nibble.extend_from_slice(nibbles);
                 let key = crate::merkle::nibble::into_key(&nibble);
                 self.data_inspector.inspect_data_raw(key, data)
             }
             MerkleNode::Extension(nibbles, value) => {
-                nibble.extend_from_slice(&*nibbles);
+                nibble.extend_from_slice(nibbles);
                 self.process_value(nibble, value)
             }
             MerkleNode::Branch(values, mb_data) => {
