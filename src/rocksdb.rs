@@ -12,7 +12,7 @@ use rlp::Rlp;
 use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB, Transaction};
 
 // We use optimistica transaction, to allow regular `get` operation execute without lock timeouts.
-type DB = OptimisticTransactionDB;
+pub type DB = OptimisticTransactionDB;
 
 use crate::{
     cache::CachedHandle,
