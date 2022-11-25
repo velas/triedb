@@ -18,7 +18,6 @@ pub struct DiffFinder<DB, F> {
     child_extractor: F,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
     Insert(H256, Vec<u8>),
@@ -583,8 +582,7 @@ mod tests {
             .init();
     }
     #[cfg(not(feature = "tracing-enable"))]
-    fn tracing_sub_init() {
-    }
+    fn tracing_sub_init() {}
 
     #[derive(Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
     pub struct DataWithRoot {
@@ -611,7 +609,6 @@ mod tests {
     fn no_childs(_: &[u8]) -> Vec<H256> {
         vec![]
     }
-
 
     // compare_nodes: (Remove(Extension('aaa')), compare_nodes(2))
     // compare_nodes: reverse(compare_nodes(3))
@@ -753,7 +750,6 @@ mod tests {
 
     #[test]
     fn test_empty_tree_and_leave() {
-
         tracing_sub_init();
 
         let collection = TrieCollection::new(MapWithCounterCached::default());

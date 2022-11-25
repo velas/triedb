@@ -16,7 +16,7 @@ pub type DB = OptimisticTransactionDB;
 
 use crate::{
     cache::CachedHandle,
-    cache::{AsyncCachedHandle, AsyncCachedDatabaseHandle},
+    cache::{AsyncCachedDatabaseHandle, AsyncCachedHandle},
     gc::{DbCounter, ReachableHashes},
     CachedDatabaseHandle,
 };

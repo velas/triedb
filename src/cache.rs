@@ -1,8 +1,8 @@
 use std::{
-    sync::RwLock,
     borrow::Borrow,
     cell::{RefCell, UnsafeCell},
     collections::HashMap,
+    sync::RwLock,
 };
 
 use primitive_types::H256;
@@ -86,7 +86,6 @@ impl Cache {
     }
 }
 
-
 // Multithreaded cache implementation
 
 #[derive(Default, Debug)]
@@ -116,7 +115,9 @@ impl<D: Borrow<rocksdb_lib::OptimisticTransactionDB>> AsyncCachedDatabaseHandle<
 }
 
 // Same implementation as for RocksDatabaseHandle<'a, D>
-impl<D: Borrow<rocksdb_lib::OptimisticTransactionDB>> CachedDatabaseHandle for AsyncCachedDatabaseHandle<D> {
+impl<D: Borrow<rocksdb_lib::OptimisticTransactionDB>> CachedDatabaseHandle
+    for AsyncCachedDatabaseHandle<D>
+{
     fn get(&self, key: H256) -> Vec<u8> {
         self.db
             .borrow()

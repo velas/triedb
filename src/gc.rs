@@ -1,5 +1,5 @@
 use std::borrow::Borrow;
-use std::collections::{HashMap, hash_map};
+use std::collections::{hash_map, HashMap};
 use std::sync::Arc;
 
 use crate::merkle::MerkleValue;
