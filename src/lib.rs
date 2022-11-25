@@ -28,6 +28,7 @@ mod mutable;
 mod ops;
 mod walker;
 
+use ops::insert::Pair;
 use ops::{build, delete, get, insert};
 
 type Result<T> = std::result::Result<T, error::Error>;
@@ -140,7 +141,7 @@ pub fn insert<D: Database>(root: H256, database: &D, key: &[u8], value: &[u8]) -
         let old =
             MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
         change.remove_raw(root);
-        insert::insert_by_node(old, nibble, value, database)
+        insert::insert_by_node(old, Pair::new(nibble, value), database)
     };
     change.merge(&subchange);
     change.add_node(&new);
