@@ -2,6 +2,7 @@
 
 use std::{cmp::min, hash::Hash};
 
+use bytes::Buf;
 use rlp::{Rlp, RlpStream};
 
 use crate::Result;
@@ -131,6 +132,62 @@ pub fn into_key(nibble: NibbleSlice) -> Vec<u8> {
     }
 
     ret
+}
+
+// Check if this rlp list consume all buffer, with given number of items.
+pub(crate) fn is_list_consume_rlp(mut buf: &[u8], num: usize) -> bool {
+    let buf = &mut buf;
+    for i in 0..num {
+        let Ok(h) = fastrlp::Header::decode(buf) else {
+            return false
+        };
+        if h.payload_length > buf.len() {
+            return false;
+        }
+        buf.advance(h.payload_length);
+    }
+    buf.is_empty()
+}
+
+pub(crate) struct NibblePair(pub NibbleVec, pub NibbleType);
+
+impl<'de> fastrlp::Decodable<'de> for NibblePair {
+    fn decode(buf: &mut &'de [u8]) -> Result<NibblePair, fastrlp::DecodeError> {
+        let h = fastrlp::Header::decode(buf)?;
+        if h.list {
+            return Err(fastrlp::DecodeError::UnexpectedList);
+        }
+
+        let data = &buf[..h.payload_length];
+        buf.advance(h.payload_length);
+
+        let start_odd = data[0] & 0b00010000 == 0b00010000;
+        let is_leaf = data[0] & 0b00100000 == 0b00100000;
+
+        let start_index = if start_odd { 1 } else { 2 };
+
+        let len = data.len() * 2;
+
+        let mut vec = NibbleVec::with_capacity(len);
+
+        for i in start_index..len {
+            if i & 1 == 0 {
+                // even
+                vec.push(((data[i / 2] & 0xf0) >> 4).into());
+            } else {
+                vec.push((data[i / 2] & 0x0f).into());
+            }
+        }
+
+        Ok(NibblePair(
+            vec,
+            if is_leaf {
+                NibbleType::Leaf
+            } else {
+                NibbleType::Extension
+            },
+        ))
+    }
 }
 
 /// Decode a nibble from RLP.

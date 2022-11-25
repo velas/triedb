@@ -28,7 +28,7 @@ mod ops;
 
 use ops::{build, delete, get, insert};
 
-type Result<T> = std::result::Result<T, error::Error>;
+type Result<T, E = error::Error> = std::result::Result<T, E>;
 
 pub trait CachedDatabaseHandle {
     fn get(&self, key: H256) -> Vec<u8>;
@@ -135,8 +135,8 @@ pub fn insert<D: Database>(root: H256, database: &D, key: &[u8], value: &[u8]) -
     let (new, subchange) = if root == empty_trie_hash!() {
         insert::insert_by_empty(nibble, value)
     } else {
-        let old =
-            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
+        let old = <MerkleNode as fastrlp::Decodable>::decode(&mut (database.get(root)))
+            .expect("Unable to decode Node value");
         change.remove_raw(root);
         insert::insert_by_node(old, nibble, value, database)
     };
@@ -170,8 +170,8 @@ pub fn delete<D: Database>(root: H256, database: &D, key: &[u8]) -> (H256, Chang
     let (new, subchange) = if root == empty_trie_hash!() {
         return (root, change);
     } else {
-        let old =
-            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
+        let old = <MerkleNode as fastrlp::Decodable>::decode(&mut (database.get(root)))
+            .expect("Unable to decode Node value");
         change.remove_raw(root);
         delete::delete_by_node(old, nibble, database)
     };
@@ -216,8 +216,8 @@ pub fn get<'a, 'b, D: Database>(root: H256, database: &'a D, key: &'b [u8]) -> O
         None
     } else {
         let nibble = nibble::from_key(key);
-        let node =
-            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
+        let node = <MerkleNode as fastrlp::Decodable>::decode(&mut (database.get(root)))
+            .expect("Unable to decode Node value");
         get::get_by_node(node, nibble, database)
     }
 }
