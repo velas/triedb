@@ -52,3 +52,31 @@ jobs:
         with:
           command: test 
           args: --no-default-features --features rocksdb
+
+      - name: Run building benches
+        uses: actions-rs/cargo@v1
+        with:
+          command: bench
+          args: --no-run
+
+  nightly_ci_checks:
+    runs-on: ubuntu-latest
+    container: rustlang/rust:nightly-bullseye-slim
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - name: Additional Debian packages
+        run: |
+          apt-get update
+          apt-get install clang -y
+      - uses: actions/checkout@v2
+
+      - name: Run install cargo-fuzz
+        uses: baptiste0928/cargo-install@v1
+        with:
+          crate: cargo-fuzz
+          version: "0.11.1"
+
+      - name: Run build of cargo-fuzz
+        run: cargo fuzz build
+        working-directory: ./fuzz
