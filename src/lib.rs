@@ -8,7 +8,6 @@ use std::{
 };
 
 use primitive_types::H256;
-use rlp::Rlp;
 use sha3::{Digest, Keccak256};
 
 use merkle::{nibble, MerkleNode, MerkleValue};
@@ -27,6 +26,7 @@ mod impls;
 mod memory;
 mod mutable;
 mod ops;
+mod rlp;
 mod walker;
 
 pub use error::Error;
@@ -81,7 +81,7 @@ impl Change {
 
     /// Change to add a new node.
     pub fn add_node(&mut self, node: &MerkleNode<'_>) {
-        let subnode = rlp::encode(node).to_vec();
+        let subnode = crate::rlp::encode(node).to_vec();
         let hash = H256(Keccak256::digest(&subnode).into());
         self.add_raw(hash, subnode);
     }
@@ -91,7 +91,7 @@ impl Change {
         if node.inlinable() {
             MerkleValue::Full(Box::new(node.clone()))
         } else {
-            let subnode = rlp::encode(node).to_vec();
+            let subnode = crate::rlp::encode(node).to_vec();
             let hash = H256(Keccak256::digest(&subnode).into());
             self.add_raw(hash, subnode);
             MerkleValue::Hash(hash)
@@ -109,7 +109,7 @@ impl Change {
         if node.inlinable() {
             false
         } else {
-            let subnode = rlp::encode(node).to_vec();
+            let subnode = crate::rlp::encode(node).to_vec();
             let hash = H256(Keccak256::digest(&subnode).into());
             self.remove_raw(hash);
             true
@@ -145,8 +145,7 @@ pub fn insert<D: Database>(root: H256, database: &D, key: &[u8], value: &[u8]) -
     let (new, subchange) = if root == empty_trie_hash() {
         insert::insert_by_empty(nibble, value)
     } else {
-        let old =
-            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
+        let old = crate::rlp::decode(database.get(root)).expect("Unable to decode Node value");
         change.remove_raw(root);
         insert::insert_by_node(old, Entry::new(nibble, value), database)
     };
@@ -182,8 +181,7 @@ pub fn delete<D: Database>(root: H256, database: &D, key: &[u8]) -> (H256, Chang
     let (new, subchange) = if root == empty_trie_hash() {
         return (root, change);
     } else {
-        let old =
-            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
+        let old = crate::rlp::decode(database.get(root)).expect("Unable to decode Node value");
         change.remove_raw(root);
         delete::delete_by_node(old, nibble, database)
     };
@@ -193,7 +191,7 @@ pub fn delete<D: Database>(root: H256, database: &D, key: &[u8]) -> (H256, Chang
         Some(new) => {
             change.add_node(&new);
 
-            let hash = H256(Keccak256::digest(&rlp::encode(&new)).into());
+            let hash = H256(Keccak256::digest(&crate::rlp::encode(&new)).into());
             (hash, change)
         }
         None => (empty_trie_hash(), change),
@@ -228,8 +226,7 @@ pub fn get<'a, 'b, D: Database>(root: H256, database: &'a D, key: &'b [u8]) -> O
         None
     } else {
         let nibble = nibble::from_key(key);
-        let node =
-            MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
+        let node = crate::rlp::decode(database.get(root)).expect("Unable to decode Node value");
         get::get_by_node(node, nibble, database)
     }
 }

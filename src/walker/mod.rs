@@ -5,9 +5,9 @@ use crate::{
     Database,
 };
 use primitive_types::H256;
-use rlp::Rlp;
 
 use crate::merkle::nibble::NibbleVec;
+
 use anyhow::Result;
 use log::*;
 
@@ -47,9 +47,7 @@ where
             let bytes = db.get(hash);
             trace!("raw bytes: {:?}", bytes);
 
-            let rlp = Rlp::new(bytes);
-            trace!("rlp: {:?}", rlp);
-            let node = MerkleNode::decode(&rlp)?;
+            let node = crate::rlp::decode(&bytes)?;
             debug!("node: {:?}", node);
 
             self.process_node(Entry::new(nibble, &node))?;

@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use primitive_types::H256;
-use rlp::Rlp;
+
 use sha3::{Digest, Keccak256};
 
 #[cfg(test)]
@@ -14,6 +14,7 @@ use crate::debug::no_childs;
 use crate::diff;
 use crate::gc::{DbCounter, ReachableHashes};
 use crate::merkle::MerkleNode;
+
 
 #[cfg_attr(test, derive(Serialize, Deserialize))]
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -61,7 +62,7 @@ fn verify_node(
 
     verify_hash(value, hash)?;
 
-    let node = MerkleNode::decode(&Rlp::new(value))?;
+    let node = crate::rlp::decode(value)?;
     Ok(Some((value.clone(), node)))
 }
 

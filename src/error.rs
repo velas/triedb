@@ -5,7 +5,7 @@ use crate::ops::diff::verify::VerificationError;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Decoder(#[from] rlp::DecoderError),
+    Decoder(#[from] crate::rlp::DecoderError),
     #[error(transparent)]
     Verification(#[from] VerificationError),
     #[error("missing dependency node in DB `{0:?}`")]

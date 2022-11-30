@@ -6,13 +6,13 @@ use crate::debug::{DebugPrintExt, EntriesHex, InnerEntriesHex};
 use crate::gc::tests::{
     FixedKey, MixedNonUniqueValue, NodesGenerator, UniqueValue, VariableKey, RNG_DATA_SIZE,
 };
-use crate::merkle::MerkleNode;
 use crate::mutable::TrieMut;
 use crate::ops::diff::verify::VerificationError;
+
 use crate::{debug, diff, empty_trie_hash, verify_diff, Database, DiffChange as Change};
 use hex_literal::hex;
 use primitive_types::H256;
-use rlp::Rlp;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha3::{Digest, Keccak256};
@@ -1622,8 +1622,7 @@ where
     {
         for (_k, v) in &patch.change.changes {
             if let Some(n) = v {
-                let rlp = Rlp::new(n);
-                let node = MerkleNode::decode(&rlp).unwrap();
+                let node = crate::rlp::decode(&n).unwrap();
                 let childs = ReachableHashes::collect(&node, D::extract).childs();
                 for n in childs.0.into_iter().chain(childs.1) {
                     roots_set.remove(&n);
