@@ -54,12 +54,30 @@ fn rand_collection(
     ret.into_iter()
 }
 
+fn rand_choose(
+    seed: [u8; 32],
+    collection: Vec<(H256, [u8; VALUE_SIZE_BYTES])>,
+    num_random: usize,
+    num_from_collection: usize,
+) -> Vec<H256> {
+    let mut rng = rand::rngs::StdRng::from_seed(seed);
+
+    let random = rand_collection(seed, num_random).map(|(k, _)| k);
+
+    let from_collection: Vec<_> = collection
+        .choose_multiple(&mut rng, num_from_collection)
+        .map(|(k, _)| *k)
+        .collect();
+
+    from_collection.into_iter().chain(random).collect()
+}
+
 fn bench_insert_backends(
     c: &mut Criterion,
     (bench_seed, setup_seed): ([u8; 32], [u8; 32]),
     (bench_amount, setup_amount): (usize, usize),
 ) {
-    let prep: Vec<_> = rand_collection(setup_seed, setup_amount).collect();
+    //TODO: Replace it, like in get, choose random values from collections to replace.
     let test_data: Vec<_> = rand_collection(bench_seed, bench_amount).collect();
 
     c.bench_function("bench insert BTreeMap", |b| {
@@ -232,20 +250,22 @@ fn bench_insert_backends(
 fn bench_get_backends(
     c: &mut Criterion,
     (bench_seed, setup_seed): ([u8; 32], [u8; 32]),
-    (bench_amount, setup_amount): (usize, usize),
+    (num_exist, num_random, setup_amount): (usize, usize, usize),
 ) {
-    let test_data: Vec<_> = rand_collection(bench_seed, bench_amount).collect();
+    let setup_data: Vec<_> = rand_collection(setup_seed, setup_amount).collect();
+
+    let test_data = rand_choose(bench_seed, setup_data.clone(), num_random, num_exist);
 
     c.bench_function("bench get BTreeMap", |b| {
         b.iter_batched(
             || {
                 (
                     test_data.clone(),
-                    rand_collection(setup_seed, setup_amount).collect::<BTreeMap<_, _>>(),
+                    setup_data.clone().into_iter().collect::<BTreeMap<_, _>>(),
                 )
             },
             |(test_data, sut)| {
-                for (key, _value) in test_data {
+                for key in test_data {
                     let _ = sut.get(&key);
                 }
             },
@@ -258,11 +278,11 @@ fn bench_get_backends(
             || {
                 (
                     test_data.clone(),
-                    rand_collection(setup_seed, setup_amount).collect::<DashMap<_, _>>(),
+                    setup_data.clone().into_iter().collect::<DashMap<_, _>>(),
                 )
             },
             |(test_data, sut)| {
-                for (key, _value) in test_data {
+                for key in test_data {
                     let _ = sut.get(&key);
                 }
             },
@@ -274,16 +294,14 @@ fn bench_get_backends(
         let dir = tempdir().unwrap();
         let sut = DB::open_default(&dir).unwrap();
 
-        let prep: Vec<_> = rand_collection(setup_seed, setup_amount).collect();
-
-        for (key, value) in prep {
+        for (key, value) in &setup_data {
             sut.put(key, value).unwrap();
         }
 
         b.iter_batched(
             || test_data.clone(),
             |test_data| {
-                for (key, _value) in test_data {
+                for key in test_data {
                     let _ = sut.get(key.as_bytes());
                 }
             },
@@ -305,7 +323,7 @@ fn bench_get_backends(
         b.iter_batched(
             || test_data.clone(),
             |test_data| {
-                for (key, _value) in test_data {
+                for key in test_data {
                     let _ = sut.get(key.as_bytes());
                 }
             },
@@ -336,7 +354,7 @@ fn bench_get_backends(
             for _iter in 0..num_iters {
                 let trie = collection.trie_for(root.root);
                 // Start benchmark
-                for (key, _value) in &test_data {
+                for key in &test_data {
                     let _ = trie.get(key.as_bytes());
                 }
 
@@ -390,7 +408,7 @@ fn bench_get_backends(
             for _iter in 0..num_iters {
                 let trie = collection.trie_for(root.root);
                 // Start benchmark
-                for (key, _value) in &test_data {
+                for key in &test_data {
                     let _ = trie.get(key.as_bytes());
                 }
 
@@ -404,7 +422,11 @@ fn bench_get_backends(
 }
 
 fn bench_db_backends(c: &mut Criterion) {
-    bench_get_backends(c, (BENCH_SEED, PREP_SEED), (BENCH_AMOUNT, PREP_SIZE));
+    bench_get_backends(
+        c,
+        (BENCH_SEED, PREP_SEED),
+        (BENCH_AMOUNT / 2, BENCH_AMOUNT / 2, PREP_SIZE),
+    );
     bench_insert_backends(c, (BENCH_SEED, PREP_SEED), (BENCH_AMOUNT, PREP_SIZE))
 }
 
