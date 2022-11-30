@@ -44,3 +44,6 @@ harness = false
 [features]
 default = ["rocksdb"]
 rocksdb = ["rocksdb_lib"]
+
+[profile.release]
+debug = 1

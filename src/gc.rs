@@ -298,8 +298,8 @@ impl DbCounter for MapWithCounterCached {
         match self.db.data.entry(key) {
             Entry::Occupied(_) => {}
             Entry::Vacant(v) => {
-                let rlp = Rlp::new(value);
-                let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*value)
+                    .expect("Unable to decode Merkle Node");
                 trace!("inserting node {}=>{:?}", key, node);
                 for hash in ReachableHashes::collect(&node, child_extractor).childs() {
                     self.db.increase(hash);
@@ -332,8 +332,8 @@ impl DbCounter for MapWithCounterCached {
                 // in this code we lock data, so it's okay to check counter from separate function
                 if self.gc_count(key) == 0 {
                     let value = entry.remove();
-                    let rlp = Rlp::new(&value);
-                    let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                    let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*value)
+                        .expect("Unable to decode Merkle Node");
                     return ReachableHashes::collect(&node, child_extractor)
                         .childs()
                         .into_iter()
@@ -534,8 +534,8 @@ pub mod tests {
         // CHECK CHILDS counts
         println!("root={}", root_guard.root);
         let node = collection.database.get(root_guard.root);
-        let rlp = Rlp::new(node);
-        let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+        let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*node)
+            .expect("Unable to decode Merkle Node");
         let childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(childs.len(), 2); // "bb..", "ffaa", check test doc comments
 
@@ -558,7 +558,8 @@ pub mod tests {
 
         let node = collection.database.get(another_root.root);
         let rlp = Rlp::new(node);
-        let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+        let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*node)
+            .expect("Unable to decode Merkle Node");
         let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(another_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
 
@@ -595,8 +596,8 @@ pub mod tests {
         let latest_root = collection.apply_increase(patch, no_childs);
 
         let node = collection.database.get(latest_root.root);
-        let rlp = Rlp::new(node);
-        let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+        let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*node)
+            .expect("Unable to decode Merkle Node");
         let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(latest_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
 

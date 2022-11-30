@@ -192,8 +192,8 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
     where
         F: FnMut(&[u8]) -> Vec<H256>,
     {
-        let rlp = Rlp::new(value);
-        let node = MerkleNode::decode(&rlp).expect("Data should be decodable node");
+        let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*value)
+            .expect("Data should be decodable node");
         let childs = ReachableHashes::collect(&node, &mut child_extractor).childs();
         retry! {
             let db = self.db.db.borrow();
@@ -268,8 +268,7 @@ impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
 
 
                 let childs = cached_childs.take().unwrap_or_else(||{
-                    let rlp = Rlp::new(&value);
-                    let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                    let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*value).expect("Unable to decode Merkle Node");
                     ReachableHashes::collect(&node, &mut child_extractor).childs()
                 });
 
@@ -385,8 +384,8 @@ mod tests {
         // CHECK CHILDS counts
         println!("root={}", root_guard.root);
         let node = collection.database.get(root_guard.root);
-        let rlp = Rlp::new(node);
-        let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+        let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*node)
+            .expect("Unable to decode Merkle Node");
         let childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(childs.len(), 2); // "bb..", "ffaa", check test doc comments
 
@@ -408,8 +407,8 @@ mod tests {
         assert_eq!(collection.database.gc_count(another_root_guard.root), 1);
 
         let node = collection.database.get(another_root_guard.root);
-        let rlp = Rlp::new(node);
-        let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+        let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*node)
+            .expect("Unable to decode Merkle Node");
         let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(another_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
 
@@ -448,8 +447,8 @@ mod tests {
         collection.database.gc_pin_root(latest_root_guard.root);
 
         let node = collection.database.get(latest_root_guard.root);
-        let rlp = Rlp::new(node);
-        let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+        let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*node)
+            .expect("Unable to decode Merkle Node");
         let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(latest_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
 
