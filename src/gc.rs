@@ -1,5 +1,5 @@
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use std::collections::{hash_map, HashMap};
 use std::sync::Arc;
 
 use crate::merkle::MerkleValue;
@@ -122,6 +122,7 @@ pub trait DbCounter {
     }
 }
 
+#[derive(Debug)]
 pub struct TrieCollection<D> {
     pub database: D,
 }
@@ -161,17 +162,64 @@ impl<D: DbCounter + Database> TrieCollection<D> {
 
         root_guard
     }
+
+    /// Sort changes from root to leaf and apply
+    pub fn apply_changes<F>(&self, change: Change, mut child_extractor: F)
+    where
+        F: FnMut(&[u8]) -> Vec<H256> + Clone,
+    {
+        let mut sorted: Vec<(H256, Vec<u8>)> = vec![];
+        let mut referenced = vec![];
+        for (key, value) in change.changes.into_iter().rev() {
+            if let Some(value) = value {
+                let rlp = Rlp::new(&value);
+                let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                referenced.extend_from_slice(
+                    &ReachableHashes::collect(&node, child_extractor.clone()).childs(),
+                );
+                let child = sorted
+                    .iter()
+                    .enumerate()
+                    .find(|(_i, (key, _))| match &node {
+                        MerkleNode::Branch(values, _) => values.iter().any(|value| {
+                            if let MerkleValue::Hash(k) = value {
+                                return *k == *key;
+                            }
+                            false
+                        }),
+                        MerkleNode::Extension(_, value) => {
+                            if let MerkleValue::Hash(k) = value {
+                                return *k == *key;
+                            }
+                            false
+                        }
+                        MerkleNode::Leaf(_, _) => false,
+                    });
+                match child {
+                    None => sorted.push((key, value)),
+                    Some((i, _)) => sorted.insert(i, (key, value)),
+                }
+            }
+        }
+        for (key, value) in sorted.into_iter() {
+            self.database
+                .gc_insert_node(key, &value, &mut child_extractor);
+        }
+        for hash in referenced {
+            assert!(self.database.node_exist(hash));
+        }
+    }
 }
 
 pub struct DatabaseTrieMut<D> {
     database: D,
     change: Change,
     // latest state of changed data.
-    change_data: HashMap<H256, Vec<u8>>,
+    change_data: HashMap<H256, (Vec<u8>, usize)>,
     root: H256,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct DatabaseTrieMutPatch {
     pub root: H256,
     pub change: Change,
@@ -205,7 +253,7 @@ impl<D: Database> TrieMut for DatabaseTrieMut<D> {
 
 impl<D: Database> Database for DatabaseTrieMut<D> {
     fn get(&self, key: H256) -> &[u8] {
-        if let Some(bytes) = self.change_data.get(&key) {
+        if let Some((bytes, _)) = self.change_data.get(&key) {
             bytes
         } else {
             self.database.borrow().get(key)
@@ -216,10 +264,27 @@ impl<D: Database> Database for DatabaseTrieMut<D> {
 impl<D: Database> DatabaseTrieMut<D> {
     pub fn merge(&mut self, change: &Change) {
         for (key, v) in &change.changes {
-            if let Some(v) = v {
-                self.change_data.insert(*key, v.clone());
-            } else {
-                self.change_data.remove(key);
+            let entry = self.change_data.entry(*key);
+            match v {
+                Some(v) => {
+                    match entry {
+                        hash_map::Entry::Occupied(e) => {
+                            e.into_mut().1 += 1;
+                        }
+                        hash_map::Entry::Vacant(e) => {
+                            e.insert((v.clone(), 1));
+                        }
+                    };
+                }
+                None => {
+                    if let hash_map::Entry::Occupied(e) = entry {
+                        if e.get().1 <= 1 {
+                            e.remove_entry();
+                        } else {
+                            e.into_mut().1 -= 1;
+                        }
+                    }
+                }
             }
         }
         self.change.merge(change)
@@ -253,7 +318,7 @@ impl<D: Database> DatabaseTrieMut<D> {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct MapWithCounter {
     counter: DashMap<H256, usize>,
     data: DashMap<H256, Vec<u8>>,
@@ -414,6 +479,86 @@ impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> Drop for RootGua
     }
 }
 
+pub mod testing {
+    use super::*;
+    use dashmap::mapref::entry::Entry;
+    use log::trace;
+    use primitive_types::H256;
+    use std::sync::Arc;
+
+    use crate::cache::AsyncCachedHandle;
+
+    use super::{DbCounter, MapWithCounter};
+
+    pub type MapWithCounterCached = AsyncCachedHandle<Arc<MapWithCounter>>;
+    impl DbCounter for MapWithCounterCached {
+        // Insert value into db.
+        // Check if value exist before, if not exist, increment child counter.
+        fn gc_insert_node<F>(&self, key: H256, value: &[u8], child_extractor: F)
+        where
+            F: FnMut(&[u8]) -> Vec<H256>,
+        {
+            match self.db.data.entry(key) {
+                Entry::Occupied(_) => {}
+                Entry::Vacant(v) => {
+                    let rlp = Rlp::new(value);
+                    let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                    trace!("inserting node {}=>{:?}", key, node);
+                    for hash in ReachableHashes::collect(&node, child_extractor).childs() {
+                        self.db.increase(hash);
+                    }
+                    v.insert(value.to_vec());
+                }
+            };
+        }
+        fn gc_count(&self, key: H256) -> usize {
+            self.db.counter.get(&key).map(|v| *v).unwrap_or_default()
+        }
+
+        // Return true if node data is exist, and it counter more than 0;
+        fn node_exist(&self, key: H256) -> bool {
+            self.db.data.get(&key).is_some() && self.gc_count(key) > 0
+        }
+
+        // atomic operation:
+        // 1. check if key counter didn't increment in other thread.
+        // 2. remove key if counter == 0.
+        // 3. find all childs
+        // 4. decrease child counters
+        // 5. return list of childs with counter == 0
+        fn gc_try_cleanup_node<F>(&self, key: H256, child_extractor: F) -> Vec<H256>
+        where
+            F: FnMut(&[u8]) -> Vec<H256>,
+        {
+            match self.db.data.entry(key) {
+                Entry::Occupied(entry) => {
+                    // in this code we lock data, so it's okay to check counter from separate function
+                    if self.gc_count(key) == 0 {
+                        let value = entry.remove();
+                        let rlp = Rlp::new(&value);
+                        let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                        return ReachableHashes::collect(&node, child_extractor)
+                            .childs()
+                            .into_iter()
+                            .filter(|k| self.db.decrease(*k) == 0)
+                            .collect();
+                    }
+                }
+                Entry::Vacant(_) => {}
+            };
+            vec![]
+        }
+
+        fn gc_pin_root(&self, key: H256) {
+            self.db.increase(key);
+        }
+
+        fn gc_unpin_root(&self, key: H256) -> bool {
+            self.db.decrease(key) == 0
+        }
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use std::{
@@ -437,7 +582,7 @@ pub mod tests {
     use crate::impls::tests::{Data, K};
     use hex_literal::hex;
 
-    fn no_childs(_: &[u8]) -> Vec<H256> {
+    pub fn no_childs(_: &[u8]) -> Vec<H256> {
         vec![]
     }
 
@@ -729,6 +874,28 @@ pub mod tests {
 
         assert_eq!(shared_db.data.len(), 0);
         assert_eq!(shared_db.counter.len(), 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_apply_invalid_changes() {
+        let collection1 = TrieCollection::new(MapWithCounterCached::default());
+        let collection2 = TrieCollection::new(MapWithCounterCached::default());
+
+        let mut trie = collection1.trie_for(crate::empty_trie_hash());
+        trie.insert(&hex!("bbaa"), b"same data________________________");
+        trie.insert(&hex!("ffaa"), b"same data________________________");
+        trie.insert(&hex!("bbcc"), b"same data________________________");
+        let patch = trie.into_patch();
+        let root_guard = collection1.apply_increase(patch, no_childs);
+
+        let node = collection1.database.get(root_guard.root);
+        let changes = Change {
+            changes: vec![(root_guard.root, Some(node.to_vec()))].into(),
+        };
+
+        // Change contains only root node so assert will fail
+        collection2.apply_changes(changes, no_childs);
     }
 
     #[quickcheck]

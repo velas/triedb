@@ -229,7 +229,8 @@ fn qc_handles_inner_roots(
     let cf = db.cf_handle("counter").unwrap();
     assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
 
-    for (k, v) in db.iterator_cf(cf, IteratorMode::Start) {
+    for item in db.iterator_cf(cf, IteratorMode::Start) {
+        let (k, v) = item.unwrap();
         println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
     }
     assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);

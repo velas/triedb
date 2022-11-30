@@ -5,6 +5,7 @@ use derivative::*;
 use std::borrow::Borrow;
 
 use crate::merkle::MerkleNode;
+
 use log::*;
 use primitive_types::H256;
 use rlp::Rlp;
@@ -15,6 +16,7 @@ pub type DB = OptimisticTransactionDB;
 
 use crate::{
     cache::CachedHandle,
+    cache::{AsyncCachedDatabaseHandle, AsyncCachedHandle},
     gc::{DbCounter, ReachableHashes},
     CachedDatabaseHandle,
 };
@@ -184,6 +186,8 @@ macro_rules! retry {
     };
 }
 pub type RocksHandle<'a, D> = CachedHandle<RocksDatabaseHandle<'a, D>>;
+pub type AsyncRocksHandle<D> = AsyncCachedHandle<AsyncCachedDatabaseHandle<D>>;
+pub type AsyncRocksDatabaseHandle<D> = AsyncCachedDatabaseHandle<D>;
 
 impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
     // Insert value into db.
@@ -587,6 +591,7 @@ mod tests {
         assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
 
         println!("Debug cf");
+
         for item in db.iterator_cf(cf, IteratorMode::Start) {
             let (k, v) = item.unwrap();
             println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
