@@ -1,7 +1,10 @@
 //! Merkle trie implementation for Ethereum.
 
 use std::{
+    array::TryFromSliceError,
+    borrow::Borrow,
     collections::{HashMap, VecDeque},
+    convert::TryInto,
     sync::Arc,
 };
 
@@ -37,16 +40,16 @@ pub trait CachedDatabaseHandle {
 /// An immutable database handle.
 pub trait Database {
     /// Get a raw value from the database.
-    fn get(&self, key: H256) -> &[u8];
+    fn get(&self, key: CowH256) -> &[u8];
 }
 
 impl<'a, T: Database> Database for &'a T {
-    fn get(&self, key: H256) -> &[u8] {
+    fn get(&self, key: CowH256) -> &[u8] {
         Database::get(*self, key)
     }
 }
 impl<T: Database> Database for Arc<T> {
-    fn get(&self, key: H256) -> &[u8] {
+    fn get(&self, key: CowH256) -> &[u8] {
         Database::get(self.as_ref(), key)
     }
 }
@@ -79,7 +82,7 @@ impl Change {
             let subnode = rlp::encode(node).to_vec();
             let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
             self.add_raw(hash, subnode);
-            MerkleValue::Hash(hash)
+            MerkleValue::Hash(CowH256::Owned(hash))
         }
     }
 
@@ -130,7 +133,7 @@ pub fn insert<D: Database>(root: H256, database: &D, key: &[u8], value: &[u8]) -
     let (new, subchange) = if root == empty_trie_hash!() {
         insert::insert_by_empty(nibble, value)
     } else {
-        let old = <MerkleNode as fastrlp::Decodable>::decode(&mut (database.get(root)))
+        let old = <MerkleNode as fastrlp::Decodable>::decode(&mut (database.get(root.into())))
             .expect("Unable to decode Node value");
         change.remove_raw(root);
         insert::insert_by_node(old, nibble, value, database)
@@ -165,7 +168,7 @@ pub fn delete<D: Database>(root: H256, database: &D, key: &[u8]) -> (H256, Chang
     let (new, subchange) = if root == empty_trie_hash!() {
         return (root, change);
     } else {
-        let old = <MerkleNode as fastrlp::Decodable>::decode(&mut (database.get(root)))
+        let old = <MerkleNode as fastrlp::Decodable>::decode(&mut (database.get(root.into())))
             .expect("Unable to decode Node value");
         change.remove_raw(root);
         delete::delete_by_node(old, nibble, database)
@@ -211,9 +214,61 @@ pub fn get<'a, 'b, D: Database>(root: H256, database: &'a D, key: &'b [u8]) -> O
         None
     } else {
         let nibble = nibble::from_key(key);
-        let node = <MerkleNode as fastrlp::Decodable>::decode(&mut (database.get(root)))
+        let node = <MerkleNode as fastrlp::Decodable>::decode(&mut (database.get(root.into())))
             .expect("Unable to decode Node value");
         get::get_by_node(node, nibble, database)
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub struct BorrowedH256<'a> {
+    pub bytes: &'a [u8; 32],
+}
+impl<'a> BorrowedH256<'a> {
+    pub fn try_from_slice(bytes: &'a [u8]) -> Result<Self, TryFromSliceError> {
+        Ok(Self {
+            bytes: bytes[..32].try_into()?,
+        })
+    }
+}
+
+impl<'a> From<BorrowedH256<'a>> for H256 {
+    fn from(borrowed: BorrowedH256<'a>) -> H256 {
+        let mut to = [0; 32];
+        to.copy_from_slice(borrowed.bytes);
+        H256(to)
+    }
+}
+
+impl<'a> From<&'a H256> for BorrowedH256<'a> {
+    fn from(hash: &'a H256) -> BorrowedH256<'a> {
+        Self { bytes: &hash.0 }
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub enum CowH256<'a> {
+    Owned(H256),
+    Borrowed(BorrowedH256<'a>),
+}
+
+impl<'a> From<&'a H256> for CowH256<'a> {
+    fn from(hash: &'a H256) -> CowH256<'a> {
+        Self::Borrowed(hash.into())
+    }
+}
+impl<'a> From<H256> for CowH256<'a> {
+    fn from(hash: H256) -> CowH256<'a> {
+        Self::Owned(hash)
+    }
+}
+
+impl<'a> CowH256<'a> {
+    pub fn into_owned(&self) -> H256 {
+        match self {
+            CowH256::Owned(o) => *o,
+            CowH256::Borrowed(b) => (*b).into(),
+        }
     }
 }
 

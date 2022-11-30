@@ -59,6 +59,7 @@ fn bench_insert_backends(
     (bench_seed, setup_seed): ([u8; 32], [u8; 32]),
     (bench_amount, setup_amount): (usize, usize),
 ) {
+    let prep: Vec<_> = rand_collection(setup_seed, setup_amount).collect();
     let test_data: Vec<_> = rand_collection(bench_seed, bench_amount).collect();
 
     c.bench_function("bench insert BTreeMap", |b| {

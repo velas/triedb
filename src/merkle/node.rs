@@ -1,4 +1,4 @@
-use std::borrow::Borrow;
+use std::{array::TryFromSliceError, borrow::Borrow, convert::TryInto, mem::MaybeUninit};
 
 use bytes::Buf;
 use fastrlp::{Header, Rlp as FastRlp};
@@ -6,7 +6,7 @@ use primitive_types::H256;
 use rlp::{self, Encodable, Prototype, Rlp, RlpStream};
 
 use super::nibble::{self, NibblePair, NibbleType, NibbleVec};
-use crate::Result;
+use crate::{BorrowedH256, CowH256, Result};
 
 /// Represents a merkle node.
 #[derive(Debug, Eq)]
@@ -130,7 +130,7 @@ impl<'a> Encodable for MerkleNode<'a> {
 pub enum MerkleValue<'a> {
     Empty,
     Full(Box<MerkleNode<'a>>),
-    Hash(H256),
+    Hash(CowH256<'a>),
 }
 
 impl<'de> fastrlp::Decodable<'de> for MerkleValue<'de> {
@@ -145,10 +145,9 @@ impl<'de> fastrlp::Decodable<'de> for MerkleValue<'de> {
 
             // TODO: Add posibility to make inline decoding.
             if h.payload_length == 32 {
-                let mut to = [0_u8; 32];
-                to.copy_from_slice(&buf[..32]);
+                let to = BorrowedH256::try_from_slice(&buf[..32]).unwrap();
                 buf.advance(32);
-                return Ok(MerkleValue::Hash(H256(to)));
+                return Ok(MerkleValue::Hash(CowH256::Borrowed(to)));
             }
         } else if h.payload_length < 32 {
             let node: MerkleNode<'de> = MerkleNode::fast_decode_with_header(buf, h)?;
@@ -173,7 +172,7 @@ impl<'a> Encodable for MerkleValue<'a> {
                 s.append(node);
             }
             MerkleValue::Hash(ref hash) => {
-                s.append(hash);
+                s.append(&hash.into_owned());
             }
         }
     }

@@ -383,7 +383,7 @@ mod tests {
 
         // CHECK CHILDS counts
         println!("root={}", root_guard.root);
-        let node = collection.database.get(root_guard.root);
+        let node = collection.database.get(root_guard.root.into());
         let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*node)
             .expect("Unable to decode Merkle Node");
         let childs = ReachableHashes::collect(&node, no_childs).childs();
@@ -406,7 +406,7 @@ mod tests {
         let another_root_guard = collection.apply_increase(patch, no_childs);
         assert_eq!(collection.database.gc_count(another_root_guard.root), 1);
 
-        let node = collection.database.get(another_root_guard.root);
+        let node = collection.database.get(another_root_guard.root.into());
         let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*node)
             .expect("Unable to decode Merkle Node");
         let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();
@@ -446,7 +446,7 @@ mod tests {
 
         collection.database.gc_pin_root(latest_root_guard.root);
 
-        let node = collection.database.get(latest_root_guard.root);
+        let node = collection.database.get(latest_root_guard.root.into());
         let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*node)
             .expect("Unable to decode Merkle Node");
         let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();

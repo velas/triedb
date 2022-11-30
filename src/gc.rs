@@ -8,7 +8,7 @@ use crate::{
     Database, TrieMut,
 };
 
-use crate::MerkleNode;
+use crate::{CowH256, MerkleNode};
 
 //use asterix to avoid unresolved import https://github.com/rust-analyzer/rust-analyzer/issues/7459#issuecomment-907714513
 use dashmap::{mapref::entry::Entry, DashMap};
@@ -59,7 +59,7 @@ where
         match merkle_value {
             MerkleValue::Empty => {}
             MerkleValue::Full(merkle_node) => self.process_node(merkle_node),
-            MerkleValue::Hash(hash) => self.childs.push(*hash),
+            MerkleValue::Hash(hash) => self.childs.push(hash.into_owned()),
         }
     }
 
@@ -204,8 +204,8 @@ impl<D: Database> TrieMut for DatabaseTrieMut<D> {
 }
 
 impl<D: Database> Database for DatabaseTrieMut<D> {
-    fn get(&self, key: H256) -> &[u8] {
-        if let Some(bytes) = self.change_data.get(&key) {
+    fn get(&self, key: CowH256) -> &[u8] {
+        if let Some(bytes) = self.change_data.get(&key.into_owned()) {
             bytes
         } else {
             self.database.borrow().get(key)
@@ -533,7 +533,7 @@ pub mod tests {
 
         // CHECK CHILDS counts
         println!("root={}", root_guard.root);
-        let node = collection.database.get(root_guard.root);
+        let node = collection.database.get(root_guard.root.into());
         let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*node)
             .expect("Unable to decode Merkle Node");
         let childs = ReachableHashes::collect(&node, no_childs).childs();
@@ -556,7 +556,7 @@ pub mod tests {
         let another_root = collection.apply_increase(patch, no_childs);
         assert_eq!(collection.database.gc_count(another_root.root), 1);
 
-        let node = collection.database.get(another_root.root);
+        let node = collection.database.get(another_root.root.into());
         let rlp = Rlp::new(node);
         let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*node)
             .expect("Unable to decode Merkle Node");
@@ -595,7 +595,7 @@ pub mod tests {
 
         let latest_root = collection.apply_increase(patch, no_childs);
 
-        let node = collection.database.get(latest_root.root);
+        let node = collection.database.get(latest_root.root.into());
         let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*node)
             .expect("Unable to decode Merkle Node");
         let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();

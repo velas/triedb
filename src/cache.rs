@@ -5,7 +5,7 @@ use std::{
 
 use primitive_types::H256;
 
-use crate::{CachedDatabaseHandle, Database};
+use crate::{CachedDatabaseHandle, CowH256, Database};
 
 #[derive(Default, Debug)]
 pub struct CachedHandle<D> {
@@ -36,7 +36,8 @@ impl<D: CachedDatabaseHandle> CachedHandle<D> {
 }
 
 impl<D: CachedDatabaseHandle> Database for CachedHandle<D> {
-    fn get(&self, key: H256) -> &[u8] {
+    fn get(&self, key: CowH256) -> &[u8] {
+        let key = key.into_owned();
         if !self.cache.contains_key(key) {
             self.cache.insert(key, self.db.get(key))
         } else {

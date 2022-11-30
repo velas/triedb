@@ -2,10 +2,11 @@ use std::collections::HashMap;
 
 use primitive_types::H256;
 
-use crate::Database;
+use crate::{CowH256, Database};
 
 impl Database for HashMap<H256, Vec<u8>> {
-    fn get(&self, key: H256) -> &[u8] {
+    fn get(&self, key: CowH256) -> &[u8] {
+        let key = key.into_owned();
         self.get(&key)
             .unwrap_or_else(|| panic!("Key {} not found", key))
     }
