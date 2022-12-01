@@ -30,6 +30,8 @@ mod walker;
 
 use ops::{build, delete, get, insert};
 
+use merkle::nibble::Entry;
+
 type Result<T> = std::result::Result<T, error::Error>;
 
 pub trait CachedDatabaseHandle {
@@ -140,7 +142,7 @@ pub fn insert<D: Database>(root: H256, database: &D, key: &[u8], value: &[u8]) -
         let old =
             MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
         change.remove_raw(root);
-        insert::insert_by_node(old, nibble, value, database)
+        insert::insert_by_node(old, Entry::new(nibble, value), database)
     };
     change.merge(&subchange);
     change.add_node(&new);
