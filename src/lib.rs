@@ -9,7 +9,6 @@ use std::{
 };
 
 use primitive_types::H256;
-use rlp::Rlp;
 use sha3::{Digest, Keccak256};
 
 use merkle::{nibble, MerkleNode, MerkleValue};
@@ -69,7 +68,7 @@ impl Change {
 
     /// Change to add a new node.
     pub fn add_node(&mut self, node: &MerkleNode<'_>) {
-        let subnode = rlp::encode(node).to_vec();
+        let subnode = crate::encode(node);
         let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
         self.add_raw(hash, subnode);
     }
@@ -79,7 +78,7 @@ impl Change {
         if node.inlinable() {
             MerkleValue::Full(Box::new(node.clone()))
         } else {
-            let subnode = rlp::encode(node).to_vec();
+            let subnode = crate::encode(node);
             let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
             self.add_raw(hash, subnode);
             MerkleValue::Hash(CowH256::Owned(hash))
@@ -97,7 +96,7 @@ impl Change {
         if node.inlinable() {
             false
         } else {
-            let subnode = rlp::encode(node).to_vec();
+            let subnode = crate::encode(node);
             let hash = H256::from_slice(Keccak256::digest(&subnode).as_slice());
             self.remove_raw(hash);
             true
@@ -141,7 +140,7 @@ pub fn insert<D: Database>(root: H256, database: &D, key: &[u8], value: &[u8]) -
     change.merge(&subchange);
     change.add_node(&new);
 
-    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new)).as_slice());
+    let hash = H256::from_slice(Keccak256::digest(&crate::encode(&new)).as_slice());
     (hash, change)
 }
 
@@ -155,7 +154,7 @@ pub fn insert_empty<D: Database>(key: &[u8], value: &[u8]) -> (H256, Change) {
     change.merge(&subchange);
     change.add_node(&new);
 
-    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new)).as_slice());
+    let hash = H256::from_slice(Keccak256::digest(&crate::encode(&new)).as_slice());
     (hash, change)
 }
 
@@ -179,7 +178,7 @@ pub fn delete<D: Database>(root: H256, database: &D, key: &[u8]) -> (H256, Chang
         Some(new) => {
             change.add_node(&new);
 
-            let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&new)).as_slice());
+            let hash = H256::from_slice(Keccak256::digest(&crate::encode(&new)).as_slice());
             (hash, change)
         }
         None => (empty_trie_hash!(), change),
@@ -204,7 +203,7 @@ pub fn build(map: &HashMap<Vec<u8>, Vec<u8>>) -> (H256, Change) {
     change.merge(&subchange);
     change.add_node(&node);
 
-    let hash = H256::from_slice(Keccak256::digest(&rlp::encode(&node)).as_slice());
+    let hash = H256::from_slice(Keccak256::digest(&crate::encode(&node)).as_slice());
     (hash, change)
 }
 
@@ -218,6 +217,12 @@ pub fn get<'a, 'b, D: Database>(root: H256, database: &'a D, key: &'b [u8]) -> O
             .expect("Unable to decode Node value");
         get::get_by_node(node, nibble, database)
     }
+}
+
+pub fn encode<V: fastrlp::Encodable>(val: &V) -> Vec<u8> {
+    let mut vec_buffer = Vec::with_capacity(val.length());
+    val.encode(&mut vec_buffer);
+    vec_buffer
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
@@ -246,10 +251,24 @@ impl<'a> From<&'a H256> for BorrowedH256<'a> {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[derive(Clone, Copy, Eq, Debug)]
 pub enum CowH256<'a> {
     Owned(H256),
     Borrowed(BorrowedH256<'a>),
+}
+impl<'a> CowH256<'a> {
+    fn as_bytes(&self) -> &[u8; 32] {
+        match self {
+            Self::Owned(h) => &h.0,
+            Self::Borrowed(b) => b.bytes,
+        }
+    }
+}
+
+impl<'a, 'b> PartialEq<CowH256<'b>> for CowH256<'a> {
+    fn eq(&self, other: &CowH256<'b>) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
 }
 
 impl<'a> From<&'a H256> for CowH256<'a> {

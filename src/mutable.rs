@@ -37,45 +37,54 @@ impl<T: TrieMut> AnyTrieMut<T> {
     }
 
     /// Insert a value to the trie.
-    pub fn insert<K: rlp::Encodable, V: rlp::Encodable>(&mut self, key: &K, value: &V) {
-        let key = rlp::encode(key).to_vec();
-        let value = rlp::encode(value).to_vec();
+    pub fn insert<K: fastrlp::Encodable, V: fastrlp::Encodable>(&mut self, key: &K, value: &V) {
+        let key = crate::encode(key).to_vec();
+        let value = crate::encode(value).to_vec();
 
         self.0.insert(&key, &value)
     }
 
     /// Delete a value in the trie.
-    pub fn delete<K: rlp::Encodable>(&mut self, key: &K) {
-        let key = rlp::encode(key).to_vec();
+    pub fn delete<K: fastrlp::Encodable>(&mut self, key: &K) {
+        let key = crate::encode(key).to_vec();
 
         self.0.delete(&key)
     }
 
     /// Get a value in the trie.
-    pub fn get<K: rlp::Encodable, V: rlp::Decodable>(&self, key: &K) -> Option<V> {
-        let key = rlp::encode(key).to_vec();
+    pub fn get<K: fastrlp::Encodable, V: for<'a> fastrlp::Decodable<'a>>(
+        &self,
+        key: &K,
+    ) -> Option<V> {
+        let key = crate::encode(key).to_vec();
         self.0
             .get(&key)
-            .map(|value| rlp::decode(&value).expect("Unable to decode value"))
+            .map(|value| fastrlp::Decodable::decode(&mut &*value).expect("Unable to decode value"))
     }
 }
 
 /// Represents a mutable trie that is operated on a fixed RLP value type.
 #[derive(Clone, Debug)]
-pub struct FixedTrieMut<T: TrieMut, K: rlp::Encodable, V: rlp::Encodable + rlp::Decodable>(
-    AnyTrieMut<T>,
-    PhantomData<(K, V)>,
-);
+pub struct FixedTrieMut<
+    T: TrieMut,
+    K: fastrlp::Encodable,
+    V: fastrlp::Encodable + for<'r> fastrlp::Decodable<'r>,
+>(AnyTrieMut<T>, PhantomData<(K, V)>);
 
-impl<T: TrieMut + Default, K: rlp::Encodable, V: rlp::Encodable + rlp::Decodable> Default
-    for FixedTrieMut<T, K, V>
+impl<
+        T: TrieMut + Default,
+        K: fastrlp::Encodable,
+        V: fastrlp::Encodable + for<'r> fastrlp::Decodable<'r>,
+    > Default for FixedTrieMut<T, K, V>
 {
     fn default() -> Self {
         FixedTrieMut::new(T::default())
     }
 }
 
-impl<T: TrieMut, K: rlp::Encodable, V: rlp::Encodable + rlp::Decodable> FixedTrieMut<T, K, V> {
+impl<T: TrieMut, K: fastrlp::Encodable, V: fastrlp::Encodable + for<'r> fastrlp::Decodable<'r>>
+    FixedTrieMut<T, K, V>
+{
     /// Into the underlying TrieMut object.
     #[allow(clippy::wrong_self_convention)]
     pub fn to_trie(self) -> T {
@@ -184,8 +193,8 @@ impl<T: TrieMut> AnySecureTrieMut<T> {
     }
 
     /// Insert a value to the trie.
-    pub fn insert<K: AsRef<[u8]>, V: rlp::Encodable>(&mut self, key: &K, value: &V) {
-        self.0.insert(&key, &rlp::encode(value))
+    pub fn insert<K: AsRef<[u8]>, V: fastrlp::Encodable>(&mut self, key: &K, value: &V) {
+        self.0.insert(&key, &crate::encode(value))
     }
 
     /// Delete a value in the trie.
@@ -194,30 +203,36 @@ impl<T: TrieMut> AnySecureTrieMut<T> {
     }
 
     /// Get a value in the trie.
-    pub fn get<K: AsRef<[u8]>, V: rlp::Decodable>(&self, key: &K) -> Option<V> {
+    pub fn get<K: AsRef<[u8]>, V: for<'r> fastrlp::Decodable<'r>>(&self, key: &K) -> Option<V> {
         self.0
             .get(&key)
-            .map(|value| rlp::decode(&value).expect("Unable to decode value"))
+            .map(|value| fastrlp::Decodable::decode(&mut &*value).expect("Unable to decode value"))
     }
 }
 
 /// Represents a secure mutable trie where the key is hashed, and
 /// operated on a fixed RLP value type.
 #[derive(Clone, Debug)]
-pub struct FixedSecureTrieMut<T: TrieMut, K: AsRef<[u8]>, V: rlp::Encodable + rlp::Decodable>(
-    AnySecureTrieMut<T>,
-    PhantomData<(K, V)>,
-);
+pub struct FixedSecureTrieMut<
+    T: TrieMut,
+    K: AsRef<[u8]>,
+    V: fastrlp::Encodable + for<'r> fastrlp::Decodable<'r>,
+>(AnySecureTrieMut<T>, PhantomData<(K, V)>);
 
-impl<T: TrieMut + Default, K: AsRef<[u8]>, V: rlp::Encodable + rlp::Decodable> Default
-    for FixedSecureTrieMut<T, K, V>
+impl<
+        T: TrieMut + Default,
+        K: AsRef<[u8]>,
+        V: fastrlp::Encodable + for<'r> fastrlp::Decodable<'r>,
+    > Default for FixedSecureTrieMut<T, K, V>
 {
     fn default() -> Self {
         FixedSecureTrieMut::new(T::default())
     }
 }
 
-impl<T: TrieMut, K: AsRef<[u8]>, V: rlp::Encodable + rlp::Decodable> FixedSecureTrieMut<T, K, V> {
+impl<T: TrieMut, K: AsRef<[u8]>, V: fastrlp::Encodable + for<'r> fastrlp::Decodable<'r>>
+    FixedSecureTrieMut<T, K, V>
+{
     /// Into the underlying TrieMut object.
     #[allow(clippy::wrong_self_convention)]
     pub fn to_trie(self) -> T {

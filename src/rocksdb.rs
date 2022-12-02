@@ -7,7 +7,6 @@ use std::borrow::Borrow;
 use crate::merkle::MerkleNode;
 use log::*;
 use primitive_types::H256;
-use rlp::Rlp;
 use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB, Transaction};
 
 // We use optimistica transaction, to allow regular `get` operation execute without lock timeouts.
@@ -321,7 +320,6 @@ mod tests {
     use hex_literal::hex;
     use quickcheck::TestResult;
     use quickcheck_macros::quickcheck;
-    use rlp::Rlp;
     use rocksdb_lib::IteratorMode;
     use rocksdb_lib::{ColumnFamilyDescriptor, Options};
     use serde::{Deserialize, Serialize};

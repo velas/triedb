@@ -15,7 +15,6 @@ use dashmap::{mapref::entry::Entry, DashMap};
 use derivative::*;
 use log::*;
 use primitive_types::H256;
-use rlp::Rlp;
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -425,7 +424,6 @@ pub mod tests {
         merkle::nibble::{into_key, Nibble},
         MerkleNode,
     };
-    use rlp::Rlp;
 
     use quickcheck::TestResult;
     use quickcheck_macros::quickcheck;
@@ -557,7 +555,6 @@ pub mod tests {
         assert_eq!(collection.database.gc_count(another_root.root), 1);
 
         let node = collection.database.get(another_root.root.into());
-        let rlp = Rlp::new(node);
         let node = <MerkleNode as fastrlp::Decodable>::decode(&mut &*node)
             .expect("Unable to decode Merkle Node");
         let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();

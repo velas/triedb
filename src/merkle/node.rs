@@ -1,7 +1,7 @@
 use std::{array::TryFromSliceError, borrow::Borrow, convert::TryInto, mem::MaybeUninit};
 
 use bytes::Buf;
-use fastrlp::{Header, Rlp as FastRlp};
+use fastrlp::{Encodable as _, Header, Rlp as FastRlp};
 use primitive_types::H256;
 use rlp::{self, Encodable, Prototype, Rlp, RlpStream};
 
@@ -69,7 +69,7 @@ impl<'a> MerkleNode<'a> {
 
     /// Whether the node can be inlined to a merkle value.
     pub fn inlinable(&self) -> bool {
-        rlp::encode(self).to_vec().len() < 32
+        <Self as fastrlp::Encodable>::length(self) < 32
     }
 }
 
@@ -125,18 +125,113 @@ impl<'a> Encodable for MerkleNode<'a> {
     }
 }
 
+impl<'a> fastrlp::Encodable for MerkleNode<'a> {
+    fn encode(&self, out: &mut dyn bytes::BufMut) {
+        match *self {
+            MerkleNode::Leaf(ref nibble, value) => {
+                let pair = NibblePair(nibble.clone(), NibbleType::Leaf);
+                let len = pair.length() + value.length();
+                fastrlp::Header {
+                    list: true,
+                    payload_length: len,
+                }
+                .encode(out);
+                pair.encode(out);
+                value.encode(out);
+            }
+            MerkleNode::Extension(ref nibble, ref value) => {
+                let pair = NibblePair(nibble.clone(), NibbleType::Extension);
+                let len = pair.length() + value.length();
+                fastrlp::Header {
+                    list: true,
+                    payload_length: len,
+                }
+                .encode(out);
+                pair.encode(out);
+                value.encode(out);
+            }
+            MerkleNode::Branch(ref nodes, value) => {
+                let mut len = 0;
+                for node in nodes.iter() {
+                    len += node.length()
+                }
+                len += value.unwrap_or_default().length();
+
+                fastrlp::Header {
+                    list: true,
+                    payload_length: len,
+                }
+                .encode(out);
+                for node in nodes.iter() {
+                    node.encode(out);
+                }
+                value.unwrap_or_default().encode(out)
+            }
+        }
+    }
+    fn length(&self) -> usize {
+        match *self {
+            MerkleNode::Leaf(ref nibble, value) => {
+                let pair = NibblePair(nibble.clone(), NibbleType::Leaf);
+                let len = pair.length() + value.length();
+                fastrlp::Header {
+                    list: true,
+                    payload_length: len,
+                }
+                .length()
+                    + len
+            }
+            MerkleNode::Extension(ref nibble, ref value) => {
+                let pair = NibblePair(nibble.clone(), NibbleType::Extension);
+                let len = pair.length() + value.length();
+                fastrlp::Header {
+                    list: true,
+                    payload_length: len,
+                }
+                .length()
+                    + len
+            }
+            MerkleNode::Branch(ref nodes, value) => {
+                let mut len = 0;
+                for node in nodes.iter() {
+                    len += node.length()
+                }
+
+                len += value.unwrap_or_default().length();
+
+                fastrlp::Header {
+                    list: true,
+                    payload_length: len,
+                }
+                .length()
+                    + len
+            }
+        }
+    }
+}
+
 /// Represents a merkle value.
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, Clone)]
 pub enum MerkleValue<'a> {
     Empty,
     Full(Box<MerkleNode<'a>>),
     Hash(CowH256<'a>),
 }
 
+impl<'a, 'b> PartialEq<MerkleValue<'b>> for MerkleValue<'a> {
+    fn eq(&self, other: &MerkleValue<'b>) -> bool {
+        match (self, other) {
+            (MerkleValue::Empty, MerkleValue::Empty) => true,
+            (MerkleValue::Full(v1), MerkleValue::Full(v2)) if v1 == v2 => true,
+            (MerkleValue::Hash(v1), MerkleValue::Hash(v2)) if v1 == v2 => true,
+            _ => false,
+        }
+    }
+}
+
 impl<'de> fastrlp::Decodable<'de> for MerkleValue<'de> {
     fn decode(buf: &mut &'de [u8]) -> Result<Self, fastrlp::DecodeError> {
         let h = fastrlp::Header::decode(buf)?;
-        // dbg!(&h);
 
         if !h.list {
             if h.payload_length == 0 {
@@ -178,6 +273,41 @@ impl<'a> Encodable for MerkleValue<'a> {
     }
 }
 
+impl<'a> fastrlp::Encodable for MerkleValue<'a> {
+    fn encode(&self, out: &mut dyn bytes::BufMut) {
+        match *self {
+            MerkleValue::Empty => fastrlp::Header {
+                payload_length: 0,
+                list: false,
+            }
+            .encode(out),
+            MerkleValue::Hash(ref hash) => hash.into_owned().encode(out),
+            MerkleValue::Full(ref node) => node.encode(out),
+        }
+    }
+    fn length(&self) -> usize {
+        match *self {
+            MerkleValue::Empty => fastrlp::Header {
+                payload_length: 0,
+                list: false,
+            }
+            .length(),
+            MerkleValue::Hash(_) => {
+                fastrlp::Header {
+                    payload_length: 32,
+                    list: false,
+                }
+                .length()
+                    + 32
+            }
+            MerkleValue::Full(ref node) => {
+                let node: &MerkleNode = node.borrow();
+                node.length() // node include header
+            }
+        }
+    }
+}
+
 pub const fn empty_nodes() -> [MerkleValue<'static>; 16] {
     [
         MerkleValue::Empty,
@@ -205,6 +335,7 @@ mod tests {
 
     use super::*;
     use hexutil::read_hex;
+    use sha3::Keccak256;
 
     trait LifetimeFamily {
         type Family<'a>: fastrlp::Decodable<'a> + Debug + PartialEq<Self>;
@@ -212,22 +343,97 @@ mod tests {
     impl<'b> LifetimeFamily for MerkleNode<'b> {
         type Family<'a> = MerkleNode<'a>;
     }
+    impl<'b> LifetimeFamily for MerkleValue<'b> {
+        type Family<'a> = MerkleValue<'a>;
+    }
+    impl LifetimeFamily for NibblePair {
+        type Family<'a> = NibblePair;
+    }
 
     fn check_roundtrip<T>(v: &T)
     where
-        T: Encodable + Debug + LifetimeFamily,
+        T: Encodable + Debug + LifetimeFamily + fastrlp::Encodable,
         for<'de> <T as LifetimeFamily>::Family<'de>: fastrlp::Decodable<'de> + PartialEq<T> + Debug,
     {
         use fastrlp::Decodable;
         let rlp_raw = rlp::encode(v);
+        dbg!(hex::encode(&rlp_raw));
         let decoded_node = <<T as LifetimeFamily>::Family<'_>>::decode(&mut (&*rlp_raw)).unwrap();
         assert_eq!(&decoded_node, v);
+
+        let mut vec_buf = Vec::with_capacity(v.length());
+
+        v.encode(&mut vec_buf);
+        dbg!(hex::encode(&vec_buf));
+        let decoded_node = <<T as LifetimeFamily>::Family<'_>>::decode(&mut (&*vec_buf)).unwrap();
+        assert_eq!(&decoded_node, v);
     }
+
+    #[test]
+    fn encode_decode_nibble_pair() {
+        let key = [6, 7, 8, 9, 10, 11, 12, 13, 14];
+        let pair = NibblePair(nibble::from_key(&key), NibbleType::Leaf);
+        check_roundtrip(&pair);
+
+        let pair = NibblePair(nibble::from_key(&key), NibbleType::Extension);
+        check_roundtrip(&pair);
+        let key = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+        let pair = NibblePair(nibble::from_key(&key), NibbleType::Leaf);
+        check_roundtrip(&pair);
+
+        let pair = NibblePair(nibble::from_key(&key), NibbleType::Extension);
+        check_roundtrip(&pair);
+        let key = [];
+        let pair = NibblePair(nibble::from_key(&key), NibbleType::Leaf);
+        check_roundtrip(&pair);
+
+        let pair = NibblePair(nibble::from_key(&key), NibbleType::Extension);
+        check_roundtrip(&pair);
+    }
+
     #[test]
     fn encode_decode() {
         let key = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-        let val = [1, 2, 3, 4, 5];
-        let node: MerkleNode<'_> = MerkleNode::Leaf(nibble::from_key(&key), &val);
+        let bytes = [1, 2, 3, 4, 5];
+        let node: MerkleNode<'_> = MerkleNode::Leaf(nibble::from_key(&key), &bytes);
+        check_roundtrip(&node);
+
+        let merkle_value = MerkleValue::Empty;
+        check_roundtrip(&merkle_value);
+
+        let merkle_value = MerkleValue::Hash(H256::repeat_byte(1).into());
+        check_roundtrip(&merkle_value);
+
+        let key = [15];
+        let bytes = [1, 2, 3];
+        let small_leaf: MerkleNode<'_> = MerkleNode::Leaf(nibble::from_key(&key), &bytes);
+        assert!(small_leaf.inlinable());
+
+        let merkle_value = MerkleValue::Full(Box::new(small_leaf));
+        check_roundtrip(&merkle_value);
+        let node: MerkleNode<'_> =
+            MerkleNode::Extension(nibble::from_key(&key), merkle_value.clone());
+        check_roundtrip(&node);
+
+        let mut values = empty_nodes();
+        values[5] = merkle_value;
+        let node = MerkleNode::Branch(values, Some(&bytes));
+        check_roundtrip(&node);
+
+        let key = [];
+        let bytes = [1];
+        let small_leaf: MerkleNode<'_> = MerkleNode::Leaf(nibble::from_key(&key), &bytes);
+        assert!(small_leaf.inlinable());
+
+        let merkle_value = MerkleValue::Full(Box::new(small_leaf));
+        check_roundtrip(&merkle_value);
+        let node: MerkleNode<'_> =
+            MerkleNode::Extension(nibble::from_key(&key), merkle_value.clone());
+        check_roundtrip(&node);
+
+        let mut values = empty_nodes();
+        values[5] = merkle_value;
+        let node = MerkleNode::Branch(values, Some(&bytes));
         check_roundtrip(&node);
     }
 

@@ -99,7 +99,7 @@ pub fn insert_by_value<'a, D: Database>(
         MerkleValue::Hash(h) => {
             let mut data = database.get(h);
             let sub_node = <MerkleNode as fastrlp::Decodable>::decode(&mut data)
-                .expect("Unable to decide Node value");
+                .expect("Unable to decode Node value");
             change.remove_node(&sub_node);
             let (new_node, subchange) = insert_by_node(sub_node, nibble, value, database);
             change.merge(&subchange);

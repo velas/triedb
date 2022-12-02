@@ -137,7 +137,7 @@ pub fn into_key(nibble: NibbleSlice) -> Vec<u8> {
 // Check if this rlp list consume all buffer, with given number of items.
 pub(crate) fn is_list_consume_rlp(mut buf: &[u8], num: usize) -> bool {
     let buf = &mut buf;
-    for i in 0..num {
+    for _i in 0..num {
         let Ok(h) = fastrlp::Header::decode(buf) else {
             return false
         };
@@ -149,7 +149,24 @@ pub(crate) fn is_list_consume_rlp(mut buf: &[u8], num: usize) -> bool {
     buf.is_empty()
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct NibblePair(pub NibbleVec, pub NibbleType);
+
+impl NibblePair {
+    // 1 byte prefix + ceil(len_in_nible / 2)
+    // exampe:
+    // 1 nibble  = 1 + 0
+    // 2 nibbles = 1 + 1
+    // 3 nibbles = 1 + 1
+    // ...
+    fn payload_length(&self) -> usize {
+        1 + self.0.len() / 2
+    }
+    // If we have zero or one nible, it's byte representation would be less < EMPTY_STRING_CODE(0x80), and be serialized as single byte without length prefix
+    fn skip_rlp_header(&self) -> bool {
+        self.payload_length() == 1
+    }
+}
 
 impl<'de> fastrlp::Decodable<'de> for NibblePair {
     fn decode(buf: &mut &'de [u8]) -> Result<NibblePair, fastrlp::DecodeError> {
@@ -190,36 +207,133 @@ impl<'de> fastrlp::Decodable<'de> for NibblePair {
     }
 }
 
-/// Decode a nibble from RLP.
-pub fn decode(rlp: &Rlp) -> Result<(NibbleVec, NibbleType)> {
-    let mut vec = NibbleVec::new();
-
-    let data = rlp.data()?;
-    let start_odd = data[0] & 0b00010000 == 0b00010000;
-    let start_index = if start_odd { 1 } else { 2 };
-    let is_leaf = data[0] & 0b00100000 == 0b00100000;
-
-    let len = data.len() * 2;
-
-    for i in start_index..len {
-        if i & 1 == 0 {
+impl fastrlp::Encodable for NibblePair {
+    fn encode(&self, out: &mut dyn bytes::BufMut) {
+        let payload_length = self.payload_length();
+        if !self.skip_rlp_header() {
+            fastrlp::Header {
+                payload_length: payload_length,
+                list: false,
+            }
+            .encode(out);
+        }
+        let typ = match self.1 {
+            NibbleType::Leaf => 0b00100000,
+            NibbleType::Extension => 0b00000000,
+        };
+        if self.0.len() % 2 == 0 {
             // even
-            vec.push(((data[i / 2] & 0xf0) >> 4).into());
+            out.put_u8(0b00000000 | typ);
+
+            let mut last_u8 = 0;
+            for (i, val) in self.0.iter().enumerate() {
+                let v: u8 = (*val).into();
+                if i % 2 == 0 {
+                    last_u8 = v << 4;
+                } else {
+                    last_u8 |= v;
+                    out.put_u8(last_u8);
+                }
+            }
         } else {
-            vec.push((data[i / 2] & 0x0f).into());
+            let mut last_u8 = 0b00010000 | typ;
+
+            for (i, val) in self.0.iter().enumerate() {
+                let v: u8 = (*val).into();
+                if i % 2 == 0 {
+                    last_u8 |= v;
+                    out.put_u8(last_u8)
+                } else {
+                    last_u8 = v << 4;
+                }
+            }
         }
     }
-
-    Ok((
-        vec,
-        if is_leaf {
-            NibbleType::Leaf
-        } else {
-            NibbleType::Extension
-        },
-    ))
+    fn length(&self) -> usize {
+        let payload_length = self.payload_length();
+        if !self.skip_rlp_header() {
+            return fastrlp::Header {
+                payload_length,
+                list: false,
+            }
+            .length()
+                + payload_length;
+        };
+        payload_length
+    }
 }
 
+// /// Decode a nibble from RLP.
+// pub fn decode(rlp: &Rlp) -> Result<(NibbleVec, NibbleType)> {
+//     let mut vec = NibbleVec::new();
+
+//     let data = rlp.data()?;
+//     let start_odd = data[0] & 0b00010000 == 0b00010000;
+//     let start_index = if start_odd { 1 } else { 2 };
+//     let is_leaf = data[0] & 0b00100000 == 0b00100000;
+
+//     let len = data.len() * 2;
+
+//     for i in start_index..len {
+//         if i & 1 == 0 {
+//             // even
+//             vec.push(((data[i / 2] & 0xf0) >> 4).into());
+//         } else {
+//             vec.push((data[i / 2] & 0x0f).into());
+//         }
+//     }
+
+//     Ok((
+//         vec,
+//         if is_leaf {
+//             NibbleType::Leaf
+//         } else {
+//             NibbleType::Extension
+//         },
+//     ))
+// }
+
+impl rlp::Encodable for NibblePair {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        let mut ret: Vec<u8> = Vec::new();
+
+        if self.0.len() & 1 == 0 {
+            // even
+            ret.push(0b00000000);
+
+            for (i, val) in self.0.iter().enumerate() {
+                if i & 1 == 0 {
+                    let v: u8 = (*val).into();
+                    ret.push(v << 4);
+                } else {
+                    let end = ret.len() - 1;
+                    let v: u8 = (*val).into();
+                    ret[end] |= v;
+                }
+            }
+        } else {
+            ret.push(0b00010000);
+
+            for (i, val) in self.0.iter().enumerate() {
+                if i & 1 == 0 {
+                    let end = ret.len() - 1;
+                    let v: u8 = (*val).into();
+                    ret[end] |= v;
+                } else {
+                    let v: u8 = (*val).into();
+                    ret.push(v << 4);
+                }
+            }
+        }
+
+        ret[0] |= match self.1 {
+            NibbleType::Leaf => 0b00100000,
+            NibbleType::Extension => 0b00000000,
+        };
+
+        s.append(&ret);
+    }
+}
 /// Encode a nibble into the given RLP stream.
 pub fn encode(vec: NibbleSlice, typ: NibbleType, s: &mut RlpStream) {
     let mut ret: Vec<u8> = Vec::new();
