@@ -7,9 +7,8 @@ use primitive_types::H256;
 use rand::seq::index::sample;
 
 use triedb::{
-    empty_trie_hash,
+    diff, empty_trie_hash,
     gc::{testing::MapWithCounterCached, TrieCollection},
-    state_diff::DiffFinder,
     TrieMut,
 };
 
@@ -105,8 +104,13 @@ fn benchmark_same_key_range(c: &mut Criterion) {
             &params,
             |b, _params| {
                 b.iter(|| {
-                    let st = DiffFinder::new(&collection.database, no_childs);
-                    st.get_changeset(first_root.root, second_root.root).unwrap()
+                    diff(
+                        &collection.database,
+                        no_childs,
+                        first_root.root,
+                        second_root.root,
+                    )
+                    .unwrap();
                 })
             },
         );
@@ -188,8 +192,13 @@ fn benchmark_different_key_range(c: &mut Criterion) {
             &params,
             |b, _params| {
                 b.iter(|| {
-                    let st = DiffFinder::new(&collection.database, no_childs);
-                    st.get_changeset(first_root.root, second_root.root).unwrap()
+                    diff(
+                        &collection.database,
+                        no_childs,
+                        first_root.root,
+                        second_root.root,
+                    )
+                    .unwrap();
                 })
             },
         );
@@ -210,8 +219,13 @@ fn benchmark_equal_tries(c: &mut Criterion) {
 
     c.bench_function("get_changeset equal", |b| {
         b.iter(|| {
-            let st = DiffFinder::new(&collection.database, no_childs);
-            st.get_changeset(first_root.root, first_root.root).unwrap()
+            diff(
+                &collection.database,
+                no_childs,
+                first_root.root,
+                first_root.root,
+            )
+            .unwrap();
         })
     });
 }

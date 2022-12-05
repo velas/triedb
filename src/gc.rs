@@ -341,7 +341,7 @@ impl MapWithCounter {
                 *count += 1;
             })
             .or_insert(1);
-        trace!("{} count++ is {}", key, *self.counter.get(&key).unwrap());
+        trace!("{:?} count++ is {}", key, *self.counter.get(&key).unwrap());
         *self.counter.get(&key).unwrap()
     }
     fn decrease(&self, key: H256) -> usize {
@@ -356,7 +356,7 @@ impl MapWithCounter {
                 *entry.get()
             }
         };
-        trace!("{} count-- is {}", key, count);
+        trace!("{:?} count-- is {}", key, count);
         count
     }
 }
@@ -375,7 +375,7 @@ impl DbCounter for MapWithCounterCached {
             Entry::Vacant(v) => {
                 let rlp = Rlp::new(value);
                 let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-                trace!("inserting node {}=>{:?}", key, node);
+                trace!("inserting node {:?}=>{:?}", key, node);
                 for hash in ReachableHashes::collect(&node, child_extractor).childs() {
                     self.db.increase(hash);
                 }
@@ -513,7 +513,7 @@ pub mod testing {
                 Entry::Vacant(v) => {
                     let rlp = Rlp::new(value);
                     let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-                    trace!("inserting node {}=>{:?}", key, node);
+                    trace!("inserting node {:?}=>{:?}", key, node);
                     for hash in ReachableHashes::collect(&node, child_extractor).childs() {
                         self.db.increase(hash);
                     }

@@ -13,7 +13,6 @@ use merkle::{nibble, MerkleNode, MerkleValue};
 pub use rocksdb_lib;
 pub mod gc;
 pub mod merkle;
-pub mod state_diff;
 pub use memory::*;
 pub use mutable::*;
 
@@ -28,7 +27,11 @@ mod mutable;
 mod ops;
 mod walker;
 
-use ops::{build, delete, get, insert};
+pub use ops::debug::{self, draw, Child};
+pub use ops::diff::verify::{verify as verify_diff, VerifiedPatch};
+pub use ops::diff::Change as DiffChange;
+
+use ops::{build, delete, diff, get, insert};
 
 use merkle::nibble::Entry;
 
@@ -60,6 +63,24 @@ impl<T: Database> Database for Arc<T> {
 pub struct Change {
     /// Additions to the database.
     pub changes: VecDeque<(H256, Option<Vec<u8>>)>,
+}
+
+impl From<Vec<diff::Change>> for Change {
+    fn from(vec: Vec<diff::Change>) -> Self {
+        Self {
+            changes: vec
+                .into_iter()
+                .filter(|element| match element {
+                    diff::Change::Insert(..) => true,
+                    diff::Change::Removal(..) => false,
+                })
+                .map(|element| match element {
+                    diff::Change::Insert(key, val) => (key, Some(val)),
+                    diff::Change::Removal(..) => unreachable!(),
+                })
+                .collect(),
+        }
+    }
 }
 
 impl Change {
@@ -224,6 +245,21 @@ pub fn get<'a, 'b, D: Database>(root: H256, database: &'a D, key: &'b [u8]) -> O
             MerkleNode::decode(&Rlp::new(database.get(root))).expect("Unable to decode Node value");
         get::get_by_node(node, nibble, database)
     }
+}
+
+#[allow(clippy::result_unit_err)]
+pub fn diff<D, F>(
+    database: &D,
+    child_extractor: F,
+    from: H256,
+    to: H256,
+) -> std::result::Result<Vec<diff::Change>, ()>
+where
+    D: Database + Send + Sync,
+    F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + Sync,
+{
+    let diff_finder = diff::DiffFinder::new(database, child_extractor);
+    diff_finder.get_changeset(from, to)
 }
 
 #[doc(hidden)]
