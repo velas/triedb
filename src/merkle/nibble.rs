@@ -204,6 +204,28 @@ pub fn encode(vec: NibbleSlice, typ: NibbleType, s: &mut RlpStream) {
     s.append(&ret);
 }
 
+#[derive(Debug)]
+pub struct Entry<V> {
+    pub nibble: NibbleVec,
+    pub value: V,
+}
+
+impl<V> Entry<V> {
+    pub fn new(key: NibbleVec, value: V) -> Self {
+        Self { nibble: key, value }
+    }
+
+    pub fn try_map<U, F>(self, f: F) -> Option<Entry<U>>
+    where
+        F: FnOnce(V) -> Option<U>,
+    {
+        match f(self.value) {
+            Some(x) => Some(Entry::new(self.nibble, x)),
+            None => None,
+        }
+    }
+}
+
 /// Common prefix for two nibbles.
 pub fn common<'a, 'b>(a: NibbleSlice<'a>, b: NibbleSlice<'b>) -> NibbleSlice<'a> {
     let mut common_len = 0;

@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 
 use crate::{
-    merkle::{MerkleNode, MerkleValue},
+    merkle::{nibble::Entry, MerkleNode, MerkleValue},
     Database,
 };
 use primitive_types::H256;
@@ -52,7 +52,7 @@ where
             let node = MerkleNode::decode(&rlp)?;
             debug!("node: {:?}", node);
 
-            self.process_node(nibble, &node)?;
+            self.process_node(Entry::new(nibble, &node))?;
 
             // process node after inspection, to copy root later than it's data, to make sure that all roots are correct links
             self.trie_inspector.inspect_node(hash, bytes)?;
@@ -63,35 +63,36 @@ where
         Ok(())
     }
 
-    fn process_node(&self, mut nibble: NibbleVec, node: &MerkleNode) -> Result<()> {
-        match node {
+    // fn process_node(&self, mut nibble: NibbleVec, node: &MerkleNode) -> Result<()> {
+    fn process_node(&self, mut entry: Entry<&MerkleNode>) -> Result<()> {
+        match entry.value {
             MerkleNode::Leaf(nibbles, data) => {
-                nibble.extend_from_slice(nibbles);
-                let key = crate::merkle::nibble::into_key(&nibble);
+                entry.nibble.extend_from_slice(nibbles);
+                let key = crate::merkle::nibble::into_key(&entry.nibble);
                 self.data_inspector.inspect_data_raw(key, data)
             }
             MerkleNode::Extension(nibbles, value) => {
-                nibble.extend_from_slice(nibbles);
-                self.process_value(nibble, value)
+                entry.nibble.extend_from_slice(nibbles);
+                self.process_value(Entry::new(entry.nibble, value))
             }
-            MerkleNode::Branch(values, mb_data) => {
+            MerkleNode::Branch(values, maybe_data) => {
                 // lack of copy on result, forces setting array manually
                 let mut values_result = [
                     None, None, None, None, None, None, None, None, None, None, None, None, None,
                     None, None, None,
                 ];
                 let result = rayon::scope(|s| {
-                    for (nibbl, (value, result)) in
+                    for (index, (value, result)) in
                         values.iter().zip(&mut values_result).enumerate()
                     {
-                        let mut cloned_nibble = nibble.clone();
+                        let mut key = entry.nibble.clone();
                         s.spawn(move |_| {
-                            cloned_nibble.push(nibbl.into());
-                            *result = Some(self.process_value(cloned_nibble, value))
+                            key.push(index.into());
+                            *result = Some(self.process_value(Entry::new(key, value)))
                         });
                     }
-                    if let Some(data) = mb_data {
-                        let key = crate::merkle::nibble::into_key(&nibble);
+                    if let Some(data) = maybe_data {
+                        let key: Vec<u8> = crate::merkle::nibble::into_key(&entry.nibble);
                         self.data_inspector.inspect_data_raw(key, data)
                     } else {
                         Ok(())
@@ -105,11 +106,11 @@ where
         }
     }
 
-    fn process_value(&self, nibble: NibbleVec, value: &MerkleValue) -> Result<()> {
-        match value {
+    fn process_value(&self, entry: Entry<&MerkleValue>) -> Result<()> {
+        match entry.value {
             MerkleValue::Empty => Ok(()),
-            MerkleValue::Full(node) => self.process_node(nibble, node),
-            MerkleValue::Hash(hash) => self.traverse_inner(nibble, *hash),
+            MerkleValue::Full(node) => self.process_node(Entry::new(entry.nibble, node)),
+            MerkleValue::Hash(hash) => self.traverse_inner(entry.nibble, *hash),
         }
     }
 }
