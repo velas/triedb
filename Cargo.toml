@@ -40,7 +40,7 @@ tracing-subscriber = "0.3"
 
 
 [features]
-default = ["rocksdb", "tracing-enable"]
+default = ["rocksdb"]
 rocksdb = ["rocksdb_lib"]
 tracing-enable = ["tracing-attributes", "tracing"]
 

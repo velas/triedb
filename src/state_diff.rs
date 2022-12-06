@@ -19,12 +19,76 @@ pub enum Change {
     Removal(H256, Vec<u8>),
 }
 
-pub trait TrieDiffInspector: TrieInspector {
-    fn result(self) -> Vec<Change>
-    where
-        Self: Sized,
-    {
-        vec![]
+///
+/// Representation of node with data field (Leaf, or Branch when value.is_some())
+///
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DataNode {
+    hash: H256,
+    data: Vec<u8>,
+}
+
+///
+/// Represent data diff between data node.
+/// Need for child tries processing.
+///
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DataNodeChange {
+    left: Option<DataNode>,
+    right: Option<DataNode>,
+}
+
+#[derive(Debug, Default)]
+pub struct Changes {
+    changes: Vec<Change>,
+    // inserts: Vec<(H256, Vec<u8>)>,
+    // removes: Vec<(H256, Vec<u8>)>,
+    data_diff: Vec<DataNodeChange>,
+}
+impl Changes {
+    #[cfg_attr(feature = "tracing-enable", instrument)]
+    fn reverse_changes(self) -> Self {
+        let changes = self
+            .changes
+            .into_iter()
+            .map(|i| match i {
+                Change::Insert(h, d) => Change::Removal(h, d),
+                Change::Removal(h, d) => Change::Insert(h, d),
+            })
+            .collect();
+
+        let data_diff = self
+            .data_diff
+            .into_iter()
+            .map(|changed|
+            // Replace left and right
+            DataNodeChange {
+                left: changed.right,
+                right: changed.left,
+            })
+            .collect();
+        Self { changes, data_diff }
+    }
+
+    fn extend(&mut self, other: &Changes) {
+        self.changes.extend_from_slice(&other.changes);
+        self.data_diff.extend_from_slice(&other.data_diff);
+    }
+
+    fn remove_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a>>) {
+        if let KeyedMerkleNode::FullEncoded(hash, data) = node.borrow() {
+            self.changes.push(Change::Removal(*hash, data.to_vec()))
+        } else {
+            log::trace!("Skipping to remove inline node")
+        }
+    }
+
+    fn insert_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a>>) {
+        if let KeyedMerkleNode::FullEncoded(hash, data) = node.borrow() {
+            self.changes.push(Change::Insert(*hash, data.to_vec()))
+        } else {
+            log::trace!("Skipping to insert inline node")
+        }
     }
 }
 
@@ -34,71 +98,30 @@ pub struct DiffFinder<DB, F> {
     child_extractor: F,
 }
 
-trait ChangeSetExt {
-    fn remove_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a>>);
-    fn insert_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a>>);
+struct OpCollector<F> {
+    changes: RwLock<Changes>,
+    func: F,
 }
-impl ChangeSetExt for Vec<Change> {
-    fn remove_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a>>) {
-        if let KeyedMerkleNode::FullEncoded(hash, data) = node.borrow() {
-            self.push(Change::Removal(*hash, data.to_vec()))
-        } else {
-            log::trace!("Skipping to remove inline node")
-        }
-    }
-
-    fn insert_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a>>) {
-        if let KeyedMerkleNode::FullEncoded(hash, data) = node.borrow() {
-            self.push(Change::Insert(*hash, data.to_vec()))
-        } else {
-            log::trace!("Skipping to insert inline node")
+impl<F: Fn(H256, Vec<u8>) -> Change> OpCollector<F> {
+    pub fn new(func: F) -> Self {
+        Self {
+            changes: Default::default(),
+            func,
         }
     }
 }
 
-#[derive(Default)]
-struct InsertCollector {
-    changes: RwLock<Vec<Change>>,
-}
-
-impl crate::walker::inspector::TrieInspector for InsertCollector {
+impl<F> crate::walker::inspector::TrieInspector for OpCollector<F>
+where
+    F: Fn(H256, Vec<u8>) -> Change,
+{
     fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> anyhow::Result<bool> {
         self.changes
             .write()
             .unwrap()
-            .push(Change::Insert(trie_key, node.as_ref().to_vec()));
+            .changes
+            .push((self.func)(trie_key, node.as_ref().to_vec()));
         Ok(true)
-    }
-}
-impl TrieDiffInspector for InsertCollector {
-    fn result(self) -> Vec<Change>
-    where
-        Self: Sized,
-    {
-        self.changes.into_inner().expect("lock poisoned")
-    }
-}
-
-#[derive(Default)]
-struct RemoveCollector {
-    changes: RwLock<Vec<Change>>,
-}
-
-impl crate::walker::inspector::TrieInspector for RemoveCollector {
-    fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> anyhow::Result<bool> {
-        self.changes
-            .write()
-            .unwrap()
-            .push(Change::Removal(trie_key, node.as_ref().to_vec()));
-        Ok(true)
-    }
-}
-impl TrieDiffInspector for RemoveCollector {
-    fn result(self) -> Vec<Change>
-    where
-        Self: Sized,
-    {
-        self.changes.into_inner().expect("lock poisoned")
     }
 }
 
@@ -205,12 +228,13 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
         start_state_root: H256,
         end_state_root: H256,
     ) -> Result<Vec<Change>, ()> {
-        self.traverse_inner(
+        self.compare_roots(
             Default::default(),
             Default::default(),
             start_state_root,
             end_state_root,
         )
+        .map(|c| c.changes)
     }
 
     fn fetch_node(&self, hash: H256) -> KeyedMerkleNode<'_> {
@@ -218,26 +242,24 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
 
         KeyedMerkleNode::FullEncoded(hash, bytes)
     }
-    fn traverse_inner(
+    fn compare_roots(
         &self,
         left_key: NibbleVec,
         right_key: NibbleVec,
-        left_tree_cursor: H256,
-        right_tree_cursor: H256,
-    ) -> Result<Vec<Change>, ()> {
+        left_root: H256,
+        righ_root: H256,
+    ) -> Result<Changes, ()> {
         Ok(
             match (
-                left_tree_cursor == crate::empty_trie_hash(),
-                right_tree_cursor == crate::empty_trie_hash(),
+                left_root == crate::empty_trie_hash(),
+                righ_root == crate::empty_trie_hash(),
             ) {
-                (true, true) => {
-                    vec![]
-                }
-                (true, false) => self.deep_insert(self.fetch_node(right_tree_cursor)),
-                (false, true) => self.deep_remove(self.fetch_node(left_tree_cursor)),
+                (true, true) => Changes::default(),
+                (true, false) => self.deep_insert(self.fetch_node(righ_root)),
+                (false, true) => self.deep_remove(self.fetch_node(left_root)),
                 (false, false) => {
-                    let left_node = self.fetch_node(left_tree_cursor);
-                    let right_node = self.fetch_node(right_tree_cursor);
+                    let left_node = self.fetch_node(left_root);
+                    let right_node = self.fetch_node(righ_root);
 
                     self.compare_nodes(
                         Entry::new(left_key, left_node),
@@ -253,8 +275,8 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
         &self,
         left_entry: Entry<KeyedMerkleNode>,
         right_entry: Entry<KeyedMerkleNode>,
-    ) -> Vec<Change> {
-        let mut changes = vec![];
+    ) -> Changes {
+        let mut changes = Changes::default();
         // TODO: check hash is enough there
         if left_entry.value.same_hash(&right_entry.value) {
             // if nodes are same - then left tree already contain this node - no reason to traverse it
@@ -266,16 +288,18 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
         match branch_level {
             // We found two completely different paths
             ComparePathResult::Uncomparable => {
-                changes.extend_from_slice(&self.deep_remove(left_entry.value));
-                changes.extend_from_slice(&self.deep_insert(right_entry.value));
+                changes.extend(&self.deep_remove(left_entry.value));
+                changes.extend(&self.deep_insert(right_entry.value));
                 return changes;
             }
             // We always trying to keep this function on same level, or when right node is deeper.
             // Traverse right side.
             ComparePathResult::LeftDeeper => {
-                changes.extend_from_slice(&Self::reverse_changes(
-                    self.compare_nodes(right_entry, left_entry),
-                ));
+                changes.extend(
+                    &self
+                        .compare_nodes(right_entry, left_entry)
+                        .reverse_changes(),
+                );
                 return changes;
             }
             ComparePathResult::RightDeeper | ComparePathResult::SamePath => {}
@@ -287,8 +311,8 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
         branch_level: ComparePathResult,
         left_entry: Entry<KeyedMerkleNode>,
         right_entry: Entry<KeyedMerkleNode>,
-        mut changes: Vec<Change>,
-    ) -> Vec<Change> {
+        mut changes: Changes,
+    ) -> Changes {
         match (
             left_entry.value.merkle_node(),
             right_entry.value.merkle_node(),
@@ -302,14 +326,14 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                         "Diff work only with fixed sized key"
                     );
                     // if node is not same then it replace of new node
-                    changes.extend_from_slice(&self.deep_remove(left_entry.value));
-                    changes.extend_from_slice(&self.deep_insert(right_entry.value))
+                    changes.extend(&self.deep_remove(left_entry.value));
+                    changes.extend(&self.deep_insert(right_entry.value))
                 }
             }
             // Leaf was replaced by subtree.
             (MerkleNode::Leaf(_lkey, _ldata), _rnode) => {
-                changes.extend_from_slice(&self.deep_remove(left_entry.value));
-                changes.extend_from_slice(&self.deep_insert(right_entry.value));
+                changes.extend(&self.deep_remove(left_entry.value));
+                changes.extend(&self.deep_insert(right_entry.value));
             }
             // We found extension at left part that differ from node from right.
             // Go deeper to find any branch or leaf.
@@ -320,7 +344,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                     lk.extend_from_slice(&ext_key);
                     lk
                 };
-                changes.extend_from_slice(
+                changes.extend(
                     &self.compare_nodes(
                         Entry::new(full_key, mkl_value)
                             .try_map(|mkl_value| mkl_value.node(self.db.borrow()))
@@ -356,21 +380,19 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                         left_value.node(self.db.borrow()),
                         right_value.node(self.db.borrow()),
                     ) {
-                        (Some(lnode), Some(rnode)) => {
-                            changes.extend_from_slice(&self.compare_nodes(
-                                Entry::new(branch_key.clone(), lnode),
-                                Entry::new(branch_key.clone(), rnode),
-                            ))
-                        }
-                        (Some(lnode), None) => changes.extend_from_slice(&self.deep_remove(lnode)),
-                        (None, Some(rnode)) => changes.extend_from_slice(&self.deep_insert(rnode)),
+                        (Some(lnode), Some(rnode)) => changes.extend(&self.compare_nodes(
+                            Entry::new(branch_key.clone(), lnode),
+                            Entry::new(branch_key.clone(), rnode),
+                        )),
+                        (Some(lnode), None) => changes.extend(&self.deep_remove(lnode)),
+                        (None, Some(rnode)) => changes.extend(&self.deep_insert(rnode)),
                         (None, None) => {}
                     }
                 }
             }
             (MerkleNode::Branch(values, maybe_data), _rnode) => {
                 changes.remove_node(&left_entry.value);
-                changes.extend_from_slice(&self.walk_branch(
+                changes.extend(&self.walk_branch(
                     Entry::new(left_entry.nibble, values),
                     maybe_data,
                     right_entry,
@@ -390,11 +412,10 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
 
         changes
     }
-    fn deep_op<TI: TrieDiffInspector + Sync + Send>(
-        &self,
-        node: KeyedMerkleNode,
-        ti: TI,
-    ) -> Vec<Change> {
+    fn deep_op<FN>(&self, node: KeyedMerkleNode, ti: OpCollector<FN>) -> Changes
+    where
+        OpCollector<FN>: TrieInspector + Sync + Send,
+    {
         let merkle_hashes = match node {
             KeyedMerkleNode::FullEncoded(hash, _) => vec![hash],
             KeyedMerkleNode::Partial(node) => {
@@ -425,30 +446,24 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                 break;
             }
         }
-        walker.trie_inspector.result()
+        walker
+            .trie_inspector
+            .changes
+            .into_inner()
+            .expect("lock poisoned")
     }
     #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
-    fn deep_insert(&self, node: KeyedMerkleNode) -> Vec<Change> {
-        let collector = InsertCollector::default();
+    fn deep_insert(&self, node: KeyedMerkleNode) -> Changes {
+        let collector = OpCollector::new(Change::Insert);
         self.deep_op(node, collector)
     }
 
     #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
-    fn deep_remove(&self, node: KeyedMerkleNode) -> Vec<Change> {
-        let collector = RemoveCollector::default();
+    fn deep_remove(&self, node: KeyedMerkleNode) -> Changes {
+        let collector = OpCollector::new(Change::Removal);
         self.deep_op(node, collector)
     }
 
-    #[cfg_attr(feature = "tracing-enable", instrument)]
-    fn reverse_changes(changes: Vec<Change>) -> Vec<Change> {
-        changes
-            .into_iter()
-            .map(|i| match i {
-                Change::Insert(h, d) => Change::Removal(h, d),
-                Change::Removal(h, d) => Change::Insert(h, d),
-            })
-            .collect()
-    }
     fn check_branch_level(left_slice: NibbleSlice, right_slice: NibbleSlice) -> ComparePathResult {
         let common = nibble::common(left_slice, right_slice);
         match (
@@ -462,21 +477,21 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
         }
     }
 
-    // Find branch for right_ndoe and walk deeper into one of branch
+    // Find branch for right_node and walk deeper into one of branch
     #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
     fn walk_branch(
         &self,
         left_entry: Entry<[MerkleValue; 16]>,
         maybe_data: Option<&[u8]>,
         right_entry: Entry<KeyedMerkleNode>,
-    ) -> Vec<Change> {
+    ) -> Changes {
         // Found a data in branch - it's a marker that key is not fixed sized.
         assert!(
             maybe_data.is_none(),
             "We support only fixed sized keys in diff"
         );
 
-        let mut changes = vec![];
+        let mut changes = Changes::default();
 
         let mut right_key = right_entry.nibble.clone();
         if let Some(rkey_suffix) = right_entry.value.merkle_node().nibble() {
@@ -499,11 +514,11 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                 lk.push(right_nibble);
                 lk
             };
-            changes.extend_from_slice(
+            changes.extend(
                 &self.compare_nodes(Entry::new(conflict_key, conflict_branch), right_entry),
             );
         } else {
-            changes.extend_from_slice(&self.deep_insert(right_entry.value))
+            changes.extend(&self.deep_insert(right_entry.value))
         }
 
         for (index, value) in left_entry.value.iter().enumerate() {
@@ -519,7 +534,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                     continue;
                 } else {
                     // mark all remaining nodes as removed
-                    changes.extend_from_slice(&self.deep_remove(branch))
+                    changes.extend(&self.deep_remove(branch))
                 }
             } else {
                 log::trace!("Node {:?} was not found in branch", branch_key);
@@ -548,10 +563,10 @@ mod tests {
     fn tracing_sub_init() {
         use tracing::metadata::LevelFilter;
         use tracing_subscriber::fmt::format::FmtSpan;
-        tracing_subscriber::fmt()
+        let _ = tracing_subscriber::fmt()
             .with_span_events(FmtSpan::ENTER)
             .with_max_level(LevelFilter::TRACE)
-            .init();
+            .try_init();
     }
     #[cfg(not(feature = "tracing-enable"))]
     fn tracing_sub_init() {}
