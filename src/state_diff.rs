@@ -1,5 +1,4 @@
 use std::borrow::Borrow;
-use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::sync::RwLock;
 
