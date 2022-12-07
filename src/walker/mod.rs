@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 
 use crate::{
-    merkle::{nibble::Entry, MerkleNode, MerkleValue},
+    merkle::{nibble::Entry, Branch, Extension, Leaf, MerkleNode, MerkleValue},
     Database,
 };
 use primitive_types::H256;
@@ -66,16 +66,19 @@ where
     // fn process_node(&self, mut nibble: NibbleVec, node: &MerkleNode) -> Result<()> {
     fn process_node(&self, mut entry: Entry<&MerkleNode>) -> Result<()> {
         match entry.value {
-            MerkleNode::Leaf(nibbles, data) => {
+            MerkleNode::Leaf(Leaf { nibbles, data }) => {
                 entry.nibble.extend_from_slice(nibbles);
                 let key = crate::merkle::nibble::into_key(&entry.nibble);
                 self.data_inspector.inspect_data_raw(key, data)
             }
-            MerkleNode::Extension(nibbles, value) => {
+            MerkleNode::Extension(Extension { nibbles, value }) => {
                 entry.nibble.extend_from_slice(nibbles);
                 self.process_value(Entry::new(entry.nibble, value))
             }
-            MerkleNode::Branch(values, maybe_data) => {
+            MerkleNode::Branch(Branch {
+                childs: values,
+                data: maybe_data,
+            }) => {
                 // lack of copy on result, forces setting array manually
                 let mut values_result = [
                     None, None, None, None, None, None, None, None, None, None, None, None, None,
