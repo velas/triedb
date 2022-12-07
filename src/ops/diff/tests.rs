@@ -23,7 +23,9 @@ fn tracing_sub_init() {
         .try_init();
 }
 #[cfg(not(feature = "tracing-enable"))]
-fn tracing_sub_init() {}
+fn tracing_sub_init() {
+    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+}
 
 fn no_childs(_: &[u8]) -> Vec<H256> {
     vec![]

@@ -88,6 +88,15 @@ impl<'a> MerkleNode<'a> {
         })
     }
 
+    // Return data, if current node can have it
+    pub fn data(&self) -> Option<&[u8]> {
+        match *self {
+            Self::Branch(Branch { data, .. }) => data,
+            Self::Leaf(Leaf { data, .. }) => Some(data),
+            Self::Extension(..) => unreachable!("Data on extension is not possible by design"),
+        }
+    }
+
     /// Whether the node can be inlined to a merkle value.
     pub fn inlinable(&self) -> bool {
         rlp::encode(self).to_vec().len() < 32

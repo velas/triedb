@@ -6,6 +6,8 @@ use rlp::{Rlp, RlpStream};
 
 use crate::Result;
 
+use super::{Branch, Extension, Leaf, MerkleValue};
+
 /// Represents a nibble. A 16-variant value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -227,6 +229,7 @@ pub fn encode(vec: NibbleSlice, typ: NibbleType, s: &mut RlpStream) {
     s.append(&ret);
 }
 
+// Represents trie some db value, and nibble path, to help retrive this value from db.
 #[derive(Debug)]
 pub struct Entry<V> {
     pub nibble: NibbleVec,
@@ -245,6 +248,25 @@ impl<V> Entry<V> {
         match f(self.value) {
             Some(x) => Some(Entry::new(self.nibble, x)),
             None => None,
+        }
+    }
+
+    pub fn push_extension<'a>(&self, extension: Extension<'a>) -> Entry<MerkleValue<'a>> {
+        let mut nibbles = self.nibble.clone();
+        nibbles.extend_from_slice(&extension.nibbles);
+        Entry {
+            nibble: nibbles,
+            value: extension.value,
+        }
+    }
+
+    pub fn push_branch_child<'a>(&self, branch: Branch<'a>, idx: Nibble) -> Entry<MerkleValue<'a>> {
+        let index = idx as usize;
+        let mut nibbles = self.nibble.clone();
+        nibbles.push(idx);
+        Entry {
+            nibble: nibbles,
+            value: branch.childs[index].clone(),
         }
     }
 }
