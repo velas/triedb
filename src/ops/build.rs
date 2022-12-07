@@ -33,7 +33,7 @@ pub fn build_node<'a>(map: &HashMap<NibbleVec, &'a [u8]>) -> (MerkleNode<'a>, Ch
     assert!(!map.is_empty());
     if map.len() == 1 {
         let key = map.keys().next().unwrap();
-        return (MerkleNode::Leaf(key.clone(), map.get(key).unwrap()), change);
+        return (MerkleNode::leaf(key.clone(), map.get(key).unwrap()), change);
     }
 
     debug_assert!(map.len() > 1);
@@ -49,7 +49,7 @@ pub fn build_node<'a>(map: &HashMap<NibbleVec, &'a [u8]>) -> (MerkleNode<'a>, Ch
         let (value, subchange) = build_value(node);
         change.merge(&subchange);
 
-        (MerkleNode::Extension(common.into(), value), change)
+        (MerkleNode::extension(common.into(), value), change)
     } else {
         let mut nodes: [MerkleValue<'_>; 16] = empty_nodes();
 
@@ -78,6 +78,6 @@ pub fn build_node<'a>(map: &HashMap<NibbleVec, &'a [u8]>) -> (MerkleNode<'a>, Ch
             .find(|&(key, _value)| key.is_empty())
             .map(|(_key, value)| *value);
 
-        (MerkleNode::Branch(nodes, additional), change)
+        (MerkleNode::branch(nodes, additional), change)
     }
 }

@@ -7,12 +7,44 @@ use super::nibble::{self, NibbleType, NibbleVec};
 use crate::Result;
 
 /// Represents a merkle node.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
 pub enum MerkleNode<'a> {
-    Leaf(NibbleVec, &'a [u8]),
-    Extension(NibbleVec, MerkleValue<'a>),
-    Branch([MerkleValue<'a>; 16], Option<&'a [u8]>),
+    Leaf(Leaf<'a>),
+    Extension(Extension<'a>),
+    Branch(Branch<'a>),
+}
+
+impl<'a> MerkleNode<'a> {
+    pub fn branch(childs: [MerkleValue<'a>; 16], data: Option<&'a [u8]>) -> Self {
+        Self::Branch(Branch { childs, data })
+    }
+
+    pub fn leaf(nibbles: NibbleVec, data: &'a [u8]) -> Self {
+        Self::Leaf(Leaf { nibbles, data })
+    }
+
+    pub fn extension(nibbles: NibbleVec, value: MerkleValue<'a>) -> Self {
+        Self::Extension(Extension { nibbles, value })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Leaf<'a> {
+    pub nibbles: NibbleVec,
+    pub data: &'a [u8],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Extension<'a> {
+    pub nibbles: NibbleVec,
+    pub value: MerkleValue<'a>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Branch<'a> {
+    pub childs: [MerkleValue<'a>; 16],
+    pub data: Option<&'a [u8]>,
 }
 
 impl<'a> MerkleNode<'a> {
@@ -20,11 +52,11 @@ impl<'a> MerkleNode<'a> {
     pub fn decode(rlp: &Rlp<'a>) -> Result<Self> {
         let node = match rlp.prototype()? {
             Prototype::List(2) => {
-                let (nibble, typ) = nibble::decode(&rlp.at(0)?)?;
+                let (nibbles, typ) = nibble::decode(&rlp.at(0)?)?;
                 match typ {
-                    NibbleType::Leaf => MerkleNode::Leaf(nibble, rlp.at(1)?.data()?),
+                    NibbleType::Leaf => MerkleNode::leaf(nibbles, rlp.at(1)?.data()?),
                     NibbleType::Extension => {
-                        MerkleNode::Extension(nibble, MerkleValue::decode(&rlp.at(1)?)?)
+                        MerkleNode::extension(nibbles, MerkleValue::decode(&rlp.at(1)?)?)
                     }
                 }
             }
@@ -38,7 +70,7 @@ impl<'a> MerkleNode<'a> {
                 } else {
                     Some(rlp.at(16)?.data()?)
                 };
-                MerkleNode::Branch(nodes, value)
+                MerkleNode::branch(nodes, value)
             }
             _ => panic!(),
         };
@@ -48,11 +80,11 @@ impl<'a> MerkleNode<'a> {
     /// Return nibbles that was inlined to this node.
     /// This nibble represent a suffix between parent node, and child node/value.
     //TODO: Return nible slice
-    pub fn nibble(&self) -> Option<NibbleVec> {
+    pub fn nibbles(&self) -> Option<NibbleVec> {
         Some(match self {
             Self::Branch(..) => return None,
-            Self::Leaf(nibble, _) => nibble.clone(),
-            Self::Extension(nibble, _) => nibble.clone(),
+            Self::Leaf(Leaf { nibbles, .. }) => nibbles.clone(),
+            Self::Extension(Extension { nibbles, .. }) => nibbles.clone(),
         })
     }
 
@@ -62,41 +94,28 @@ impl<'a> MerkleNode<'a> {
     }
 }
 
-impl<'a> Clone for MerkleNode<'a> {
-    fn clone(&self) -> MerkleNode<'a> {
-        match *self {
-            MerkleNode::Leaf(ref nibble, value) => MerkleNode::Leaf(nibble.clone(), value),
-            MerkleNode::Extension(ref nibble, ref value) => {
-                MerkleNode::Extension(nibble.clone(), value.clone())
-            }
-            MerkleNode::Branch(ref nodes, additional) => {
-                let mut cloned_nodes: [MerkleValue<'_>; 16] = empty_nodes();
-                cloned_nodes[..16].clone_from_slice(&nodes[..16]);
-                MerkleNode::Branch(cloned_nodes, additional)
-            }
-        }
-    }
-}
-
 impl<'a> Encodable for MerkleNode<'a> {
     fn rlp_append(&self, s: &mut RlpStream) {
         match *self {
-            MerkleNode::Leaf(ref nibble, value) => {
+            MerkleNode::Leaf(Leaf { ref nibbles, data }) => {
                 s.begin_list(2);
-                nibble::encode(nibble, NibbleType::Leaf, s);
+                nibble::encode(nibbles, NibbleType::Leaf, s);
+                data.rlp_append(s);
+            }
+            MerkleNode::Extension(Extension {
+                ref nibbles,
+                ref value,
+            }) => {
+                s.begin_list(2);
+                nibble::encode(nibbles, NibbleType::Extension, s);
                 value.rlp_append(s);
             }
-            MerkleNode::Extension(ref nibble, ref value) => {
-                s.begin_list(2);
-                nibble::encode(nibble, NibbleType::Extension, s);
-                value.rlp_append(s);
-            }
-            MerkleNode::Branch(ref nodes, value) => {
+            MerkleNode::Branch(Branch { ref childs, data }) => {
                 s.begin_list(17);
-                for node in nodes.iter().take(16) {
+                for node in childs.iter().take(16) {
                     node.rlp_append(s);
                 }
-                if let Some(value) = value {
+                if let Some(value) = data {
                     value.rlp_append(s);
                 } else {
                     s.append_empty_data();
@@ -181,7 +200,10 @@ mod tests {
     fn encode_decode() {
         let key = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
         let val = [1, 2, 3, 4, 5];
-        let node = MerkleNode::Leaf(nibble::from_key(&key), &val);
+        let node = MerkleNode::Leaf(Leaf {
+            nibbles: nibble::from_key(&key),
+            data: &val,
+        });
         let rlp_raw = rlp::encode(&node);
         let decoded_node: MerkleNode = MerkleNode::decode(&Rlp::new(&rlp_raw)).unwrap();
         assert_eq!(node, decoded_node);

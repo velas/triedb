@@ -2,7 +2,7 @@ use std::borrow::Borrow;
 use std::collections::{hash_map, HashMap};
 use std::sync::Arc;
 
-use crate::merkle::MerkleValue;
+use crate::merkle::{Branch, Extension, Leaf, MerkleValue};
 use crate::{
     cache::CachedHandle, delete, empty_trie_hash, get, insert, CachedDatabaseHandle, Change,
     Database, TrieMut,
@@ -40,11 +40,19 @@ where
 
     fn process_node(&mut self, merkle_node: &MerkleNode) {
         match merkle_node {
-            MerkleNode::Leaf(_, d) => self.childs.extend_from_slice(&(self.child_extractor)(d)),
-            MerkleNode::Extension(_, merkle_value) => {
+            MerkleNode::Leaf(Leaf { data: d, .. }) => {
+                self.childs.extend_from_slice(&(self.child_extractor)(d))
+            }
+            MerkleNode::Extension(Extension {
+                value: merkle_value,
+                ..
+            }) => {
                 self.process_value(merkle_value);
             }
-            MerkleNode::Branch(merkle_values, data) => {
+            MerkleNode::Branch(Branch {
+                childs: merkle_values,
+                data,
+            }) => {
                 if let Some(d) = data {
                     self.childs.extend_from_slice(&(self.child_extractor)(d))
                 }
@@ -181,19 +189,21 @@ impl<D: DbCounter + Database> TrieCollection<D> {
                     .iter()
                     .enumerate()
                     .find(|(_i, (key, _))| match &node {
-                        MerkleNode::Branch(values, _) => values.iter().any(|value| {
-                            if let MerkleValue::Hash(k) = value {
-                                return *k == *key;
-                            }
-                            false
-                        }),
-                        MerkleNode::Extension(_, value) => {
+                        MerkleNode::Branch(Branch { childs: values, .. }) => {
+                            values.iter().any(|value| {
+                                if let MerkleValue::Hash(k) = value {
+                                    return *k == *key;
+                                }
+                                false
+                            })
+                        }
+                        MerkleNode::Extension(Extension { value, .. }) => {
                             if let MerkleValue::Hash(k) = value {
                                 return *k == *key;
                             }
                             false
                         }
-                        MerkleNode::Leaf(_, _) => false,
+                        MerkleNode::Leaf(_) => false,
                     });
                 match child {
                     None => sorted.push((key, value)),

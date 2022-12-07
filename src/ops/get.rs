@@ -1,7 +1,7 @@
 use rlp::{self, Rlp};
 
 use crate::{
-    merkle::{nibble::NibbleVec, MerkleNode, MerkleValue},
+    merkle::{nibble::NibbleVec, Branch, Extension, Leaf, MerkleNode, MerkleValue},
     Database,
 };
 
@@ -27,21 +27,30 @@ pub fn get_by_node<'a, D: Database>(
     database: &'a D,
 ) -> Option<&'a [u8]> {
     match node {
-        MerkleNode::Leaf(node_nibble, node_value) => {
+        MerkleNode::Leaf(Leaf {
+            nibbles: node_nibble,
+            data: node_value,
+        }) => {
             if node_nibble == nibble {
                 Some(node_value)
             } else {
                 None
             }
         }
-        MerkleNode::Extension(node_nibble, node_value) => {
+        MerkleNode::Extension(Extension {
+            nibbles: node_nibble,
+            value: node_value,
+        }) => {
             if nibble.starts_with(&node_nibble) {
                 get_by_value(node_value, nibble[node_nibble.len()..].into(), database)
             } else {
                 None
             }
         }
-        MerkleNode::Branch(node_nodes, node_additional) => {
+        MerkleNode::Branch(Branch {
+            childs: node_nodes,
+            data: node_additional,
+        }) => {
             if nibble.is_empty() {
                 node_additional
             } else {

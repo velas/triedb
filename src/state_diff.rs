@@ -4,7 +4,7 @@ use std::sync::RwLock;
 
 use crate::gc::ReachableHashes;
 use crate::merkle::nibble::{self, Entry, Nibble, NibbleSlice, NibbleVec};
-use crate::merkle::{MerkleNode, MerkleValue};
+use crate::merkle::{Branch, Extension, Leaf, MerkleNode, MerkleValue};
 use crate::walker::inspector::TrieInspector;
 use crate::Database;
 use primitive_types::H256;
@@ -318,7 +318,16 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
             right_entry.value.merkle_node(),
         ) {
             // One leaf was replaced by other. (data changed)
-            (MerkleNode::Leaf(lkey, ldata), MerkleNode::Leaf(rkey, rdata)) => {
+            (
+                MerkleNode::Leaf(Leaf {
+                    nibbles: lkey,
+                    data: ldata,
+                }),
+                MerkleNode::Leaf(Leaf {
+                    nibbles: rkey,
+                    data: rdata,
+                }),
+            ) => {
                 if lkey != rkey || ldata != rdata {
                     assert_eq!(
                         left_entry.nibble.len() + lkey.len(),
@@ -331,13 +340,25 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                 }
             }
             // Leaf was replaced by subtree.
-            (MerkleNode::Leaf(_lkey, _ldata), _rnode) => {
+            (
+                MerkleNode::Leaf(Leaf {
+                    nibbles: _lkey,
+                    data: _ldata,
+                }),
+                _rnode,
+            ) => {
                 changes.extend(&self.deep_remove(left_entry.value));
                 changes.extend(&self.deep_insert(right_entry.value));
             }
             // We found extension at left part that differ from node from right.
             // Go deeper to find any branch or leaf.
-            (MerkleNode::Extension(ext_key, mkl_value), _rnode) => {
+            (
+                MerkleNode::Extension(Extension {
+                    nibbles: ext_key,
+                    value: mkl_value,
+                }),
+                _rnode,
+            ) => {
                 changes.remove_node(&left_entry.value);
                 let full_key = {
                     let mut lk = left_entry.nibble;
@@ -355,8 +376,14 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
             }
             // Branches on same level, but values were changed.
             (
-                MerkleNode::Branch(left_values, left_data),
-                MerkleNode::Branch(right_values, right_data),
+                MerkleNode::Branch(Branch {
+                    childs: left_values,
+                    data: left_data,
+                }),
+                MerkleNode::Branch(Branch {
+                    childs: right_values,
+                    data: right_data,
+                }),
             ) if branch_level == ComparePathResult::SamePath => {
                 assert!(
                     left_data.is_none(),
@@ -390,7 +417,13 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                     }
                 }
             }
-            (MerkleNode::Branch(values, maybe_data), _rnode) => {
+            (
+                MerkleNode::Branch(Branch {
+                    childs: values,
+                    data: maybe_data,
+                }),
+                _rnode,
+            ) => {
                 changes.remove_node(&left_entry.value);
                 changes.extend(&self.walk_branch(
                     Entry::new(left_entry.nibble, values),
@@ -494,7 +527,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
         let mut changes = Changes::default();
 
         let mut right_key = right_entry.nibble.clone();
-        if let Some(rkey_suffix) = right_entry.value.merkle_node().nibble() {
+        if let Some(rkey_suffix) = right_entry.value.merkle_node().nibbles() {
             right_key.extend_from_slice(&rkey_suffix)
         }
 
