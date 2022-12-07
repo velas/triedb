@@ -26,7 +26,9 @@ fn tracing_sub_init() {
         .try_init();
 }
 #[cfg(not(feature = "tracing-enable"))]
-fn tracing_sub_init() {}
+fn tracing_sub_init() {
+    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+}
 
 fn check_changes(
     changes: VerifiedPatch,
@@ -83,7 +85,6 @@ fn no_childs(_: &[u8]) -> Vec<H256> {
 
 #[test]
 fn test_two_different_leaf_nodes() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
     tracing_sub_init();
 
     let j = json!([[
@@ -138,6 +139,7 @@ fn test_two_different_leaf_nodes() {
         second_root.root,
     )
     .unwrap();
+    dbg!(&changes);
 
     let verify_result = verify_diff(
         &collection.database,
@@ -641,7 +643,7 @@ fn test_4() {
 
 #[test]
 fn test_5() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
 
     let j = json!([
         [
@@ -801,7 +803,7 @@ fn test_5() {
 
 #[test]
 fn test_get_changeset_trivial_tree() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
 
     let j = json!([
         [
