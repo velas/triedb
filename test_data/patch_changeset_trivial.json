@@ -1,0 +1,21 @@
+{
+    "patch_dependencies": [],
+    "sorted_changes": [
+        [
+            "0x89f72bfc52ba30aaa58a6662690dde211c4179c2b319283d1f0b3c298c763fef",
+            "0xf871a0bbe6b76206a9cad7ef4b2c8a36b4c8e360c23363cd1db491126f9b245e2214e1808080808080a0bbe6b76206a9cad7ef4b2c8a36b4c8e360c23363cd1db491126f9b245e2214e1808080a0eda927899744a922998038fa648ddadb89500cee5938b4b533067c115e84fb3f8080808080"
+        ],
+        [
+            "0xbbe6b76206a9cad7ef4b2c8a36b4c8e360c23363cd1db491126f9b245e2214e1",
+            "0xe78430000000a15f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0xbbe6b76206a9cad7ef4b2c8a36b4c8e360c23363cd1db491126f9b245e2214e1",
+            "0xe78430000000a15f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0xeda927899744a922998038fa648ddadb89500cee5938b4b533067c115e84fb3f",
+            "0xe78430000000a15f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ]
+    ]
+}

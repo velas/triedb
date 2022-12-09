@@ -87,6 +87,28 @@ impl From<Nibble> for u8 {
         nibble as u8
     }
 }
+impl From<Nibble> for char {
+    fn from(nibble: Nibble) -> char {
+        match nibble {
+            Nibble::N0 => '0',
+            Nibble::N1 => '1',
+            Nibble::N2 => '2',
+            Nibble::N3 => '3',
+            Nibble::N4 => '4',
+            Nibble::N5 => '5',
+            Nibble::N6 => '6',
+            Nibble::N7 => '7',
+            Nibble::N8 => '8',
+            Nibble::N9 => '9',
+            Nibble::N10 => 'a',
+            Nibble::N11 => 'b',
+            Nibble::N12 => 'c',
+            Nibble::N13 => 'd',
+            Nibble::N14 => 'e',
+            Nibble::N15 => 'f',
+        }
+    }
+}
 
 /// A nibble type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +119,7 @@ pub enum NibbleType {
 
 /// A nibble vector.
 pub type NibbleVec = Vec<Nibble>;
+
 /// A nibble slice.
 pub type NibbleSlice<'a> = &'a [Nibble];
 

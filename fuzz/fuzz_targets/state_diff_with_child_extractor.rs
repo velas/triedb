@@ -16,7 +16,8 @@ use triedb::empty_trie_hash;
 use triedb::gc::{DbCounter, RootGuard, TrieCollection};
 use triedb::gc::testing::MapWithCounterCached;
 use triedb::merkle::nibble::{into_key, Nibble};
-use triedb::state_diff::{Change, DiffFinder};
+
+use triedb::{diff, DiffChange};
 use triedb::TrieMut;
 
 
@@ -178,15 +179,14 @@ fn test_state_diff(
     }
 
     // Get diff between two tries in the first collection
-    let st = DiffFinder::new(&collection1.database, DataWithRoot::get_childs);
-    let changes = st.get_changeset(collection1_trie1.root, collection1_trie2.root).unwrap();
+    let changes = diff(&collection1.database, DataWithRoot::get_childs, collection1_trie1.root, collection1_trie2.root).unwrap();
     let changes = triedb::Change {
         changes: changes.clone().into_iter().map(|change| {
             match change {
-                Change::Insert(key, val) => {
+                DiffChange::Insert(key, val) => {
                     (key, Some(val))
                 },
-                Change::Removal(key, _) => {
+                DiffChange::Removal(key, _) => {
                     (key, None)
                 },
             }

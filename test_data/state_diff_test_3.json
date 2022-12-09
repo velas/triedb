@@ -1,0 +1,11 @@
+{
+    "patch_dependencies": [
+        "0xcfb83f6df401062bbc6ec0e083bfdb1331c83162cb863272bea7c5d78805e25e"
+    ],
+    "sorted_changes": [
+        [
+            "0x7afbb6a557e0d6641123bced55c4cffdac3f52e217a98649ed68b95c75316bcb",
+            "0xe98710000000000000a0cfb83f6df401062bbc6ec0e083bfdb1331c83162cb863272bea7c5d78805e25e"
+        ]
+    ]
+}
