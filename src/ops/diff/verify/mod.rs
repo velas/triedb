@@ -19,6 +19,7 @@ use crate::merkle::MerkleNode;
 pub struct VerifiedPatch {
     pub(crate) patch_dependencies: Option<BTreeSet<H256>>,
     pub(crate) sorted_changes: Vec<(H256, Vec<u8>)>,
+    pub(crate) target_root: H256,
 }
 
 #[derive(Debug)]
@@ -130,5 +131,6 @@ where
     Ok(VerifiedPatch {
         patch_dependencies: collect_dependencies.then_some(patch_dependencies),
         sorted_changes,
+        target_root: expected_root,
     })
 }

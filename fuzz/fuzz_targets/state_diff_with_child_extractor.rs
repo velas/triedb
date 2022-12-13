@@ -13,25 +13,30 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use triedb::empty_trie_hash;
-use triedb::gc::{DbCounter, RootGuard, TrieCollection};
 use triedb::gc::testing::MapWithCounterCached;
+use triedb::gc::{RootGuard, TrieCollection};
 use triedb::merkle::nibble::{into_key, Nibble};
 
-use triedb::{diff, DiffChange};
 use triedb::TrieMut;
-
+use triedb::{diff, verify_diff};
 
 impl<'a> Arbitrary<'a> for Key {
     fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
         // Get an iterator of arbitrary `T`s.
         let nibble: Result<Vec<_>> = std::iter::from_fn(|| {
             Some(
-                u.choose(&[Nibble::N0, Nibble::N3, Nibble::N7, Nibble::N11, Nibble::N15])
-                    .map(|c| *c),
+                u.choose(&[
+                    Nibble::N0,
+                    Nibble::N3,
+                    Nibble::N7,
+                    Nibble::N11,
+                    Nibble::N15,
+                ])
+                .map(|c| *c),
             )
         })
-            .take(8)
-            .collect();
+        .take(8)
+        .collect();
         let mut key = [0; 4];
 
         let vec_data = into_key(&nibble?);
@@ -125,7 +130,7 @@ fn test_state_diff(
         crate::empty_trie_hash(),
         DataWithRoot::get_childs,
     );
-    let mut collection2_trie1 = RootGuard::new(
+    let mut _collection2_trie1 = RootGuard::new(
         &collection2.database,
         crate::empty_trie_hash(),
         DataWithRoot::get_childs,
@@ -149,8 +154,10 @@ fn test_state_diff(
                 account_patch.change.merge_child(&storage_patch.change);
 
                 // Apply patch over two collections
-                collection1_trie1 = collection1.apply_increase(account_patch.clone(), DataWithRoot::get_childs);
-                collection2_trie1 = collection2.apply_increase(account_patch, DataWithRoot::get_childs);
+                collection1_trie1 = collection1
+                    .apply_increase(account_patch.clone(), DataWithRoot::get_childs);
+                _collection2_trie1 =
+                    collection2.apply_increase(account_patch, DataWithRoot::get_childs);
             }
         }
     }
@@ -174,32 +181,38 @@ fn test_state_diff(
             let mut account_patch = account_trie.into_patch();
             account_patch.change.merge_child(&storage_patch.change);
 
-            collection1_trie2 = collection1.apply_increase(account_patch, DataWithRoot::get_childs);
+            collection1_trie2 =
+                collection1.apply_increase(account_patch, DataWithRoot::get_childs);
         }
     }
 
     // Get diff between two tries in the first collection
-    let changes = diff(&collection1.database, DataWithRoot::get_childs, collection1_trie1.root, collection1_trie2.root).unwrap();
-    let changes = triedb::Change {
-        changes: changes.clone().into_iter().map(|change| {
-            match change {
-                DiffChange::Insert(key, val) => {
-                    (key, Some(val))
-                },
-                DiffChange::Removal(key, _) => {
-                    (key, None)
-                },
-            }
-        }).collect()
-    };
+    let changes = diff(
+        &collection1.database,
+        DataWithRoot::get_childs,
+        collection1_trie1.root,
+        collection1_trie2.root,
+    )
+    .unwrap();
+
+    let verify_result = verify_diff(
+        &collection2.database,
+        collection1_trie2.root,
+        changes,
+        DataWithRoot::get_childs,
+        false,
+    );
+    assert!(verify_result.is_ok());
     // Apply changes over the initial trie in the second collection
-    collection2.apply_changes(changes, DataWithRoot::get_childs);
+    let apply_result = collection2.apply_diff_patch(verify_result.unwrap(), DataWithRoot::get_childs);
+    assert!(apply_result.is_ok());
 
     // Compare contents of HashMap and final trie in the second collection
     let accounts_storage = collection2.trie_for(collection1_trie2.root);
     for (k, storage) in accounts_map {
         let account: DataWithRoot =
-            bincode::deserialize(&TrieMut::get(&accounts_storage, &k.0).unwrap()).unwrap();
+            bincode::deserialize(&TrieMut::get(&accounts_storage, &k.0).unwrap())
+                .unwrap();
 
         let account_storage_trie = collection2.trie_for(account.root);
         for data_key in storage.keys() {

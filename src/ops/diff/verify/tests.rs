@@ -2,16 +2,56 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::debug::DebugPrintExt;
 use crate::mutable::TrieMut;
-use crate::{debug, diff, empty_trie_hash, verify_diff, DiffChange as Change};
+use crate::ops::diff::verify::VerificationError;
+use crate::{debug, diff, empty_trie_hash, verify_diff, Database, DiffChange as Change};
+use hex_literal::hex;
 use primitive_types::H256;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha3::{Digest, Keccak256};
 
 use crate::gc::testing::MapWithCounterCached;
-use crate::gc::{DbCounter, RootGuard, TrieCollection};
+use crate::gc::{RootGuard, TrieCollection};
 
 use super::VerifiedPatch;
+
+#[cfg(feature = "tracing-enable")]
+fn tracing_sub_init() {
+    use tracing::metadata::LevelFilter;
+    use tracing_subscriber::fmt::format::FmtSpan;
+    let _ = tracing_subscriber::fmt()
+        .with_span_events(FmtSpan::ENTER)
+        .with_max_level(LevelFilter::TRACE)
+        .try_init();
+}
+#[cfg(not(feature = "tracing-enable"))]
+fn tracing_sub_init() {}
+
+fn check_changes(
+    changes: VerifiedPatch,
+    initial_trie_data: &Vec<(&[u8], &[u8])>,
+    expected_trie_root: H256,
+    expected_trie_data: debug::EntriesHex,
+) {
+    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let mut trie = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in initial_trie_data {
+        trie.insert(key, value);
+    }
+    let patch = trie.into_patch();
+    let _initial_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+    let apply_result = collection.apply_diff_patch(changes, no_childs);
+    assert!(apply_result.is_ok());
+    let expected_root_root_guard = apply_result.unwrap();
+    assert_eq!(expected_root_root_guard.root, expected_trie_root);
+
+    let new_trie = collection.trie_for(expected_trie_root);
+
+    for (key, value) in expected_trie_data.data {
+        assert_eq!(TrieMut::get(&new_trie, &key), value);
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 struct VerifiedPatchHexStr {
@@ -40,39 +80,22 @@ fn no_childs(_: &[u8]) -> Vec<H256> {
 }
 
 #[test]
-fn test_3() {
+fn test_two_different_leaf_nodes() {
     let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
 
-    let j = json!([
-        [
-            "0x0000000000000c19",
-            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
-        ],
-        [
-            "0x0000000000000fcb",
-            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
-        ],
-        [
-            "0x00000000000010f6",
-            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f33"
-        ]
-    ]);
-
+    let j = json!([[
+        "0xaaab",
+        "0x73616d6520646174615f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+    ]]);
     let entries1: debug::EntriesHex = serde_json::from_value(j).unwrap();
 
-    // One entry removed which eliminates first branch node
-    let j = json!([
-        [
-            "0x0000000000000c19",
-            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
-        ],
-        [
-            "0x0000000000000fcb",
-            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
-        ]
-    ]);
+    // make data too long for inline
+    let j = json!([[
+        "0xaaac",
+        "0x73616d6520646174615f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+    ]]);
     let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
-    // One entry removed which eliminates first branch node
 
     let collection = TrieCollection::new(MapWithCounterCached::default());
 
@@ -114,16 +137,351 @@ fn test_3() {
     )
     .unwrap();
 
-    let result = verify_diff(
+    let verify_result = verify_diff(
         &collection.database,
         second_root.root,
         changes,
         no_childs,
         true,
     );
-    assert!(result.is_ok());
+    assert!(verify_result.is_ok());
 
-    let diff_patch: VerifiedPatchHexStr = result.unwrap().into();
+    let j = json!([
+        ["0xaaab", null],
+        [
+            "0xaaac",
+            "0x73616d6520646174615f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ]
+    ]);
+    let expected_trie_data: debug::EntriesHex = serde_json::from_value(j).unwrap();
+    check_changes(
+        verify_result.unwrap(),
+        &entries1
+            .data
+            .iter()
+            .map(|(k, v)| (k.as_slice(), v.as_ref().unwrap().as_slice()))
+            .collect(),
+        second_root.root,
+        expected_trie_data,
+    );
+
+    drop(second_root);
+    log::info!("second trie dropped")
+}
+
+#[test]
+fn test_1() {
+    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
+
+    let j = json!([
+        [
+            "0x0000000000000c19",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ],
+        [
+            "0x0000000000000fcb",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x00000000000010f6",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f33"
+        ]
+    ]);
+
+    let entries1: debug::EntriesHex = serde_json::from_value(j).unwrap();
+
+    let j = json!([
+        [
+            "0x0000000000000d34",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f34"
+        ],
+        [
+            "0x0000000000000f37",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f35"
+        ],
+        [
+            "0x0000000000000fcb",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f36"
+        ]
+    ]);
+    let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
+    let collection = TrieCollection::new(MapWithCounterCached::default());
+
+    let mut trie1 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &entries1.data {
+        trie1.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie1.into_patch();
+    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(first_root.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    let mut trie2 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &entries2.data {
+        trie2.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie2.into_patch();
+    let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(second_root.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    let changes = diff(
+        &collection.database,
+        no_childs,
+        first_root.root,
+        second_root.root,
+    )
+    .unwrap();
+    let verify_result = verify_diff(
+        &collection.database,
+        second_root.root,
+        changes,
+        no_childs,
+        true,
+    );
+    assert!(verify_result.is_ok());
+
+    let j = json!([
+        ["0x0000000000000c19", null],
+        ["0x00000000000010f6", null],
+        [
+            "0x0000000000000d34",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f34"
+        ],
+        [
+            "0x0000000000000f37",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f35"
+        ],
+        [
+            "0x0000000000000fcb",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f36"
+        ]
+    ]);
+
+    let expected_trie_data: debug::EntriesHex = serde_json::from_value(j).unwrap();
+    check_changes(
+        verify_result.unwrap(),
+        &entries1
+            .data
+            .iter()
+            .map(|(k, v)| (k.as_slice(), v.as_ref().unwrap().as_slice()))
+            .collect(),
+        second_root.root,
+        expected_trie_data,
+    );
+
+    drop(second_root);
+    log::info!("second trie dropped")
+}
+
+#[test]
+fn test_2() {
+    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
+
+    let j = json!([
+        [
+            "0x0000000000000c19",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ],
+        [
+            "0x0000000000000fcb",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x00000000000010f6",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f33"
+        ]
+    ]);
+
+    let entries1: debug::EntriesHex = serde_json::from_value(j).unwrap();
+    let j = json!([
+        [
+            "0x0000000000000d34",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f34"
+        ],
+        [
+            "0x0000000000000fcb",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f35"
+        ]
+    ]);
+
+    let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
+
+    let collection = TrieCollection::new(MapWithCounterCached::default());
+
+    let mut trie1 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &entries1.data {
+        trie1.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie1.into_patch();
+    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(first_root.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    let mut trie2 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &entries2.data {
+        trie2.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie2.into_patch();
+    let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(second_root.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    let changes = diff(
+        &collection.database,
+        no_childs,
+        first_root.root,
+        second_root.root,
+    )
+    .unwrap();
+    let verify_result = verify_diff(
+        &collection.database,
+        second_root.root,
+        changes,
+        no_childs,
+        true,
+    );
+    assert!(verify_result.is_ok());
+
+    let j = json!([
+        ["0x0000000000000c19", null],
+        ["0x00000000000010f6", null],
+        [
+            "0x0000000000000d34",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f34"
+        ],
+        [
+            "0x0000000000000fcb",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f35"
+        ]
+    ]);
+    let expected_trie_data: debug::EntriesHex = serde_json::from_value(j).unwrap();
+    check_changes(
+        verify_result.unwrap(),
+        &entries1
+            .data
+            .iter()
+            .map(|(k, v)| (k.as_slice(), v.as_ref().unwrap().as_slice()))
+            .collect(),
+        second_root.root,
+        expected_trie_data,
+    );
+    drop(second_root);
+    log::info!("second trie dropped")
+}
+
+#[test]
+fn test_3() {
+    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
+
+    let j = json!([
+        [
+            "0x0000000000000c19",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ],
+        [
+            "0x0000000000000fcb",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x00000000000010f6",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f33"
+        ]
+    ]);
+
+    let entries1: debug::EntriesHex = serde_json::from_value(j).unwrap();
+
+    // One entry removed which eliminates first branch node
+    let j = json!([
+        [
+            "0x0000000000000c19",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ],
+        [
+            "0x0000000000000fcb",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ]
+    ]);
+    let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
+
+    let collection = TrieCollection::new(MapWithCounterCached::default());
+
+    let mut trie1 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &entries1.data {
+        trie1.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie1.into_patch();
+    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(first_root.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    let mut trie2 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &entries2.data {
+        trie2.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie2.into_patch();
+    let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(second_root.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    let changes = diff(
+        &collection.database,
+        no_childs,
+        first_root.root,
+        second_root.root,
+    )
+    .unwrap();
+
+    let verify_result = verify_diff(
+        &collection.database,
+        second_root.root,
+        changes,
+        no_childs,
+        true,
+    );
+    assert!(verify_result.is_ok());
+
+    let diff_patch: VerifiedPatch = verify_result.unwrap();
+    let diff_patch_ser: VerifiedPatchHexStr = diff_patch.clone().into();
 
     let j = json!({
         "patch_dependencies": [
@@ -138,8 +496,169 @@ fn test_3() {
     });
     let exp_patch: VerifiedPatchHexStr = serde_json::from_value(j).unwrap();
 
-    assert_eq!(diff_patch, exp_patch);
+    assert_eq!(diff_patch_ser, exp_patch);
+    let j = json!([
+        ["0x00000000000010f6", null],
+        [
+            "0x0000000000000c19",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ],
+        [
+            "0x0000000000000fcb",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ]
+    ]);
 
+    let expected_trie_data: debug::EntriesHex = serde_json::from_value(j).unwrap();
+    check_changes(
+        diff_patch,
+        &entries1
+            .data
+            .iter()
+            .map(|(k, v)| (k.as_slice(), v.as_ref().unwrap().as_slice()))
+            .collect(),
+        second_root.root,
+        expected_trie_data,
+    );
+    drop(second_root);
+    log::info!("second trie dropped")
+}
+
+#[test]
+fn test_4() {
+    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
+
+    let j = json!([
+        [
+            "0xb0033333",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ],
+        [
+            "0x33333000",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x03333333",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x33333b33",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x33000000",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f33"
+        ]
+    ]);
+
+    // One entry removed which eliminates first branch node
+
+    let entries1: debug::EntriesHex = serde_json::from_value(j).unwrap();
+    let j = json!([
+        [
+            "0x33333333",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x33333b30",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0xf3333333",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x33333333",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ],
+        [
+            "0x3333333b",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ]
+    ]);
+
+    let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
+
+    let collection = TrieCollection::new(MapWithCounterCached::default());
+
+    let mut trie1 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &entries1.data {
+        trie1.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie1.into_patch();
+    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(first_root.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    let mut trie2 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &entries2.data {
+        trie2.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie2.into_patch();
+    let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(second_root.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    let changes = diff(
+        &collection.database,
+        no_childs,
+        first_root.root,
+        second_root.root,
+    )
+    .unwrap();
+    let verify_result = verify_diff(
+        &collection.database,
+        second_root.root,
+        changes,
+        no_childs,
+        true,
+    );
+    assert!(verify_result.is_ok());
+
+    let j = json!([
+        [
+            "0x33333333",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ],
+        [
+            "0x33333b30",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0xf3333333",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x3333333b",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ],
+        ["0xb0033333", null]
+    ]);
+
+    let expected_trie_data: debug::EntriesHex = serde_json::from_value(j).unwrap();
+    check_changes(
+        verify_result.unwrap(),
+        &entries1
+            .data
+            .iter()
+            .map(|(k, v)| (k.as_slice(), v.as_ref().unwrap().as_slice()))
+            .collect(),
+        second_root.root,
+        expected_trie_data,
+    );
     drop(second_root);
     log::info!("second trie dropped")
 }
@@ -564,8 +1083,20 @@ fn split_changes(input: Vec<Change>) -> (HashSet<H256>, HashSet<H256>) {
     let mut inserts = HashSet::<H256>::new();
     for element in input {
         match element {
-            Change::Insert(hash, _) => inserts.insert(hash),
-            Change::Removal(hash, _) => removes.insert(hash),
+            Change::Insert(hash, _) => {
+                println!(
+                    "====================== INSERT: {} ======================",
+                    hash
+                );
+                inserts.insert(hash)
+            }
+            Change::Removal(hash, _) => {
+                println!(
+                    "====================== REMOVE: {} ======================",
+                    hash
+                );
+                removes.insert(hash)
+            }
         };
     }
     (removes, inserts)
@@ -806,42 +1337,16 @@ fn test_diff_with_child_extractor() {
     );
     assert!(verify_result.is_ok());
 
-    let _diff_patch: VerifiedPatchHexStr = verify_result.unwrap().into();
-    let (removes, inserts) = split_changes(changes.clone());
+    let diff_patch: VerifiedPatch = verify_result.unwrap();
+    let _diff_patch_serialized: VerifiedPatchHexStr = diff_patch.clone().into();
+    let (removes, inserts) = split_changes(changes);
     let _common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
     // TODO: uncomment
     // ERROR:
     // assert!(_common.is_empty());
 
-    let changes = crate::Change {
-        changes: changes
-            .into_iter()
-            .map(|change| match change {
-                Change::Insert(key, val) => {
-                    println!(
-                        "====================== INSERT: {} ======================",
-                        key
-                    );
-                    (key, Some(val))
-                }
-                Change::Removal(key, _) => {
-                    println!(
-                        "====================== REMOVE: {} ======================",
-                        key
-                    );
-                    (key, None)
-                }
-            })
-            .collect(),
-    };
-
-    for (key, value) in changes.changes.into_iter().rev() {
-        if let Some(value) = value {
-            collection2
-                .database
-                .gc_insert_node(key, &value, DataWithRoot::get_childs);
-        }
-    }
+    let apply_result = collection2.apply_diff_patch(diff_patch, DataWithRoot::get_childs);
+    assert!(apply_result.is_ok());
 
     let accounts_storage = collection2.trie_for(collection1_trie2.root);
     for (k, storage) in accounts_map {
@@ -856,4 +1361,212 @@ fn test_diff_with_child_extractor() {
             );
         }
     }
+}
+
+#[test]
+fn test_try_verify_invalid_changes() {
+    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    let collection1 = TrieCollection::new(MapWithCounterCached::default());
+    let collection2 = TrieCollection::new(MapWithCounterCached::default());
+    let j = json!([
+        [
+            "0xbbaa",
+            "0x73616d6520646174615f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+        ],
+        [
+            "0xffaa",
+            "0x73616d6520646174615f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+        ],
+        [
+            "0xbbcc",
+            "0x73616d6520646174615f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+        ]
+    ]);
+    let entries: debug::EntriesHex = serde_json::from_value(j).unwrap();
+
+    let mut trie = collection1.trie_for(crate::empty_trie_hash());
+
+    for (key, value) in &entries.data {
+        trie.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie.into_patch();
+    let root_guard = collection1.apply_increase(patch, no_childs);
+
+    debug::draw(
+        &collection1.database,
+        debug::Child::Hash(root_guard.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    log::info!("the only insertion {:?}", root_guard.root);
+    let node = collection1.database.get(root_guard.root);
+    let changes = vec![Change::Insert(root_guard.root, node.to_vec())];
+
+    let result = verify_diff(
+        &collection2.database,
+        root_guard.root,
+        changes,
+        no_childs,
+        true,
+    );
+    log::info!("{:?}", result);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    match err {
+        crate::error::Error::Decoder(..) | crate::error::Error::DiffPatchApply(..) => {
+            unreachable!()
+        }
+        crate::error::Error::Verification(verification_error) => {
+            match verification_error {
+                VerificationError::MissDependencyDB(hash) => {
+                    assert_eq!(hash, H256::from_slice(&hexutil::read_hex("0x0a3d3e6b136f84355d29dadc750935a2dac1ea026245dd329fece4ad305e6613").unwrap()))
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
+#[test]
+fn test_try_apply_diff_with_deleted_db_dependency() {
+    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+
+    let j = json!([
+        [
+            "0xb0033333",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ],
+        [
+            "0x33333000",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x03333333",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x33333b33",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x33000000",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f33"
+        ]
+    ]);
+
+    let entries1: debug::EntriesHex = serde_json::from_value(j).unwrap();
+
+    // One entry removed which eliminates first branch node
+    let j = json!([
+        [
+            "0xb0033333",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ],
+        [
+            "0x33333333",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x33333b30",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0xf3333333",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x33333333",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ],
+        [
+            "0x3333333b",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f31"
+        ]
+    ]);
+    let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
+
+    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection2 = TrieCollection::new(MapWithCounterCached::default());
+
+    let mut trie1 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &entries1.data {
+        trie1.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie1.into_patch();
+    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(first_root.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    let mut trie2 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &entries2.data {
+        trie2.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie2.into_patch();
+    let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(second_root.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    let changes = diff(
+        &collection.database,
+        no_childs,
+        first_root.root,
+        second_root.root,
+    )
+    .unwrap();
+
+    let mut trie2 = collection2.trie_for(crate::empty_trie_hash());
+    for (key, value) in &entries1.data {
+        trie2.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie2.into_patch();
+    let first_root2 = collection2.apply_increase(patch, crate::gc::tests::no_childs);
+
+    let verify_result = verify_diff(
+        &collection2.database,
+        second_root.root,
+        changes,
+        no_childs,
+        true,
+    );
+    assert!(verify_result.is_ok());
+
+    // drop first root, that the patch is supposed to be based onto
+    drop(first_root2);
+    let apply_result = collection2.apply_diff_patch(verify_result.unwrap(), no_childs);
+    assert!(apply_result.is_err());
+    let err = unsafe {
+        let err = apply_result.unwrap_err_unchecked();
+        log::info!("{:?}", err);
+        err
+    };
+    match err {
+        crate::error::Error::Decoder(..) | crate::error::Error::Verification(..) => {
+            unreachable!()
+        }
+        crate::error::Error::DiffPatchApply(hash) => {
+            assert_eq!(
+                hash,
+                H256::from_slice(&hex!(
+                    "c905cc1f8c7992a69e8deabc075e6daf72029efa76b86be5e71903c0848001fb"
+                ))
+            )
+        }
+    }
+
+    drop(second_root);
+    log::info!("second trie dropped")
 }

@@ -65,24 +65,6 @@ pub struct Change {
     pub changes: VecDeque<(H256, Option<Vec<u8>>)>,
 }
 
-impl From<Vec<diff::Change>> for Change {
-    fn from(vec: Vec<diff::Change>) -> Self {
-        Self {
-            changes: vec
-                .into_iter()
-                .filter(|element| match element {
-                    diff::Change::Insert(..) => true,
-                    diff::Change::Removal(..) => false,
-                })
-                .map(|element| match element {
-                    diff::Change::Insert(key, val) => (key, Some(val)),
-                    diff::Change::Removal(..) => unreachable!(),
-                })
-                .collect(),
-        }
-    }
-}
-
 impl Change {
     /// Change to add a new raw value.
     pub fn add_raw(&mut self, key: H256, value: Vec<u8>) {

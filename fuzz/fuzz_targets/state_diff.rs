@@ -13,29 +13,33 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use triedb::empty_trie_hash;
-use triedb::gc::{DbCounter, RootGuard, TrieCollection};
 use triedb::gc::testing::MapWithCounterCached;
+use triedb::gc::TrieCollection;
 use triedb::merkle::nibble::{into_key, Nibble};
-use triedb::{diff, DiffChange};
 use triedb::TrieMut;
-
+use triedb::{diff, verify_diff};
 
 pub fn no_childs(_: &[u8]) -> Vec<H256> {
     vec![]
 }
-
 
 impl<'a> Arbitrary<'a> for Key {
     fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
         // Get an iterator of arbitrary `T`s.
         let nibble: Result<Vec<_>> = std::iter::from_fn(|| {
             Some(
-                u.choose(&[Nibble::N0, Nibble::N3, Nibble::N7, Nibble::N11, Nibble::N15])
-                    .map(|c| *c),
+                u.choose(&[
+                    Nibble::N0,
+                    Nibble::N3,
+                    Nibble::N7,
+                    Nibble::N11,
+                    Nibble::N15,
+                ])
+                .map(|c| *c),
             )
         })
-            .take(8)
-            .collect();
+        .take(8)
+        .collect();
         let mut key = [0; 4];
 
         let vec_data = into_key(&nibble?);
@@ -85,6 +89,7 @@ pub struct DataWithRoot {
 }
 
 impl DataWithRoot {
+    #[allow(unused)]
     fn get_childs(data: &[u8]) -> Vec<H256> {
         bincode::deserialize::<Self>(data)
             .ok()
@@ -101,10 +106,7 @@ impl Default for DataWithRoot {
     }
 }
 
-fn test_state_diff(
-    changes: Vec<(Key, FixedData)>,
-    changes2: Vec<(Key, FixedData)>,
-) {
+fn test_state_diff(changes: Vec<(Key, FixedData)>, changes2: Vec<(Key, FixedData)>) {
     let _ = env_logger::Builder::new().parse_filters("trace").try_init();
     let collection1 = TrieCollection::new(MapWithCounterCached::default());
     let collection2 = TrieCollection::new(MapWithCounterCached::default());
@@ -117,7 +119,7 @@ fn test_state_diff(
     }
     let patch = collection1_trie1.into_patch();
     let collection1_trie1 = collection1.apply_increase(patch.clone(), no_childs);
-    let collection2_trie1 = collection2.apply_increase(patch, no_childs);
+    let _collection2_trie1 = collection2.apply_increase(patch, no_childs);
 
     // Insert second trie into first collection and into HashMap to be able to check results
     let mut kv_map: HashMap<Key, FixedData> = HashMap::new();
@@ -132,29 +134,31 @@ fn test_state_diff(
 
     // Get diff between two tries in the first collection
 
-    let changes = diff(&collection1.database, no_childs, collection1_trie1.root, collection1_trie2.root).unwrap();
-    let changes = triedb::Change {
-        changes: changes.clone().into_iter().map(|change| {
-            match change {
-                DiffChange::Insert(key, val) => {
-                    (key, Some(val))
-                },
-                DiffChange::Removal(key, _) => {
-                    (key, None)
-                },
-            }
-        }).collect()
-    };
+    let changes = diff(
+        &collection1.database,
+        no_childs,
+        collection1_trie1.root,
+        collection1_trie2.root,
+    )
+    .unwrap();
+
+    let verify_result = verify_diff(
+        &collection2.database,
+        collection1_trie2.root,
+        changes,
+        no_childs,
+        false,
+    );
+    assert!(verify_result.is_ok());
+
     // Apply changes over the initial trie in the second collection
-    collection2.apply_changes(changes, no_childs);
+    let apply_result = collection2.apply_diff_patch(verify_result.unwrap(), no_childs);
+    assert!(apply_result.is_ok());
 
     // Compare contents of HashMap and final trie in the second collection
     let trie = collection2.trie_for(collection1_trie2.root);
     for (key, value) in kv_map {
-        assert_eq!(
-            &value.0[..],
-            &TrieMut::get(&trie, &key.0).unwrap()
-        );
+        assert_eq!(&value.0[..], &TrieMut::get(&trie, &key.0).unwrap());
     }
 }
 
