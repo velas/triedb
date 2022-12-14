@@ -1,9 +1,13 @@
+use primitive_types::H256;
+
 use crate::ops::diff::verify::VerificationError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    DecoderError(#[from] rlp::DecoderError),
+    Decoder(#[from] rlp::DecoderError),
     #[error(transparent)]
-    VerificationError(#[from] VerificationError),
+    Verification(#[from] VerificationError),
+    #[error("missing dependency node in DB `{0:?}`")]
+    DiffPatchApply(H256),
 }

@@ -172,52 +172,34 @@ impl<D: DbCounter + Database> TrieCollection<D> {
     }
 
     /// Sort changes from root to leaf and apply
-    pub fn apply_changes<F>(&self, change: Change, mut child_extractor: F)
+    pub fn apply_diff_patch<F>(
+        &self,
+        patch: crate::VerifiedPatch,
+        mut child_extractor: F,
+    ) -> crate::Result<RootGuard<D, F>>
     where
         F: FnMut(&[u8]) -> Vec<H256> + Clone,
     {
-        let mut sorted: Vec<(H256, Vec<u8>)> = vec![];
-        let mut referenced = vec![];
-        for (key, value) in change.changes.into_iter().rev() {
-            if let Some(value) = value {
-                let rlp = Rlp::new(&value);
-                let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-                referenced.extend_from_slice(
-                    &ReachableHashes::collect(&node, child_extractor.clone()).childs(),
-                );
-                let child = sorted
-                    .iter()
-                    .enumerate()
-                    .find(|(_i, (key, _))| match &node {
-                        MerkleNode::Branch(Branch { childs: values, .. }) => {
-                            values.iter().any(|value| {
-                                if let MerkleValue::Hash(k) = value {
-                                    return *k == *key;
-                                }
-                                false
-                            })
-                        }
-                        MerkleNode::Extension(Extension { value, .. }) => {
-                            if let MerkleValue::Hash(k) = value {
-                                return *k == *key;
-                            }
-                            false
-                        }
-                        MerkleNode::Leaf(_) => false,
-                    });
-                match child {
-                    None => sorted.push((key, value)),
-                    Some((i, _)) => sorted.insert(i, (key, value)),
+        let root_guard = RootGuard::new(&self.database, patch.target_root, child_extractor.clone());
+        for (key, value) in patch.sorted_changes.iter() {
+            self.database
+                .gc_insert_node(*key, value, &mut child_extractor);
+        }
+
+        // verifying, that `patch_dependencies` haven't left db since patch verification moment
+        for (_, value) in patch.sorted_changes.iter() {
+            let node = MerkleNode::decode(&Rlp::new(value))?;
+
+            let childs: Vec<H256> =
+                ReachableHashes::collect(&node, child_extractor.clone()).childs();
+            for hash in childs {
+                if !self.database.node_exist(hash) {
+                    return Err(crate::error::Error::DiffPatchApply(hash));
                 }
             }
         }
-        for (key, value) in sorted.into_iter() {
-            self.database
-                .gc_insert_node(key, &value, &mut child_extractor);
-        }
-        for hash in referenced {
-            assert!(self.database.node_exist(hash));
-        }
+
+        Ok(root_guard)
     }
 }
 
@@ -884,28 +866,6 @@ pub mod tests {
 
         assert_eq!(shared_db.data.len(), 0);
         assert_eq!(shared_db.counter.len(), 0);
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_apply_invalid_changes() {
-        let collection1 = TrieCollection::new(MapWithCounterCached::default());
-        let collection2 = TrieCollection::new(MapWithCounterCached::default());
-
-        let mut trie = collection1.trie_for(crate::empty_trie_hash());
-        trie.insert(&hex!("bbaa"), b"same data________________________");
-        trie.insert(&hex!("ffaa"), b"same data________________________");
-        trie.insert(&hex!("bbcc"), b"same data________________________");
-        let patch = trie.into_patch();
-        let root_guard = collection1.apply_increase(patch, no_childs);
-
-        let node = collection1.database.get(root_guard.root);
-        let changes = Change {
-            changes: vec![(root_guard.root, Some(node.to_vec()))].into(),
-        };
-
-        // Change contains only root node so assert will fail
-        collection2.apply_changes(changes, no_childs);
     }
 
     #[quickcheck]

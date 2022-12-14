@@ -893,6 +893,7 @@ dependencies = [
  "anyhow",
  "dashmap",
  "derivative",
+ "etcommon-hexutil",
  "log",
  "primitive-types",
  "rayon",

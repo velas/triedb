@@ -121,9 +121,7 @@ impl std::fmt::Display for Node {
         };
         let value: String = match &self.value {
             Some(s) => {
-                let val = std::str::from_utf8(s)
-                    .map(|s| s.to_owned())
-                    .unwrap_or_else(|_| format!("bytes {:?}", s));
+                let val = hexutil::to_hex(s);
                 let mut res = " : ".to_owned();
                 res.push_str(&val);
                 res
@@ -135,6 +133,15 @@ impl std::fmt::Display for Node {
             "[{}] - {:?} <0x{}> {}",
             hash, self.node_type, self.key, value
         )
+    }
+}
+pub trait DebugPrintExt {
+    fn print(&self);
+}
+
+impl<T: std::fmt::Display> DebugPrintExt for termtree::Tree<T> {
+    fn print(&self) {
+        log::info!("\n{}", self);
     }
 }
 
