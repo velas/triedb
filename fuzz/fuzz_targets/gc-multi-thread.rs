@@ -8,8 +8,7 @@ pub struct Key(pub [u8; 4]);
 #[derive(Copy, Clone, Eq, Hash, PartialEq, Debug)]
 pub struct FixedData(pub [u8; 32]);
 
-use primitive_types::H256;
-use serde::{Deserialize, Serialize};
+use triedb::debug::child_extractor::DataWithRoot;
 use std::collections::HashMap;
 use tempfile::tempdir;
 use triedb::empty_trie_hash;
@@ -129,27 +128,6 @@ impl<'a> Arbitrary<'a> for MyArgs {
 
 fuzz_target!(|arg: MyArgs| { qc_handles_inner_roots(arg.changes, arg.changes2) });
 
-#[derive(Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct DataWithRoot {
-    pub root: H256,
-}
-
-impl DataWithRoot {
-    fn get_childs(data: &[u8]) -> Vec<H256> {
-        bincode::deserialize::<Self>(data)
-            .ok()
-            .into_iter()
-            .map(|e| e.root)
-            .collect()
-    }
-}
-impl Default for DataWithRoot {
-    fn default() -> Self {
-        Self {
-            root: empty_trie_hash!(),
-        }
-    }
-}
 
 fn routine(db: std::sync::Arc<DB>, changes: Vec<(Key, Vec<(Key, FixedData)>)>) {
     let cf = db.cf_handle("counter").unwrap();

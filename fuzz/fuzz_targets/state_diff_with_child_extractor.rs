@@ -1,6 +1,6 @@
 #![no_main]
 
-use arbitrary::{Arbitrary, Error, Result, Unstructured};
+use arbitrary::{Arbitrary, Result, Unstructured};
 use libfuzzer_sys::{arbitrary, fuzz_target};
 
 #[derive(Copy, Clone, Eq, Hash, PartialEq, Debug)]
@@ -8,12 +8,12 @@ pub struct Key(pub [u8; 4]);
 #[derive(Copy, Clone, Eq, Hash, PartialEq, Debug)]
 pub struct FixedData(pub [u8; 32]);
 
-use primitive_types::H256;
-use serde::{Deserialize, Serialize};
+use triedb::debug::DebugPrintExt;
+use triedb::debug::child_extractor::DataWithRoot;
 use std::collections::HashMap;
 
-use triedb::empty_trie_hash;
-use triedb::gc::testing::MapWithCounterCached;
+use triedb::{empty_trie_hash, debug};
+use triedb::debug::MapWithCounterCached;
 use triedb::gc::{RootGuard, TrieCollection};
 use triedb::merkle::nibble::{into_key, Nibble};
 
@@ -66,49 +66,34 @@ pub struct MyArgs {
 
 impl<'a> Arbitrary<'a> for MyArgs {
     fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
-        let changes: Vec<(Key, Vec<(Key, FixedData)>)> = u.arbitrary()?;
-        if changes.len() < 5 {
-            return Err(Error::NotEnoughData);
-        }
-        for change in &changes {
-            if change.1.len() < 5 {
-                return Err(Error::NotEnoughData);
+        let mut changes: Vec<(Key, Vec<(Key, FixedData)>)> = vec![];
+        let mut changes2: Vec<(Key, Vec<(Key, FixedData)>)> = vec![];
+
+        for _ in 0..3 {
+            let account: Key = u.arbitrary()?;
+            let mut storage = vec![];
+            for _ in 0..3 {
+                let key: Key = u.arbitrary()?;
+                let val: FixedData = u.arbitrary()?;
+                storage.push((key, val));
             }
+            changes.push((account, storage))
         }
 
-        let changes2: Vec<(Key, Vec<(Key, FixedData)>)> = u.arbitrary()?;
-        if changes2.len() < 5 {
-            return Err(Error::NotEnoughData);
-        }
-        for change in &changes2 {
-            if change.1.len() < 5 {
-                return Err(Error::NotEnoughData);
+        for _ in 0..3 {
+            let account: Key = u.arbitrary()?;
+            let mut storage = vec![];
+            for _ in 0..3 {
+                let key: Key = u.arbitrary()?;
+                let val: FixedData = u.arbitrary()?;
+                storage.push((key, val));
             }
+            changes2.push((account, storage))
         }
+
+
 
         Ok(MyArgs { changes, changes2 })
-    }
-}
-
-#[derive(Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct DataWithRoot {
-    pub root: H256,
-}
-
-impl DataWithRoot {
-    fn get_childs(data: &[u8]) -> Vec<H256> {
-        bincode::deserialize::<Self>(data)
-            .ok()
-            .into_iter()
-            .map(|e| e.root)
-            .collect()
-    }
-}
-impl Default for DataWithRoot {
-    fn default() -> Self {
-        Self {
-            root: empty_trie_hash!(),
-        }
     }
 }
 
@@ -116,7 +101,7 @@ fn test_state_diff(
     changes: Vec<(Key, Vec<(Key, FixedData)>)>,
     changes2: Vec<(Key, Vec<(Key, FixedData)>)>,
 ) {
-    let _ = env_logger::Builder::new().parse_filters("trace").try_init();
+    let _ = env_logger::Builder::new().parse_filters("error").try_init();
     let collection1 = TrieCollection::new(MapWithCounterCached::default());
     let collection2 = TrieCollection::new(MapWithCounterCached::default());
 
@@ -137,55 +122,74 @@ fn test_state_diff(
     );
 
     // Insert first trie into collections
-    for (k, storage) in changes.iter() {
+    for (account_key, storage) in changes.iter() {
         for (data_key, data) in storage {
             {
-                // Create patch with account and storage changes
-                let mut account_trie = collection1.trie_for(collection1_trie1.root);
-                let mut account: DataWithRoot = TrieMut::get(&account_trie, &k.0)
-                    .map(|d| bincode::deserialize(&d).unwrap())
-                    .unwrap_or_default();
-                let mut storage_trie = collection1.trie_for(account.root);
-                storage_trie.insert(&data_key.0, &data.0);
-                let storage_patch = storage_trie.into_patch();
-                account.root = storage_patch.root;
-                account_trie.insert(&k.0, &bincode::serialize(&account).unwrap());
-                let mut account_patch = account_trie.into_patch();
-                account_patch.change.merge_child(&storage_patch.change);
-
-                // Apply patch over two collections
-                collection1_trie1 = collection1
-                    .apply_increase(account_patch.clone(), DataWithRoot::get_childs);
-                _collection2_trie1 =
-                    collection2.apply_increase(account_patch, DataWithRoot::get_childs);
+                collection1_trie1 = debug::child_extractor::insert_element(
+                    &collection1,
+                    &account_key.0,
+                    &data_key.0,
+                    &data.0,
+                    collection1_trie1.root,
+                    DataWithRoot::get_childs,
+                );
+            }
+            {
+                _collection2_trie1 = debug::child_extractor::insert_element(
+                    &collection2,
+                    &account_key.0,
+                    &data_key.0,
+                    &data.0,
+                    _collection2_trie1.root,
+                    DataWithRoot::get_childs,
+                );
             }
         }
     }
 
     // Insert second trie into first collection and into HashMap to be able to check results
     let mut accounts_map: HashMap<Key, HashMap<Key, FixedData>> = HashMap::new();
-    for (k, storage) in changes2.iter() {
-        let account_updates = accounts_map.entry(*k).or_insert(HashMap::default());
 
+    for (account_key, storage) in changes2.iter() {
+        let account_updates = accounts_map.entry(*account_key).or_default();
         for (data_key, data) in storage {
-            let mut account_trie = collection1.trie_for(collection1_trie2.root);
-            let mut account: DataWithRoot = TrieMut::get(&account_trie, &k.0)
-                .map(|d| bincode::deserialize(&d).unwrap())
-                .unwrap_or_default();
-            let mut storage_trie = collection1.trie_for(account.root);
             account_updates.insert(*data_key, *data);
-            storage_trie.insert(&data_key.0, &data.0);
-            let storage_patch = storage_trie.into_patch();
-            account.root = storage_patch.root;
-            account_trie.insert(&k.0, &bincode::serialize(&account).unwrap());
-            let mut account_patch = account_trie.into_patch();
-            account_patch.change.merge_child(&storage_patch.change);
-
-            collection1_trie2 =
-                collection1.apply_increase(account_patch, DataWithRoot::get_childs);
         }
     }
+    for (account_key, storage) in changes2.iter() {
 
+        for (data_key, data) in storage {
+            {
+                collection1_trie2 = debug::child_extractor::insert_element(
+                    &collection1,
+                    &account_key.0,
+                    &data_key.0,
+                    &data.0,
+                    collection1_trie2.root,
+                    DataWithRoot::get_childs,
+                );
+            }
+        }
+    }
+    debug::draw(
+        &collection1.database,
+        debug::Child::Hash(collection1_trie1.root),
+        vec![],
+        DataWithRoot::get_childs,
+    )
+    .print();
+
+    debug::draw(
+        &collection1.database,
+        debug::Child::Hash(collection1_trie2.root),
+        vec![],
+        DataWithRoot::get_childs,
+    )
+    .print();
+
+    if collection1_trie1.root == collection1_trie2.root {
+        return;
+    }
     // Get diff between two tries in the first collection
     let changes = diff(
         &collection1.database,
@@ -200,8 +204,11 @@ fn test_state_diff(
         collection1_trie2.root,
         changes,
         DataWithRoot::get_childs,
-        false,
+        true,
     );
+    if let Err(x) = &verify_result {
+        log::error!("{:?}", x);
+    }
     assert!(verify_result.is_ok());
     // Apply changes over the initial trie in the second collection
     let apply_result = collection2.apply_diff_patch(verify_result.unwrap(), DataWithRoot::get_childs);

@@ -5,6 +5,7 @@ use rlp::Rlp;
 use serde_json::json;
 
 use crate::debug::DebugPrintExt;
+use crate::debug::MapWithCounterCached;
 use crate::gc::DbCounter;
 use crate::gc::TrieCollection;
 use crate::merkle::MerkleNode;
@@ -37,7 +38,6 @@ fn no_childs(_: &[u8]) -> Vec<H256> {
 // ['a','b'] -> 'aa' -> ['a', 'b']
 // branch -> extension -> branch
 use super::Change;
-use crate::gc::testing::MapWithCounterCached;
 
 #[test]
 fn test_extension_replaced_by_branch_extension() {

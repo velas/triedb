@@ -891,6 +891,7 @@ name = "triedb"
 version = "0.5.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "dashmap",
  "derivative",
  "etcommon-hexutil",
@@ -899,6 +900,7 @@ dependencies = [
  "rayon",
  "rlp",
  "rocksdb",
+ "serde",
  "sha3",
  "termtree",
  "thiserror",
@@ -912,6 +914,7 @@ dependencies = [
  "env_logger",
  "etcommon-hexutil",
  "libfuzzer-sys",
+ "log",
  "primitive-types",
  "rocksdb",
  "serde",

@@ -16,6 +16,7 @@ rocksdb = { package = "rocksdb", git = "https://github.com/velas/rust-rocksdb", 
 etcommon-hexutil = "0.2.4"
 primitive-types = { version = "0.11.0", features = ["rlp", "serde"] }
 env_logger = "0.9"
+log="0.4"
 
 tempfile = "3.2.0"
 

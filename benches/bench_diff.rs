@@ -6,11 +6,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use primitive_types::H256;
 use rand::seq::index::sample;
 
-use triedb::{
-    diff, empty_trie_hash,
-    gc::{testing::MapWithCounterCached, TrieCollection},
-    TrieMut,
-};
+use triedb::{debug::MapWithCounterCached, diff, empty_trie_hash, gc::TrieCollection, TrieMut};
 
 pub fn no_childs(_: &[u8]) -> Vec<H256> {
     vec![]
