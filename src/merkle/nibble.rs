@@ -6,7 +6,7 @@ use rlp::{Rlp, RlpStream};
 
 use crate::Result;
 
-use super::{Branch, Extension, Leaf, MerkleValue};
+use super::{Branch, Extension, MerkleValue};
 
 /// Represents a nibble. A 16-variant value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

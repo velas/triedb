@@ -97,6 +97,13 @@ impl<'a> MerkleNode<'a> {
         }
     }
 
+    pub fn filter_extension(&self) -> Option<&Self> {
+        match *self {
+            Self::Extension(..) => None,
+            _ => Some(self),
+        }
+    }
+
     /// Whether the node can be inlined to a merkle value.
     pub fn inlinable(&self) -> bool {
         rlp::encode(self).to_vec().len() < 32
