@@ -1,35 +1,61 @@
 use std::borrow::Borrow;
-use std::convert::TryFrom;
-use std::ops::{ControlFlow, Deref, DerefMut};
+use std::ops::Deref;
 use std::sync::RwLock;
 
-use crate::gc::ReachableHashes;
-use crate::merkle::nibble::{self, Entry, Nibble, NibbleSlice, NibbleVec};
-use crate::merkle::{Branch, Extension, Leaf, MerkleNode, MerkleValue};
-use crate::walker::inspector::TrieInspector;
+use crate::merkle::nibble::{self, Entry, Nibble};
+use crate::merkle::{Branch, Leaf, MerkleNode, MerkleValue};
+use crate::walker::inspector::{NoopInspector, TrieInspector};
 use crate::Database;
 use primitive_types::H256;
 use rlp::Rlp;
-mod types;
-
+use std::fmt;
 pub mod verify;
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(feature = "tracing-enable")]
 use tracing::instrument;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Change {
     Insert(H256, Vec<u8>),
     Removal(H256, Vec<u8>),
 }
 
+impl fmt::Debug for Change {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Insert(h, d) => f
+                .debug_struct("Insert")
+                .field("hash", &h)
+                .field("data", &hexutil::to_hex(&d))
+                .finish(),
+            Self::Removal(h, d) => f
+                .debug_struct("Removal")
+                .field("hash", &h)
+                .field("data", &hexutil::to_hex(&d))
+                .finish(),
+        }
+    }
+}
+
 ///
 /// Representation of node with data field (Leaf, or Branch when value.is_some())
 ///
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct DataNode {
     hash: H256,
     data: Vec<u8>,
+}
+
+impl fmt::Debug for DataNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DataNode")
+            .field("hash", &self.hash)
+            .field("data", &hexutil::to_hex(&self.data))
+            .finish()
+    }
 }
 
 impl<'a> From<KeyedMerkleNode<'a>> for Option<DataNode> {
@@ -70,6 +96,34 @@ impl DataNodeChange {
     }
     fn is_empty(&self) -> bool {
         self.left.is_none() && self.right.is_none()
+    }
+
+    fn left_roots<F>(&self, mut func: F) -> Option<Vec<H256>>
+    where
+        F: FnMut(&[u8]) -> Vec<H256>,
+    {
+        self.left.as_ref().and_then(|l| {
+            let array = func(&l.data);
+            if array.is_empty() {
+                None
+            } else {
+                Some(array)
+            }
+        })
+    }
+
+    fn right_roots<F>(&self, mut func: F) -> Option<Vec<H256>>
+    where
+        F: FnMut(&[u8]) -> Vec<H256>,
+    {
+        self.right.as_ref().and_then(|r| {
+            let array = func(&r.data);
+            if array.is_empty() {
+                None
+            } else {
+                Some(array)
+            }
+        })
     }
 }
 
@@ -121,6 +175,52 @@ impl Changes {
         }
     }
 
+    #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
+    fn insert_with_register_child<'a>(&mut self, hash: H256, node: &KeyedMerkleNode<'a>) {
+        self.insert_node(node.borrow());
+        let data_change = DataNodeChange {
+            left: None,
+            right: node
+                .borrow()
+                .merkle_node()
+                .filter_extension()
+                .and_then(MerkleNode::data)
+                .map(|data| DataNode {
+                    hash: hash,
+                    data: data.to_vec(),
+                }),
+        };
+
+        // skip empty inserts
+        if !data_change.is_empty() {
+            self.data_diff.push(data_change);
+        }
+    }
+
+    #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
+    fn remove_with_register_child<'a>(&mut self, hash: H256, node: &KeyedMerkleNode<'a>) {
+        self.remove_node(node.borrow());
+
+        let data_change = DataNodeChange {
+            left: node
+                .borrow()
+                .merkle_node()
+                .filter_extension()
+                .and_then(MerkleNode::data)
+                .map(|data| DataNode {
+                    hash: hash,
+                    data: data.to_vec(),
+                }),
+            right: None,
+        };
+
+        // skip empty inserts
+        if !data_change.is_empty() {
+            self.data_diff.push(data_change);
+        }
+    }
+
+    #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
     fn register_data_change<'a>(
         &mut self,
         left_entry: &KeyedMerkleNode,
@@ -155,7 +255,7 @@ struct OpCollector<F> {
     changes: RwLock<Changes>,
     func: F,
 }
-impl<F: Fn(H256, Vec<u8>) -> Change> OpCollector<F> {
+impl<F: Fn(&mut Changes, H256, Vec<u8>)> OpCollector<F> {
     pub fn new(func: F) -> Self {
         Self {
             changes: Default::default(),
@@ -166,14 +266,14 @@ impl<F: Fn(H256, Vec<u8>) -> Change> OpCollector<F> {
 
 impl<F> crate::walker::inspector::TrieInspector for OpCollector<F>
 where
-    F: Fn(H256, Vec<u8>) -> Change,
+    F: Fn(&mut Changes, H256, Vec<u8>),
 {
     fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> anyhow::Result<bool> {
-        self.changes
-            .write()
-            .unwrap()
-            .changes
-            .push((self.func)(trie_key, node.as_ref().to_vec()));
+        (self.func)(
+            &mut *self.changes.write().unwrap(),
+            trie_key,
+            node.as_ref().to_vec(),
+        );
         Ok(true)
     }
 }
@@ -240,11 +340,24 @@ enum ComparePathResult {
     Uncomparable,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum KeyedMerkleNode<'a> {
     // Merkle node is only exist as inlined node
     Partial(MerkleNode<'a>),
     FullEncoded(H256, &'a [u8]),
+}
+
+impl<'a> fmt::Debug for KeyedMerkleNode<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Partial(p) => p.fmt(f),
+            Self::FullEncoded(h, d) => f
+                .debug_struct("FullEncoded")
+                .field("hash", &h)
+                .field("node", &hexutil::to_hex(&d))
+                .finish(),
+        }
+    }
 }
 
 impl<'a> KeyedMerkleNode<'a> {
@@ -287,8 +400,33 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
         start_state_root: H256,
         end_state_root: H256,
     ) -> Result<Vec<Change>, ()> {
-        self.compare_roots(start_state_root, end_state_root)
-            .map(|c| c.changes)
+        // two layers of changes
+        let Changes {
+            data_diff,
+            mut changes,
+        } = self.compare_roots(start_state_root, end_state_root)?;
+        for data_change in data_diff {
+            let left_roots = data_change.left_roots(self.child_extractor.clone());
+            let right_roots = data_change.right_roots(self.child_extractor.clone());
+            dbg!(&data_change);
+            // TODO: Replace by static array, child_collector: Fn(&data) -> Option<Array<STATIC_LEN>>
+            let mut left_iter = left_roots.into_iter().flatten();
+            let mut right_iter = right_roots.into_iter().flatten();
+            loop {
+                let left = left_iter.next();
+                let right = right_iter.next();
+                dbg!(&left);
+                dbg!(&right);
+                if left.is_none() && right.is_none() {
+                    break;
+                }
+                let left = left.unwrap_or_else(crate::empty_trie_hash);
+                let right = right.unwrap_or_else(crate::empty_trie_hash);
+                let child_changes = self.compare_roots(left, right)?;
+                changes.extend_from_slice(&child_changes.changes)
+            }
+        }
+        return Ok(changes);
     }
 
     fn fetch_node(&self, hash: H256) -> KeyedMerkleNode<'_> {
@@ -386,6 +524,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
         }
     }
 
+    #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
     fn compare_content(
         &self,
         left_entry: Entry<KeyedMerkleNode>,
@@ -404,19 +543,15 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                 unreachable!("Matching extension node is not possible during content coparsion")
             }
             // One leaf was replaced by other. (data changed)
-            (
-                MerkleNode::Leaf(Leaf { nibbles: lkey, .. }),
-                MerkleNode::Leaf(Leaf { nibbles: rkey, .. }),
-            ) => {
-                assert_eq!(lkey, rkey);
-
+            (MerkleNode::Leaf(..), MerkleNode::Leaf(..)) => {
                 // same account with changed data
                 changes.register_data_change(&left_entry.value, Some(&right_entry.value));
 
                 // if node is not same then it replace of new node
                 // TODO: Why deep_remove/insert ?
-                changes.extend(&self.deep_remove(left_entry.value));
-                changes.extend(&self.deep_insert(right_entry.value));
+
+                changes.remove_node(&left_entry.value);
+                changes.insert_node(&right_entry.value);
             }
             // Branches on same level, but values were changed.
             (
@@ -457,25 +592,33 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                 }
             }
             // Leaf was replaced by subtree.
-            (MerkleNode::Leaf(Leaf { .. }), MerkleNode::Branch(Branch { .. }))
-            | (MerkleNode::Branch(Branch { .. }), MerkleNode::Leaf(Leaf { .. })) => {
-                // Only process data change if Data exist, elsewhere trigger as data removing.
+            (MerkleNode::Leaf(Leaf { .. }), MerkleNode::Branch(Branch { .. })) => {
+                changes.register_data_change(&left_entry.value, Some(&right_entry.value));
+
+                changes.remove_node(&left_entry.value);
+                changes.extend(&self.deep_insert(right_entry.value));
+            }
+            (MerkleNode::Branch(Branch { .. }), MerkleNode::Leaf(Leaf { .. })) => {
                 changes.register_data_change(&left_entry.value, Some(&right_entry.value));
 
                 changes.extend(&self.deep_remove(left_entry.value));
-                changes.extend(&self.deep_insert(right_entry.value));
+                changes.insert_node(&right_entry.value);
             }
         }
 
         changes
     }
 
+    #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
     fn compare_content_traverse(
         &self,
         left_entry: Entry<KeyedMerkleNode>,
         right_entry: Entry<KeyedMerkleNode>,
         mut changes: Changes,
     ) -> Changes {
+        changes.register_data_change(&left_entry.value, None);
+        changes.remove_node(&left_entry.value);
+
         match left_entry.value.merkle_node() {
             MerkleNode::Extension(..) => {
                 unreachable!("Matching extension node is not possible during content coparsion")
@@ -485,13 +628,9 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
             // And new series of branches with longer keys was added
             // So mark leaf as removed, and traverse branch as new insertion.
             MerkleNode::Leaf(..) => {
-                changes.register_data_change(&left_entry.value, None);
-                changes.extend(&self.deep_remove(left_entry.value));
                 changes.extend(&self.deep_insert(right_entry.value));
             }
             MerkleNode::Branch(branch) => {
-                changes.register_data_change(&left_entry.value, None);
-                changes.remove_node(&left_entry.value);
                 changes
                     .extend(&self.walk_branch(Entry::new(left_entry.nibble, branch), right_entry));
             }
@@ -499,56 +638,46 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
 
         changes
     }
+    // TODO: add a way to handle PartialNode
     fn deep_op<FN>(&self, node: KeyedMerkleNode, ti: OpCollector<FN>) -> Changes
     where
         OpCollector<FN>: TrieInspector + Sync + Send,
     {
         //TODO: Check that partial node can be handled correctly in diff
-        let merkle_hashes = match node {
-            KeyedMerkleNode::FullEncoded(hash, _) => vec![hash],
-            KeyedMerkleNode::Partial(node) => {
-                ReachableHashes::collect(&node, self.child_extractor.clone()).childs()
+        let merkle_hash = match node {
+            KeyedMerkleNode::FullEncoded(hash, _) => hash,
+            KeyedMerkleNode::Partial(_) => {
+                unreachable!("Partial can't have any hashes"); //its len < 32
             }
         };
 
-        let data_inspector = ChildCollector {
-            child_hashes: Default::default(),
-            child_extractor: self.child_extractor.clone(),
-        };
-        let walker = crate::walker::Walker::new_raw(self.db.borrow(), ti, data_inspector);
-        let mut hashes_to_traverse = merkle_hashes;
-        loop {
-            for hash in hashes_to_traverse {
-                walker.traverse(hash).unwrap()
-            }
+        let walker = crate::walker::Walker::new_raw(self.db.borrow(), ti, NoopInspector);
 
-            hashes_to_traverse = std::mem::take(
-                walker
-                    .data_inspector
-                    .child_hashes
-                    .write()
-                    .unwrap()
-                    .deref_mut(),
-            );
-            if hashes_to_traverse.is_empty() {
-                break;
-            }
-        }
+        walker
+            .traverse(merkle_hash)
+            .expect("We should be able to traverse tree.");
         walker
             .trie_inspector
             .changes
             .into_inner()
             .expect("lock poisoned")
     }
+
     #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
     fn deep_insert(&self, node: KeyedMerkleNode) -> Changes {
-        let collector = OpCollector::new(Change::Insert);
+        let collector = OpCollector::new(|c: &mut Changes, h: H256, d: Vec<u8>| {
+            let node = KeyedMerkleNode::FullEncoded(h, &d);
+            c.insert_with_register_child(h, &node)
+        });
         self.deep_op(node, collector)
     }
 
     #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
     fn deep_remove(&self, node: KeyedMerkleNode) -> Changes {
-        let collector = OpCollector::new(Change::Removal);
+        let collector = OpCollector::new(|c: &mut Changes, h: H256, d: Vec<u8>| {
+            let node = KeyedMerkleNode::FullEncoded(h, &d);
+            c.remove_with_register_child(h, &node)
+        });
         self.deep_op(node, collector)
     }
 

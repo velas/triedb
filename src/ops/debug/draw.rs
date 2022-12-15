@@ -203,7 +203,7 @@ where
             hash: None,
             node_type: NodeType::Embed,
             key: NibbleDisplay(vec![]),
-            value: None,
+            value: Some(hash.as_bytes().to_vec()),
         };
         let mut link_tree = termtree::Tree::new(link_node);
         link_tree.push(draw(db, Child::Hash(hash), vec![], child_extractor.clone()));
