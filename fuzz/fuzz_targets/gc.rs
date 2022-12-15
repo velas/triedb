@@ -2,14 +2,13 @@
 
 use arbitrary::{Arbitrary, Error, Result, Unstructured};
 use libfuzzer_sys::{arbitrary, fuzz_target};
+use triedb::debug::child_extractor::DataWithRoot;
 
 #[derive(Copy, Clone, Eq, Hash, PartialEq, Debug)]
 pub struct Key(pub [u8; 4]);
 #[derive(Copy, Clone, Eq, Hash, PartialEq, Debug)]
 pub struct FixedData(pub [u8; 32]);
 
-use primitive_types::H256;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tempfile::tempdir;
 use triedb::empty_trie_hash;
@@ -117,27 +116,6 @@ impl<'a> Arbitrary<'a> for MyArgs {
 
 fuzz_target!(|arg: MyArgs| { qc_handles_inner_roots(arg.changes) });
 
-#[derive(Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct DataWithRoot {
-    pub root: H256,
-}
-
-impl DataWithRoot {
-    fn get_childs(data: &[u8]) -> Vec<H256> {
-        bincode::deserialize::<Self>(data)
-            .ok()
-            .into_iter()
-            .map(|e| e.root)
-            .collect()
-    }
-}
-impl Default for DataWithRoot {
-    fn default() -> Self {
-        Self {
-            root: empty_trie_hash!(),
-        }
-    }
-}
 
 fn qc_handles_inner_roots(changes: Vec<(Key, Vec<(Key, FixedData)>)>) {
     let dir = tempdir().unwrap();
@@ -157,7 +135,7 @@ fn qc_handles_inner_roots(changes: Vec<(Key, Vec<(Key, FixedData)>)>) {
     let mut accounts_map: HashMap<Key, HashMap<Key, FixedData>> = HashMap::new();
     {
         for (k, storage) in changes.iter() {
-            let account_updates = accounts_map.entry(*k).or_insert(HashMap::default());
+            let account_updates = accounts_map.entry(*k).or_default();
 
             for (data_key, data) in storage {
                 let mut account_trie = collection.trie_for(top_level_root.root);

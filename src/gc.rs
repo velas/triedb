@@ -476,13 +476,10 @@ pub mod testing {
     use dashmap::mapref::entry::Entry;
     use log::trace;
     use primitive_types::H256;
-    use std::sync::Arc;
 
-    use crate::cache::AsyncCachedHandle;
+    use super::DbCounter;
+    use crate::debug::MapWithCounterCached;
 
-    use super::{DbCounter, MapWithCounter};
-
-    pub type MapWithCounterCached = AsyncCachedHandle<Arc<MapWithCounter>>;
     impl DbCounter for MapWithCounterCached {
         // Insert value into db.
         // Check if value exist before, if not exist, increment child counter.
@@ -581,9 +578,9 @@ pub mod tests {
     /// short fixed lenght key, with 4 nimbles
     /// To simplify fuzzying each nimble is one of [0,3,7,b,f]
     #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-    pub struct Key(pub [u8; 4]);
+    pub struct FixedKey(pub [u8; 4]);
 
-    impl Arbitrary for Key {
+    impl Arbitrary for FixedKey {
         fn arbitrary(g: &mut Gen) -> Self {
             let nibble: Vec<_> = std::iter::from_fn(|| {
                 g.choose(&[Nibble::N0, Nibble::N3, Nibble::N7, Nibble::N11, Nibble::N15])
@@ -613,6 +610,44 @@ pub mod tests {
                 fixed[0] = 0xff
             }
             Self(fixed)
+        }
+    }
+
+    pub const RNG_DATA_SIZE: usize = 64;
+    const RANDOM_FIXED_DATA_SIZE: usize = 32;
+    #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Eq, Debug, Hash)]
+    pub struct RandomFixedData(pub [u8; 32]);
+
+    impl Arbitrary for RandomFixedData {
+        fn arbitrary(g: &mut Gen) -> Self {
+            let mut vec = Vec::arbitrary(g);
+            while vec.len() < RANDOM_FIXED_DATA_SIZE {
+                vec = Vec::arbitrary(g);
+            }
+            let slice: &[u8] = &vec[0..RANDOM_FIXED_DATA_SIZE];
+            let mut arr = [0; 32];
+            arr.copy_from_slice(slice);
+            Self(arr)
+        }
+    }
+
+    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+    pub struct VariableKey(pub Vec<u8>);
+
+    impl Arbitrary for VariableKey {
+        fn arbitrary(g: &mut Gen) -> Self {
+            let len: usize = g.choose(&[0, 2, 4, 6, 8, 10, 12]).copied().unwrap();
+            let nibble: Vec<_> = std::iter::from_fn(|| {
+                g.choose(&[Nibble::N0, Nibble::N3, Nibble::N7, Nibble::N11, Nibble::N15])
+                    .copied()
+            })
+            .take(len)
+            .collect();
+
+            let vec_data = into_key(&nibble);
+            assert_eq!(len / 2, vec_data.len());
+
+            Self(vec_data)
         }
     }
 
@@ -870,8 +905,8 @@ pub mod tests {
 
     #[quickcheck]
     fn qc_handles_several_key_changes(
-        kvs_1: HashMap<Key, FixedData>,
-        kvs_2: HashMap<Key, FixedData>,
+        kvs_1: HashMap<FixedKey, FixedData>,
+        kvs_2: HashMap<FixedKey, FixedData>,
     ) -> TestResult {
         if kvs_1.is_empty() || kvs_2.is_empty() {
             return TestResult::discard();

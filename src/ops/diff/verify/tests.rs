@@ -1,6 +1,8 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use crate::debug::DebugPrintExt;
+use crate::debug::child_extractor::DataWithRoot;
+use crate::debug::{DebugPrintExt, MapWithCounterCached};
+use crate::gc::tests::{FixedKey, RandomFixedData, VariableKey, RNG_DATA_SIZE};
 use crate::mutable::TrieMut;
 use crate::ops::diff::verify::VerificationError;
 use crate::{debug, diff, empty_trie_hash, verify_diff, Database, DiffChange as Change};
@@ -10,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha3::{Digest, Keccak256};
 
-use crate::gc::testing::MapWithCounterCached;
 use crate::gc::{RootGuard, TrieCollection};
 
 use super::VerifiedPatch;
@@ -29,15 +30,16 @@ fn tracing_sub_init() {}
 
 fn check_changes(
     changes: VerifiedPatch,
-    initial_trie_data: &Vec<(&[u8], &[u8])>,
+    initial_trie_data: &debug::EntriesHex,
     expected_trie_root: H256,
     expected_trie_data: debug::EntriesHex,
 ) {
     let collection = TrieCollection::new(MapWithCounterCached::default());
     let mut trie = collection.trie_for(crate::empty_trie_hash());
-    for (key, value) in initial_trie_data {
-        trie.insert(key, value);
+    for (key, value) in &initial_trie_data.data {
+        trie.insert(key, value.as_ref().unwrap());
     }
+
     let patch = trie.into_patch();
     let _initial_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
 
@@ -156,11 +158,7 @@ fn test_two_different_leaf_nodes() {
     let expected_trie_data: debug::EntriesHex = serde_json::from_value(j).unwrap();
     check_changes(
         verify_result.unwrap(),
-        &entries1
-            .data
-            .iter()
-            .map(|(k, v)| (k.as_slice(), v.as_ref().unwrap().as_slice()))
-            .collect(),
+        &entries1,
         second_root.root,
         expected_trie_data,
     );
@@ -274,11 +272,7 @@ fn test_1() {
     let expected_trie_data: debug::EntriesHex = serde_json::from_value(j).unwrap();
     check_changes(
         verify_result.unwrap(),
-        &entries1
-            .data
-            .iter()
-            .map(|(k, v)| (k.as_slice(), v.as_ref().unwrap().as_slice()))
-            .collect(),
+        &entries1,
         second_root.root,
         expected_trie_data,
     );
@@ -318,7 +312,6 @@ fn test_2() {
             "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f35"
         ]
     ]);
-
     let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
 
     let collection = TrieCollection::new(MapWithCounterCached::default());
@@ -384,11 +377,7 @@ fn test_2() {
     let expected_trie_data: debug::EntriesHex = serde_json::from_value(j).unwrap();
     check_changes(
         verify_result.unwrap(),
-        &entries1
-            .data
-            .iter()
-            .map(|(k, v)| (k.as_slice(), v.as_ref().unwrap().as_slice()))
-            .collect(),
+        &entries1,
         second_root.root,
         expected_trie_data,
     );
@@ -510,16 +499,7 @@ fn test_3() {
     ]);
 
     let expected_trie_data: debug::EntriesHex = serde_json::from_value(j).unwrap();
-    check_changes(
-        diff_patch,
-        &entries1
-            .data
-            .iter()
-            .map(|(k, v)| (k.as_slice(), v.as_ref().unwrap().as_slice()))
-            .collect(),
-        second_root.root,
-        expected_trie_data,
-    );
+    check_changes(diff_patch, &entries1, second_root.root, expected_trie_data);
     drop(second_root);
     log::info!("second trie dropped")
 }
@@ -651,11 +631,7 @@ fn test_4() {
     let expected_trie_data: debug::EntriesHex = serde_json::from_value(j).unwrap();
     check_changes(
         verify_result.unwrap(),
-        &entries1
-            .data
-            .iter()
-            .map(|(k, v)| (k.as_slice(), v.as_ref().unwrap().as_slice()))
-            .collect(),
+        &entries1,
         second_root.root,
         expected_trie_data,
     );
@@ -1024,74 +1000,20 @@ fn test_leaf_node_and_extension_node() {
     log::info!("second trie dropped")
 }
 
-#[derive(Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct DataWithRoot {
-    pub root: H256,
-}
-
-impl DataWithRoot {
-    fn get_childs(data: &[u8]) -> Vec<H256> {
-        bincode::deserialize::<Self>(data)
-            .ok()
-            .into_iter()
-            .map(|e| e.root)
-            .collect()
-    }
-}
-impl Default for DataWithRoot {
-    fn default() -> Self {
-        Self {
-            root: crate::empty_trie_hash!(),
-        }
-    }
-}
-
-fn insert_element<'a, F>(
-    collection: &'a TrieCollection<MapWithCounterCached>,
-    account_key: &[u8],
-    data_key: &[u8],
-    data: &[u8],
-    input_root: H256,
-    child_extractor: F,
-) -> RootGuard<'a, MapWithCounterCached, F>
-where
-    F: FnMut(&[u8]) -> Vec<H256> + Clone,
-{
-    // Insert to first db
-    let mut account_trie = collection.trie_for(input_root);
-    let mut account: DataWithRoot = TrieMut::get(&account_trie, account_key)
-        .map(|d| bincode::deserialize(&d).unwrap())
-        .unwrap_or_default();
-    let mut storage_trie = collection.trie_for(account.root);
-    storage_trie.insert(data_key, data);
-    let storage_patch = storage_trie.into_patch();
-    log::trace!(
-        "1 Update account root: old {}, new {}",
-        account.root,
-        storage_patch.root
-    );
-    account.root = storage_patch.root;
-    account_trie.insert(account_key, &bincode::serialize(&account).unwrap());
-    let mut account_patch = account_trie.into_patch();
-    account_patch.change.merge_child(&storage_patch.change);
-
-    collection.apply_increase(account_patch, child_extractor)
-}
-
 fn split_changes(input: Vec<Change>) -> (HashSet<H256>, HashSet<H256>) {
     let mut removes = HashSet::<H256>::new();
     let mut inserts = HashSet::<H256>::new();
     for element in input {
         match element {
             Change::Insert(hash, _) => {
-                println!(
+                log::trace!(
                     "====================== INSERT: {} ======================",
                     hash
                 );
                 inserts.insert(hash)
             }
             Change::Removal(hash, _) => {
-                println!(
+                log::trace!(
                     "====================== REMOVE: {} ======================",
                     hash
                 );
@@ -1259,7 +1181,7 @@ fn test_diff_with_child_extractor() {
     for (account_key, storage) in keys1.iter() {
         for (data_key, data) in &storage.data {
             {
-                collection1_trie1 = insert_element(
+                collection1_trie1 = debug::child_extractor::insert_element(
                     &collection1,
                     account_key,
                     data_key,
@@ -1269,7 +1191,7 @@ fn test_diff_with_child_extractor() {
                 );
             }
             {
-                collection2_trie1 = insert_element(
+                collection2_trie1 = debug::child_extractor::insert_element(
                     &collection2,
                     account_key,
                     data_key,
@@ -1300,7 +1222,7 @@ fn test_diff_with_child_extractor() {
     for (account_key, storage) in keys2.iter() {
         for (data_key, data) in &storage.data {
             {
-                collection1_trie2 = insert_element(
+                collection1_trie2 = debug::child_extractor::insert_element(
                     &collection1,
                     account_key,
                     data_key,
@@ -1569,4 +1491,309 @@ fn test_try_apply_diff_with_deleted_db_dependency() {
 
     drop(second_root);
     log::info!("second trie dropped")
+}
+
+use quickcheck::{Arbitrary, Gen, QuickCheck, TestResult};
+
+fn fixed_key_unique_random_data(values: HashSet<RandomFixedData>) -> debug::EntriesHex {
+    let mut g = Gen::new(RNG_DATA_SIZE);
+    let mut entries = vec![];
+    for val in values.into_iter() {
+        let key = FixedKey::arbitrary(&mut g);
+        let entry = (key.0.to_vec(), Some(val.0.to_vec()));
+        entries.push(entry);
+    }
+
+    debug::EntriesHex::new(entries)
+}
+fn variable_key_unique_random_data(values: HashSet<RandomFixedData>) -> debug::EntriesHex {
+    let mut g = Gen::new(RNG_DATA_SIZE);
+    let mut entries = vec![];
+    for val in values.into_iter() {
+        let key = VariableKey::arbitrary(&mut g);
+        let entry = (key.0, Some(val.0.to_vec()));
+        entries.push(entry);
+    }
+
+    debug::EntriesHex::new(entries)
+}
+fn join_entries(entries_1: &debug::EntriesHex, entries_2: &debug::EntriesHex) -> debug::EntriesHex {
+    let mut join_map: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
+    for (key, val) in &entries_1.data {
+        join_map.insert(key.clone(), val.clone());
+    }
+
+    for (key, val) in &entries_2.data {
+        join_map.insert(key.clone(), val.clone());
+    }
+    let mut join_entries = vec![];
+    for (key, val) in join_map.into_iter() {
+        join_entries.push((key, val));
+    }
+    debug::EntriesHex::new(join_entries)
+}
+
+fn reverse_changes(changes: Vec<Change>) -> Vec<Change> {
+    changes
+        .into_iter()
+        .map(|i| match i {
+            Change::Insert(h, d) => Change::Removal(h, d),
+            Change::Removal(h, d) => Change::Insert(h, d),
+        })
+        .collect()
+}
+fn empty_keys_union_diff_intersection_test_body(
+    entries_1: debug::EntriesHex,
+    entries_2: debug::EntriesHex,
+) {
+    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection_2 = TrieCollection::new(MapWithCounterCached::default());
+
+    let mut trie1 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &entries_1.data {
+        trie1.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie1.into_patch();
+    let first_root = collection.apply_increase(patch.clone(), crate::gc::tests::no_childs);
+    let _first_root = collection_2.apply_increase(patch, crate::gc::tests::no_childs);
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(first_root.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    let mut trie2 = collection.trie_for(first_root.root);
+    for (key, value) in &entries_2.data {
+        trie2.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie2.into_patch();
+    let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(second_root.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    let changes = diff(
+        &collection.database,
+        no_childs,
+        first_root.root,
+        second_root.root,
+    )
+    .unwrap();
+
+    let (removes, inserts) = split_changes(changes.clone());
+
+    let common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
+    assert!(common.is_empty());
+
+    let verify_result = verify_diff(
+        &collection_2.database,
+        second_root.root,
+        changes,
+        no_childs,
+        true,
+    );
+    assert!(verify_result.is_ok());
+
+    let apply_result = collection_2.apply_diff_patch(verify_result.unwrap(), no_childs);
+    assert!(apply_result.is_ok());
+
+    let new_trie = collection_2.trie_for(second_root.root);
+
+    for (key, value) in &join_entries(&entries_1, &entries_2).data {
+        assert_eq!(TrieMut::get(&new_trie, key), value.as_ref().cloned());
+    }
+}
+
+fn empty_keys_distinct_diff_empty_intersection_and_reversal_test_body(
+    entries_1: debug::EntriesHex,
+    entries_2: debug::EntriesHex,
+) {
+    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection_reversal_target = TrieCollection::new(MapWithCounterCached::default());
+    let collection_direct_target = TrieCollection::new(MapWithCounterCached::default());
+
+    let mut trie1 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &entries_1.data {
+        trie1.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie1.into_patch();
+    let first_root = collection.apply_increase(patch.clone(), crate::gc::tests::no_childs);
+    let _first_root = collection_direct_target.apply_increase(patch, crate::gc::tests::no_childs);
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(first_root.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    let mut trie2 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &entries_2.data {
+        trie2.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie2.into_patch();
+    let second_root = collection.apply_increase(patch.clone(), crate::gc::tests::no_childs);
+    let _second_root =
+        collection_reversal_target.apply_increase(patch, crate::gc::tests::no_childs);
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(second_root.root),
+        vec![],
+        no_childs,
+    )
+    .print();
+
+    let changes = diff(
+        &collection.database,
+        no_childs,
+        first_root.root,
+        second_root.root,
+    )
+    .unwrap();
+
+    let (removes, inserts) = split_changes(changes.clone());
+
+    let common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
+    assert!(common.is_empty());
+
+    let reversed = reverse_changes(changes.clone());
+    for (changes, collection, target_root, tested_entries) in [
+        (
+            changes,
+            &collection_direct_target,
+            second_root.root,
+            &entries_2,
+        ),
+        (
+            reversed,
+            &collection_reversal_target,
+            first_root.root,
+            &entries_1,
+        ),
+    ] {
+        let verify_result =
+            verify_diff(&collection.database, target_root, changes, no_childs, true);
+        assert!(verify_result.is_ok());
+
+        let apply_result = collection.apply_diff_patch(verify_result.unwrap(), no_childs);
+        assert!(apply_result.is_ok());
+
+        let new_trie = collection.trie_for(target_root);
+
+        // removing duplicates from tested_entries, checking for last value
+        for (key, value) in &join_entries(tested_entries, tested_entries).data {
+            assert_eq!(TrieMut::get(&new_trie, key), value.as_ref().cloned());
+        }
+    }
+}
+
+#[test]
+fn qc_unique_nodes_fixed_key_empty_diff_intersection() {
+    let _ = env_logger::Builder::new().parse_filters("error").try_init();
+    fn property(keys_1: HashSet<RandomFixedData>, keys_2: HashSet<RandomFixedData>) -> TestResult {
+        if keys_1.is_empty() || keys_2.is_empty() || keys_1 == keys_2 {
+            return TestResult::discard();
+        }
+        let entries_1 = fixed_key_unique_random_data(keys_1);
+        let entries_2 = fixed_key_unique_random_data(keys_2);
+        empty_keys_union_diff_intersection_test_body(entries_1, entries_2);
+
+        TestResult::passed()
+    }
+    QuickCheck::new()
+        .gen(Gen::new(RNG_DATA_SIZE))
+        // .tests(20_000)
+        .quickcheck(
+            property
+                as fn(
+                    keys_1: HashSet<RandomFixedData>,
+                    keys_2: HashSet<RandomFixedData>,
+                ) -> TestResult,
+        );
+}
+#[test]
+fn qc_unique_nodes_fixed_key_empty_diff_intersection_and_reversal() {
+    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    fn property(keys_1: HashSet<RandomFixedData>, keys_2: HashSet<RandomFixedData>) -> TestResult {
+        if keys_1.is_empty() || keys_2.is_empty() || keys_1 == keys_2 {
+            return TestResult::discard();
+        }
+        let entries_1 = fixed_key_unique_random_data(keys_1);
+        let entries_2 = fixed_key_unique_random_data(keys_2);
+        empty_keys_distinct_diff_empty_intersection_and_reversal_test_body(entries_1, entries_2);
+
+        TestResult::passed()
+    }
+    QuickCheck::new()
+        .gen(Gen::new(RNG_DATA_SIZE))
+        // .tests(1000)
+        .quickcheck(
+            property
+                as fn(
+                    keys_1: HashSet<RandomFixedData>,
+                    keys_2: HashSet<RandomFixedData>,
+                ) -> TestResult,
+        );
+}
+
+#[ignore = "Diff unimplemented for variable length keys"]
+#[test]
+fn qc_unique_nodes_variable_key_empty_diff_intersection_and_reversal() {
+    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    fn property(keys_1: HashSet<RandomFixedData>, keys_2: HashSet<RandomFixedData>) -> TestResult {
+        if keys_1.is_empty() || keys_2.is_empty() || keys_1 == keys_2 {
+            return TestResult::discard();
+        }
+        let entries_1 = variable_key_unique_random_data(keys_1);
+        let entries_2 = variable_key_unique_random_data(keys_2);
+        empty_keys_distinct_diff_empty_intersection_and_reversal_test_body(entries_1, entries_2);
+
+        TestResult::passed()
+    }
+    QuickCheck::new()
+        .gen(Gen::new(RNG_DATA_SIZE))
+        .tests(1000)
+        .quickcheck(
+            property
+                as fn(
+                    keys_1: HashSet<RandomFixedData>,
+                    keys_2: HashSet<RandomFixedData>,
+                ) -> TestResult,
+        );
+}
+
+#[ignore = "Diff unimplemented for variable length keys"]
+#[test]
+fn qc_unique_nodes_variable_key_empty_diff_intersection() {
+    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    fn property(keys_1: HashSet<RandomFixedData>, keys_2: HashSet<RandomFixedData>) -> TestResult {
+        if keys_1.is_empty() || keys_2.is_empty() || keys_1 == keys_2 {
+            return TestResult::discard();
+        }
+        let entries_1 = variable_key_unique_random_data(keys_1);
+        let entries_2 = variable_key_unique_random_data(keys_2);
+        empty_keys_union_diff_intersection_test_body(entries_1, entries_2);
+
+        TestResult::passed()
+    }
+    QuickCheck::new()
+        .gen(Gen::new(RNG_DATA_SIZE))
+        // .tests(20_000)
+        .quickcheck(
+            property
+                as fn(
+                    keys_1: HashSet<RandomFixedData>,
+                    keys_2: HashSet<RandomFixedData>,
+                ) -> TestResult,
+        );
 }

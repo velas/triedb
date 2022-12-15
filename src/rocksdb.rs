@@ -320,7 +320,7 @@ mod tests {
     use std::io::Write;
     use std::sync::Arc;
 
-    use crate::empty_trie_hash;
+    use crate::debug::child_extractor::DataWithRoot;
     use crate::gc::TrieCollection;
     use crate::merkle::MerkleNode;
     use hex_literal::hex;
@@ -329,11 +329,10 @@ mod tests {
     use rlp::Rlp;
     use rocksdb_lib::IteratorMode;
     use rocksdb_lib::{ColumnFamilyDescriptor, Options};
-    use serde::{Deserialize, Serialize};
     use tempfile::tempdir;
 
     use super::*;
-    use crate::gc::tests::{FixedData, Key};
+    use crate::gc::tests::{FixedData, FixedKey};
     use crate::gc::RootGuard;
     use crate::impls::tests::{Data, K};
     use crate::mutable::TrieMut;
@@ -520,8 +519,8 @@ mod tests {
 
     #[quickcheck]
     fn qc_handles_several_key_changes(
-        kvs_1: HashMap<Key, FixedData>,
-        kvs_2: HashMap<Key, FixedData>,
+        kvs_1: HashMap<FixedKey, FixedData>,
+        kvs_2: HashMap<FixedKey, FixedData>,
     ) -> TestResult {
         if kvs_1.is_empty() || kvs_2.is_empty() {
             return TestResult::discard();
@@ -601,35 +600,13 @@ mod tests {
         TestResult::passed()
     }
 
-    #[derive(Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
-    pub struct DataWithRoot {
-        pub root: H256,
-    }
-
-    impl DataWithRoot {
-        fn get_childs(data: &[u8]) -> Vec<H256> {
-            bincode::deserialize::<Self>(data)
-                .ok()
-                .into_iter()
-                .map(|e| e.root)
-                .collect()
-        }
-    }
-    impl Default for DataWithRoot {
-        fn default() -> Self {
-            Self {
-                root: empty_trie_hash!(),
-            }
-        }
-    }
-
     // todo implement data with child collection.
     #[quickcheck]
     fn qc_handles_inner_roots(
-        alice_key: Key,
-        alice_chages: Vec<(Key, FixedData)>,
-        bob_key: Key,
-        bob_storage: HashMap<Key, FixedData>,
+        alice_key: FixedKey,
+        alice_chages: Vec<(FixedKey, FixedData)>,
+        bob_key: FixedKey,
+        bob_storage: HashMap<FixedKey, FixedData>,
     ) -> TestResult {
         if alice_chages.is_empty() || bob_storage.is_empty() {
             return TestResult::discard();
@@ -905,159 +882,159 @@ mod tests {
         ];
         let changes1 = vec![
             (
-                Key([119, 0, 0, 3]),
+                FixedKey([119, 0, 0, 3]),
                 vec![
-                    (Key([11, 119, 0, 119]), FixedData(hex_1)),
-                    (Key([3, 51, 51, 183]), FixedData(hex_1)),
-                    (Key([0, 0, 255, 240]), FixedData(hex_1)),
-                    (Key([255, 255, 255, 255]), FixedData(hex_238)),
-                    (Key([255, 255, 255, 255]), FixedData(hex_238)),
-                    (Key([0, 0, 7, 55]), FixedData(hex_238)),
+                    (FixedKey([11, 119, 0, 119]), FixedData(hex_1)),
+                    (FixedKey([3, 51, 51, 183]), FixedData(hex_1)),
+                    (FixedKey([0, 0, 255, 240]), FixedData(hex_1)),
+                    (FixedKey([255, 255, 255, 255]), FixedData(hex_238)),
+                    (FixedKey([255, 255, 255, 255]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 7, 55]), FixedData(hex_238)),
                 ],
             ),
             (
-                Key([112, 7, 119, 0]),
+                FixedKey([112, 7, 119, 0]),
                 vec![
-                    (Key([51, 51, 183, 112]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 48]), FixedData(hex_238)),
-                    (Key([112, 119, 0, 0]), FixedData(hex_238)),
-                    (Key([255, 255, 255, 255]), FixedData(hex_238)),
-                    (Key([255, 255, 240, 48]), FixedData(hex_238)),
-                    (Key([3, 112, 183, 112]), FixedData(hex_238)),
-                    (Key([119, 0, 51, 51]), FixedData(hex_238)),
+                    (FixedKey([51, 51, 183, 112]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 48]), FixedData(hex_238)),
+                    (FixedKey([112, 119, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([255, 255, 255, 255]), FixedData(hex_238)),
+                    (FixedKey([255, 255, 240, 48]), FixedData(hex_238)),
+                    (FixedKey([3, 112, 183, 112]), FixedData(hex_238)),
+                    (FixedKey([119, 0, 51, 51]), FixedData(hex_238)),
                 ],
             ),
             (
-                Key([112, 0, 0, 0]),
+                FixedKey([112, 0, 0, 0]),
                 vec![
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 240, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 11, 119]), FixedData(hex_238)),
-                    (Key([0, 48, 0, 0]), FixedData(hex_1)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 240, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 11, 119]), FixedData(hex_238)),
+                    (FixedKey([0, 48, 0, 0]), FixedData(hex_1)),
                 ],
             ),
             (
-                Key([0, 0, 55, 11]),
+                FixedKey([0, 0, 55, 11]),
                 vec![
-                    (Key([112, 7, 119, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 3, 0]), FixedData(hex_238)),
-                    (Key([7, 112, 0, 0]), FixedData(hex_238)),
-                    (Key([255, 255, 255, 255]), FixedData(hex_238)),
-                    (Key([255, 255, 3, 0]), FixedData(hex_238)),
-                    (Key([55, 11, 119, 0]), FixedData(hex_1)),
-                    (Key([112, 3, 51, 51]), FixedData(hex_0)),
-                    (Key([112, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 15, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 183, 112]), FixedData(hex_238)),
-                    (Key([3, 0, 0, 3]), FixedData(hex_255)),
-                    (Key([0, 0, 0, 7]), FixedData(hex_1)),
-                    (Key([11, 119, 7, 15]), FixedData(hex_0)),
+                    (FixedKey([112, 7, 119, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 3, 0]), FixedData(hex_238)),
+                    (FixedKey([7, 112, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([255, 255, 255, 255]), FixedData(hex_238)),
+                    (FixedKey([255, 255, 3, 0]), FixedData(hex_238)),
+                    (FixedKey([55, 11, 119, 0]), FixedData(hex_1)),
+                    (FixedKey([112, 3, 51, 51]), FixedData(hex_0)),
+                    (FixedKey([112, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 15, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 183, 112]), FixedData(hex_238)),
+                    (FixedKey([3, 0, 0, 3]), FixedData(hex_255)),
+                    (FixedKey([0, 0, 0, 7]), FixedData(hex_1)),
+                    (FixedKey([11, 119, 7, 15]), FixedData(hex_0)),
                 ],
             ),
             (
-                Key([112, 0, 0, 0]),
+                FixedKey([112, 0, 0, 0]),
                 vec![
-                    (Key([112, 119, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 48, 0]), FixedData(hex_238)),
-                    (Key([7, 112, 0, 0]), FixedData(hex_238)),
-                    (Key([7, 7, 0, 7]), FixedData(hex_1)),
-                    (Key([119, 119, 247, 176]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_1)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([112, 119, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 48, 0]), FixedData(hex_238)),
+                    (FixedKey([7, 112, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([7, 7, 0, 7]), FixedData(hex_1)),
+                    (FixedKey([119, 119, 247, 176]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_1)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
                 ],
             ),
         ];
         let changes2 = vec![
             (
-                Key([15, 0, 0, 0]),
+                FixedKey([15, 0, 0, 0]),
                 vec![
-                    (Key([0, 11, 119, 0]), FixedData(hex_238)),
-                    (Key([48, 0, 0, 48]), FixedData(hex_238)),
-                    (Key([0, 3, 112, 183]), FixedData(hex_1)),
-                    (Key([15, 187, 0, 0]), FixedData(hex_255)),
-                    (Key([0, 3, 0, 7]), FixedData(hex_238)),
-                    (Key([112, 0, 0, 255]), FixedData(hex_238)),
-                    (Key([255, 255, 255, 255]), FixedData(hex_238)),
-                    (Key([255, 3, 0, 0]), FixedData(hex_1)),
-                    (Key([11, 119, 0, 119]), FixedData(hex_1)),
-                    (Key([3, 51, 51, 183]), FixedData(hex_1)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([15, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 183, 112, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 11, 119, 0]), FixedData(hex_238)),
+                    (FixedKey([48, 0, 0, 48]), FixedData(hex_238)),
+                    (FixedKey([0, 3, 112, 183]), FixedData(hex_1)),
+                    (FixedKey([15, 187, 0, 0]), FixedData(hex_255)),
+                    (FixedKey([0, 3, 0, 7]), FixedData(hex_238)),
+                    (FixedKey([112, 0, 0, 255]), FixedData(hex_238)),
+                    (FixedKey([255, 255, 255, 255]), FixedData(hex_238)),
+                    (FixedKey([255, 3, 0, 0]), FixedData(hex_1)),
+                    (FixedKey([11, 119, 0, 119]), FixedData(hex_1)),
+                    (FixedKey([3, 51, 51, 183]), FixedData(hex_1)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([15, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 183, 112, 0]), FixedData(hex_238)),
                 ],
             ),
             (
-                Key([0, 0, 48, 0]),
+                FixedKey([0, 0, 48, 0]),
                 vec![
-                    (Key([0, 0, 7, 0]), FixedData(hex_238)),
-                    (Key([112, 119, 119, 247]), FixedData(hex_0)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([123, 176, 15, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 183]), FixedData(hex_1)),
-                    (Key([0, 3, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 55]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 7, 0]), FixedData(hex_238)),
+                    (FixedKey([112, 119, 119, 247]), FixedData(hex_0)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([123, 176, 15, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 183]), FixedData(hex_1)),
+                    (FixedKey([0, 3, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 55]), FixedData(hex_238)),
                 ],
             ),
             (
-                Key([112, 7, 119, 0]),
+                FixedKey([112, 7, 119, 0]),
                 vec![
-                    (Key([0, 0, 0, 48]), FixedData(hex_238)),
-                    (Key([112, 119, 0, 0]), FixedData(hex_238)),
-                    (Key([255, 255, 255, 255]), FixedData(hex_238)),
-                    (Key([255, 255, 240, 48]), FixedData(hex_238)),
-                    (Key([3, 112, 183, 112]), FixedData(hex_238)),
-                    (Key([119, 0, 51, 51]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 48]), FixedData(hex_238)),
+                    (FixedKey([112, 119, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([255, 255, 255, 255]), FixedData(hex_238)),
+                    (FixedKey([255, 255, 240, 48]), FixedData(hex_238)),
+                    (FixedKey([3, 112, 183, 112]), FixedData(hex_238)),
+                    (FixedKey([119, 0, 51, 51]), FixedData(hex_238)),
                 ],
             ),
             (
-                Key([112, 0, 0, 0]),
+                FixedKey([112, 0, 0, 0]),
                 vec![
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 240, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 11, 119]), FixedData(hex_238)),
-                    (Key([0, 48, 0, 0]), FixedData(hex_1)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 240, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 11, 119]), FixedData(hex_238)),
+                    (FixedKey([0, 48, 0, 0]), FixedData(hex_1)),
                 ],
             ),
             (
-                Key([0, 0, 0, 0]),
+                FixedKey([0, 0, 0, 0]),
                 vec![
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([119, 112, 183, 112]), FixedData(hex_1)),
-                    (Key([255, 240, 112, 0]), FixedData(hex_238)),
-                    (Key([0, 7, 7, 112]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 3]), FixedData(hex_238)),
-                    (Key([0, 0, 119, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 119, 176]), FixedData(hex_238)),
-                    (Key([119, 7, 119, 183]), FixedData(hex_1)),
-                    (Key([0, 0, 0, 0]), FixedData(hex_238)),
-                    (Key([0, 0, 0, 3]), FixedData(hex_238)),
-                    (Key([0, 0, 11, 119]), FixedData(hex_238)),
-                    (Key([119, 112, 3, 51]), FixedData(hex_238)),
-                    (Key([183, 112, 0, 0]), FixedData(hex_0)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([119, 112, 183, 112]), FixedData(hex_1)),
+                    (FixedKey([255, 240, 112, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 7, 7, 112]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 3]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 119, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 119, 176]), FixedData(hex_238)),
+                    (FixedKey([119, 7, 119, 183]), FixedData(hex_1)),
+                    (FixedKey([0, 0, 0, 0]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 0, 3]), FixedData(hex_238)),
+                    (FixedKey([0, 0, 11, 119]), FixedData(hex_238)),
+                    (FixedKey([119, 112, 3, 51]), FixedData(hex_238)),
+                    (FixedKey([183, 112, 0, 0]), FixedData(hex_0)),
                 ],
             ),
         ];
 
-        fn routine(db: std::sync::Arc<DB>, changes: Vec<(Key, Vec<(Key, FixedData)>)>) {
+        fn routine(db: std::sync::Arc<DB>, changes: Vec<(FixedKey, Vec<(FixedKey, FixedData)>)>) {
             let cf = db.cf_handle("counter").unwrap();
             let collection =
                 TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&*db, cf)));
@@ -1068,7 +1045,7 @@ mod tests {
                 DataWithRoot::get_childs,
             );
 
-            let mut accounts_map: HashMap<Key, HashMap<Key, FixedData>> = HashMap::new();
+            let mut accounts_map: HashMap<FixedKey, HashMap<FixedKey, FixedData>> = HashMap::new();
             {
                 for (k, storage) in changes.iter() {
                     let account_storage_mem =
