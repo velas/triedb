@@ -22,7 +22,8 @@ fn tracing_sub_init() {
     use tracing_subscriber::fmt::format::FmtSpan;
     let _ = tracing_subscriber::fmt()
         .with_span_events(FmtSpan::ENTER)
-        .with_max_level(LevelFilter::TRACE)
+        .with_max_level(LevelFilter::INFO)
+        .compact()
         .try_init();
 }
 #[cfg(not(feature = "tracing-enable"))]
@@ -171,7 +172,7 @@ fn test_two_different_leaf_nodes() {
 
 #[test]
 fn test_1() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
     tracing_sub_init();
 
     let j = json!([
@@ -285,7 +286,7 @@ fn test_1() {
 
 #[test]
 fn test_2() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
     tracing_sub_init();
 
     let j = json!([
@@ -389,7 +390,7 @@ fn test_2() {
 
 #[test]
 fn test_3() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
     tracing_sub_init();
 
     let j = json!([
@@ -508,7 +509,7 @@ fn test_3() {
 
 #[test]
 fn test_4() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
     tracing_sub_init();
 
     let j = json!([
@@ -905,7 +906,7 @@ fn test_get_changeset_trivial_tree() {
 
 #[test]
 fn test_leaf_node_and_extension_node() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
 
     let j = json!([[
         "0xaaab",
@@ -1028,7 +1029,7 @@ fn split_changes(input: Vec<Change>) -> (HashSet<H256>, HashSet<H256>) {
 
 #[test]
 fn test_diff_with_child_extractor() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
 
     let j = json!([
         [
@@ -1259,7 +1260,6 @@ fn test_diff_with_child_extractor() {
         DataWithRoot::get_childs,
         true,
     );
-    assert!(verify_result.is_ok());
 
     let diff_patch: VerifiedPatch = verify_result.unwrap();
     let _diff_patch_serialized: VerifiedPatchHexStr = diff_patch.clone().into();
@@ -1289,7 +1289,7 @@ fn test_diff_with_child_extractor() {
 
 #[test]
 fn test_try_verify_invalid_changes() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
     let collection1 = TrieCollection::new(MapWithCounterCached::default());
     let collection2 = TrieCollection::new(MapWithCounterCached::default());
     let j = json!([
@@ -1355,7 +1355,7 @@ fn test_try_verify_invalid_changes() {
 
 #[test]
 fn test_try_apply_diff_with_deleted_db_dependency() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
 
     let j = json!([
         [
@@ -1590,6 +1590,8 @@ fn empty_keys_union_diff_intersection_test_body(
     )
     .unwrap();
 
+    dbg!(&changes);
+
     let (removes, inserts) = split_changes(changes.clone());
 
     let common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
@@ -1602,7 +1604,6 @@ fn empty_keys_union_diff_intersection_test_body(
         no_childs,
         true,
     );
-    assert!(verify_result.is_ok());
 
     let apply_result = collection_2.apply_diff_patch(verify_result.unwrap(), no_childs);
     assert!(apply_result.is_ok());
@@ -1725,7 +1726,7 @@ fn qc_unique_nodes_fixed_key_empty_diff_intersection() {
 }
 #[test]
 fn qc_unique_nodes_fixed_key_empty_diff_intersection_and_reversal() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
     fn property(keys_1: HashSet<RandomFixedData>, keys_2: HashSet<RandomFixedData>) -> TestResult {
         if keys_1.is_empty() || keys_2.is_empty() || keys_1 == keys_2 {
             return TestResult::discard();
@@ -1748,10 +1749,9 @@ fn qc_unique_nodes_fixed_key_empty_diff_intersection_and_reversal() {
         );
 }
 
-#[ignore = "Diff unimplemented for variable length keys"]
 #[test]
 fn qc_unique_nodes_variable_key_empty_diff_intersection_and_reversal() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+    tracing_sub_init();
     fn property(keys_1: HashSet<RandomFixedData>, keys_2: HashSet<RandomFixedData>) -> TestResult {
         if keys_1.is_empty() || keys_2.is_empty() || keys_1 == keys_2 {
             return TestResult::discard();
@@ -1774,16 +1774,23 @@ fn qc_unique_nodes_variable_key_empty_diff_intersection_and_reversal() {
         );
 }
 
-#[ignore = "Diff unimplemented for variable length keys"]
 #[test]
-fn qc_unique_nodes_variable_key_empty_diff_intersection() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
+fn qc_unique_nodes_variable_key_empty_diff_intersection1() {
+    tracing_sub_init();
     fn property(keys_1: HashSet<RandomFixedData>, keys_2: HashSet<RandomFixedData>) -> TestResult {
         if keys_1.is_empty() || keys_2.is_empty() || keys_1 == keys_2 {
             return TestResult::discard();
         }
         let entries_1 = variable_key_unique_random_data(keys_1);
         let entries_2 = variable_key_unique_random_data(keys_2);
+        log::warn!(
+            "entries_1 = {}",
+            serde_json::to_string_pretty(&entries_1).unwrap()
+        );
+        log::warn!(
+            "entries_2 = {}",
+            serde_json::to_string_pretty(&entries_2).unwrap()
+        );
         empty_keys_union_diff_intersection_test_body(entries_1, entries_2);
 
         TestResult::passed()
@@ -1798,4 +1805,95 @@ fn qc_unique_nodes_variable_key_empty_diff_intersection() {
                     keys_2: HashSet<RandomFixedData>,
                 ) -> TestResult,
         );
+}
+
+#[test]
+fn data_from_qc_inner() {
+    tracing_sub_init();
+    let keys_1: HashSet<_> = vec![RandomFixedData([
+        113, 153, 204, 44, 29, 37, 1, 171, 95, 188, 255, 196, 225, 110, 0, 51, 154, 255, 171, 92,
+        158, 162, 13, 255, 129, 28, 55, 132, 104, 1, 8, 190,
+    ])]
+    .into_iter()
+    .collect();
+    let keys_2: HashSet<_> = vec![
+        RandomFixedData([
+            255, 30, 198, 38, 255, 192, 1, 1, 7, 131, 172, 158, 72, 90, 84, 189, 178, 125, 108, 79,
+            11, 210, 32, 150, 79, 2, 252, 226, 74, 179, 242, 121,
+        ]),
+        RandomFixedData([
+            192, 156, 118, 51, 116, 230, 60, 164, 95, 247, 241, 8, 255, 25, 66, 168, 95, 183, 166,
+            25, 226, 0, 129, 31, 142, 0, 222, 106, 64, 0, 78, 202,
+        ]),
+        RandomFixedData([
+            125, 43, 77, 108, 112, 189, 0, 180, 32, 116, 25, 11, 175, 143, 148, 202, 76, 103, 255,
+            219, 205, 166, 58, 241, 0, 72, 210, 56, 101, 255, 56, 36,
+        ]),
+        RandomFixedData([
+            36, 20, 69, 65, 35, 94, 119, 27, 15, 119, 233, 49, 226, 255, 41, 186, 60, 8, 1, 133,
+            69, 217, 159, 194, 182, 0, 5, 186, 2, 255, 37, 6,
+        ]),
+    ]
+    .into_iter()
+    .collect();
+    fn property(keys_1: HashSet<RandomFixedData>, keys_2: HashSet<RandomFixedData>) {
+        let entries_1 = variable_key_unique_random_data(keys_1);
+        let entries_2 = variable_key_unique_random_data(keys_2);
+        log::warn!(
+            "entries_1 = {}",
+            serde_json::to_string_pretty(&entries_1).unwrap()
+        );
+        log::warn!(
+            "entries_2 = {}",
+            serde_json::to_string_pretty(&entries_2).unwrap()
+        );
+        empty_keys_union_diff_intersection_test_body(entries_1, entries_2);
+    }
+    property(keys_1, keys_2);
+}
+
+#[test]
+fn data_from_qc1() {
+    tracing_sub_init();
+
+    let entries_1 = serde_json::from_str(
+        r#"[
+       [
+        "0x",
+        "0x7199cc2c1d2501ab5fbcffc4e16e00339affab5c9ea20dff811c3784680108be"
+      ]
+    ]"#,
+    )
+    .unwrap();
+    let entries_2 = serde_json::from_str(
+        r#"[
+      [
+        "0x3033",
+        "0x24144541235e771b0f77e931e2ff29ba3c08018545d99fc2b60005ba02ff2506"
+      ],
+      [
+        "0x777f03",
+        "0xc09c763374e63ca45ff7f108ff1942a85fb7a619e200811f8e00de6a40004eca"
+      ],
+      [
+        "0x3b3b37bfbf",
+        "0xff1ec626ffc001010783ac9e485a54bdb27d6c4f0bd220964f02fce24ab3f279"
+      ],
+      [
+        "0xf7f3",
+        "0x7d2b4d6c70bd00b42074190baf8f94ca4c67ffdbcda63af10048d23865ff3824"
+      ]
+    ]"#,
+    )
+    .unwrap();
+
+    log::warn!(
+        "entries_1 = {}",
+        serde_json::to_string_pretty(&entries_1).unwrap()
+    );
+    log::warn!(
+        "entries_2 = {}",
+        serde_json::to_string_pretty(&entries_2).unwrap()
+    );
+    empty_keys_union_diff_intersection_test_body(entries_1, entries_2);
 }
