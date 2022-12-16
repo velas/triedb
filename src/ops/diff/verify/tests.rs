@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::debug::child_extractor::DataWithRoot;
 use crate::debug::{DebugPrintExt, MapWithCounterCached};
-use crate::gc::tests::{FixedKey, RandomFixedData, VariableKey, RNG_DATA_SIZE};
+use crate::gc::tests::{FixedKey, NodesGenerator, UniqueValue, VariableKey, RNG_DATA_SIZE};
 use crate::mutable::TrieMut;
 use crate::ops::diff::verify::VerificationError;
 use crate::{debug, diff, empty_trie_hash, verify_diff, Database, DiffChange as Change};
@@ -1495,45 +1495,7 @@ fn test_try_apply_diff_with_deleted_db_dependency() {
     log::info!("second trie dropped")
 }
 
-use quickcheck::{Arbitrary, Gen, QuickCheck, TestResult};
-
-fn fixed_key_unique_random_data(values: HashSet<RandomFixedData>) -> debug::EntriesHex {
-    let mut g = Gen::new(RNG_DATA_SIZE);
-    let mut entries = vec![];
-    for val in values.into_iter() {
-        let key = FixedKey::arbitrary(&mut g);
-        let entry = (key.0.to_vec(), Some(val.0.to_vec()));
-        entries.push(entry);
-    }
-
-    debug::EntriesHex::new(entries)
-}
-fn variable_key_unique_random_data(values: HashSet<RandomFixedData>) -> debug::EntriesHex {
-    let mut g = Gen::new(RNG_DATA_SIZE);
-    let mut entries = vec![];
-    for val in values.into_iter() {
-        let key = VariableKey::arbitrary(&mut g);
-        let entry = (key.0, Some(val.0.to_vec()));
-        entries.push(entry);
-    }
-
-    debug::EntriesHex::new(entries)
-}
-fn join_entries(entries_1: &debug::EntriesHex, entries_2: &debug::EntriesHex) -> debug::EntriesHex {
-    let mut join_map: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
-    for (key, val) in &entries_1.data {
-        join_map.insert(key.clone(), val.clone());
-    }
-
-    for (key, val) in &entries_2.data {
-        join_map.insert(key.clone(), val.clone());
-    }
-    let mut join_entries = vec![];
-    for (key, val) in join_map.into_iter() {
-        join_entries.push((key, val));
-    }
-    debug::EntriesHex::new(join_entries)
-}
+use quickcheck::{Gen, QuickCheck, TestResult};
 
 fn reverse_changes(changes: Vec<Change>) -> Vec<Change> {
     changes
@@ -1610,7 +1572,7 @@ fn empty_keys_union_diff_intersection_test_body(
 
     let new_trie = collection_2.trie_for(second_root.root);
 
-    for (key, value) in &join_entries(&entries_1, &entries_2).data {
+    for (key, value) in &entries_1.join(&entries_2).data {
         assert_eq!(TrieMut::get(&new_trie, key), value.as_ref().cloned());
     }
 }
@@ -1694,22 +1656,25 @@ fn empty_keys_distinct_diff_empty_intersection_and_reversal_test_body(
         let new_trie = collection.trie_for(target_root);
 
         // removing duplicates from tested_entries, checking for last value
-        for (key, value) in &join_entries(tested_entries, tested_entries).data {
+        for (key, value) in &tested_entries.data {
             assert_eq!(TrieMut::get(&new_trie, key), value.as_ref().cloned());
         }
     }
 }
 
+type FixedKeyUniqueValues = NodesGenerator<debug::EntriesHex, FixedKey, UniqueValue>;
+type VariableKeyUniqueValues = NodesGenerator<debug::EntriesHex, VariableKey, UniqueValue>;
 #[test]
 fn qc_unique_nodes_fixed_key_empty_diff_intersection() {
     let _ = env_logger::Builder::new().parse_filters("error").try_init();
-    fn property(keys_1: HashSet<RandomFixedData>, keys_2: HashSet<RandomFixedData>) -> TestResult {
-        if keys_1.is_empty() || keys_2.is_empty() || keys_1 == keys_2 {
+    fn property(gen_1: FixedKeyUniqueValues, gen_2: FixedKeyUniqueValues) -> TestResult {
+        if gen_1.data.data.is_empty()
+            || gen_2.data.data.is_empty()
+            || gen_1.data.data == gen_2.data.data
+        {
             return TestResult::discard();
         }
-        let entries_1 = fixed_key_unique_random_data(keys_1);
-        let entries_2 = fixed_key_unique_random_data(keys_2);
-        empty_keys_union_diff_intersection_test_body(entries_1, entries_2);
+        empty_keys_union_diff_intersection_test_body(gen_1.data, gen_2.data);
 
         TestResult::passed()
     }
@@ -1717,23 +1682,21 @@ fn qc_unique_nodes_fixed_key_empty_diff_intersection() {
         .gen(Gen::new(RNG_DATA_SIZE))
         // .tests(20_000)
         .quickcheck(
-            property
-                as fn(
-                    keys_1: HashSet<RandomFixedData>,
-                    keys_2: HashSet<RandomFixedData>,
-                ) -> TestResult,
+            property as fn(gen_1: FixedKeyUniqueValues, gen_2: FixedKeyUniqueValues) -> TestResult,
         );
 }
+
 #[test]
 fn qc_unique_nodes_fixed_key_empty_diff_intersection_and_reversal() {
     tracing_sub_init();
-    fn property(keys_1: HashSet<RandomFixedData>, keys_2: HashSet<RandomFixedData>) -> TestResult {
-        if keys_1.is_empty() || keys_2.is_empty() || keys_1 == keys_2 {
+    fn property(gen_1: FixedKeyUniqueValues, gen_2: FixedKeyUniqueValues) -> TestResult {
+        if gen_1.data.data.is_empty()
+            || gen_2.data.data.is_empty()
+            || gen_1.data.data == gen_2.data.data
+        {
             return TestResult::discard();
         }
-        let entries_1 = fixed_key_unique_random_data(keys_1);
-        let entries_2 = fixed_key_unique_random_data(keys_2);
-        empty_keys_distinct_diff_empty_intersection_and_reversal_test_body(entries_1, entries_2);
+        empty_keys_distinct_diff_empty_intersection_and_reversal_test_body(gen_1.data, gen_2.data);
 
         TestResult::passed()
     }
@@ -1741,24 +1704,21 @@ fn qc_unique_nodes_fixed_key_empty_diff_intersection_and_reversal() {
         .gen(Gen::new(RNG_DATA_SIZE))
         // .tests(1000)
         .quickcheck(
-            property
-                as fn(
-                    keys_1: HashSet<RandomFixedData>,
-                    keys_2: HashSet<RandomFixedData>,
-                ) -> TestResult,
+            property as fn(gen_1: FixedKeyUniqueValues, gen_2: FixedKeyUniqueValues) -> TestResult,
         );
 }
 
 #[test]
 fn qc_unique_nodes_variable_key_empty_diff_intersection_and_reversal() {
     tracing_sub_init();
-    fn property(keys_1: HashSet<RandomFixedData>, keys_2: HashSet<RandomFixedData>) -> TestResult {
-        if keys_1.is_empty() || keys_2.is_empty() || keys_1 == keys_2 {
+    fn property(gen_1: VariableKeyUniqueValues, gen_2: VariableKeyUniqueValues) -> TestResult {
+        if gen_1.data.data.is_empty()
+            || gen_2.data.data.is_empty()
+            || gen_1.data.data == gen_2.data.data
+        {
             return TestResult::discard();
         }
-        let entries_1 = variable_key_unique_random_data(keys_1);
-        let entries_2 = variable_key_unique_random_data(keys_2);
-        empty_keys_distinct_diff_empty_intersection_and_reversal_test_body(entries_1, entries_2);
+        empty_keys_distinct_diff_empty_intersection_and_reversal_test_body(gen_1.data, gen_2.data);
 
         TestResult::passed()
     }
@@ -1767,31 +1727,21 @@ fn qc_unique_nodes_variable_key_empty_diff_intersection_and_reversal() {
         .tests(1000)
         .quickcheck(
             property
-                as fn(
-                    keys_1: HashSet<RandomFixedData>,
-                    keys_2: HashSet<RandomFixedData>,
-                ) -> TestResult,
+                as fn(gen_1: VariableKeyUniqueValues, gen_2: VariableKeyUniqueValues) -> TestResult,
         );
 }
 
 #[test]
 fn qc_unique_nodes_variable_key_empty_diff_intersection1() {
     tracing_sub_init();
-    fn property(keys_1: HashSet<RandomFixedData>, keys_2: HashSet<RandomFixedData>) -> TestResult {
-        if keys_1.is_empty() || keys_2.is_empty() || keys_1 == keys_2 {
+    fn property(gen_1: VariableKeyUniqueValues, gen_2: VariableKeyUniqueValues) -> TestResult {
+        if gen_1.data.data.is_empty()
+            || gen_2.data.data.is_empty()
+            || gen_1.data.data == gen_2.data.data
+        {
             return TestResult::discard();
         }
-        let entries_1 = variable_key_unique_random_data(keys_1);
-        let entries_2 = variable_key_unique_random_data(keys_2);
-        log::warn!(
-            "entries_1 = {}",
-            serde_json::to_string_pretty(&entries_1).unwrap()
-        );
-        log::warn!(
-            "entries_2 = {}",
-            serde_json::to_string_pretty(&entries_2).unwrap()
-        );
-        empty_keys_union_diff_intersection_test_body(entries_1, entries_2);
+        empty_keys_union_diff_intersection_test_body(gen_1.data, gen_2.data);
 
         TestResult::passed()
     }
@@ -1800,56 +1750,8 @@ fn qc_unique_nodes_variable_key_empty_diff_intersection1() {
         // .tests(20_000)
         .quickcheck(
             property
-                as fn(
-                    keys_1: HashSet<RandomFixedData>,
-                    keys_2: HashSet<RandomFixedData>,
-                ) -> TestResult,
+                as fn(gen_1: VariableKeyUniqueValues, gen_2: VariableKeyUniqueValues) -> TestResult,
         );
-}
-
-#[test]
-fn data_from_qc_inner() {
-    tracing_sub_init();
-    let keys_1: HashSet<_> = vec![RandomFixedData([
-        113, 153, 204, 44, 29, 37, 1, 171, 95, 188, 255, 196, 225, 110, 0, 51, 154, 255, 171, 92,
-        158, 162, 13, 255, 129, 28, 55, 132, 104, 1, 8, 190,
-    ])]
-    .into_iter()
-    .collect();
-    let keys_2: HashSet<_> = vec![
-        RandomFixedData([
-            255, 30, 198, 38, 255, 192, 1, 1, 7, 131, 172, 158, 72, 90, 84, 189, 178, 125, 108, 79,
-            11, 210, 32, 150, 79, 2, 252, 226, 74, 179, 242, 121,
-        ]),
-        RandomFixedData([
-            192, 156, 118, 51, 116, 230, 60, 164, 95, 247, 241, 8, 255, 25, 66, 168, 95, 183, 166,
-            25, 226, 0, 129, 31, 142, 0, 222, 106, 64, 0, 78, 202,
-        ]),
-        RandomFixedData([
-            125, 43, 77, 108, 112, 189, 0, 180, 32, 116, 25, 11, 175, 143, 148, 202, 76, 103, 255,
-            219, 205, 166, 58, 241, 0, 72, 210, 56, 101, 255, 56, 36,
-        ]),
-        RandomFixedData([
-            36, 20, 69, 65, 35, 94, 119, 27, 15, 119, 233, 49, 226, 255, 41, 186, 60, 8, 1, 133,
-            69, 217, 159, 194, 182, 0, 5, 186, 2, 255, 37, 6,
-        ]),
-    ]
-    .into_iter()
-    .collect();
-    fn property(keys_1: HashSet<RandomFixedData>, keys_2: HashSet<RandomFixedData>) {
-        let entries_1 = variable_key_unique_random_data(keys_1);
-        let entries_2 = variable_key_unique_random_data(keys_2);
-        log::warn!(
-            "entries_1 = {}",
-            serde_json::to_string_pretty(&entries_1).unwrap()
-        );
-        log::warn!(
-            "entries_2 = {}",
-            serde_json::to_string_pretty(&entries_2).unwrap()
-        );
-        empty_keys_union_diff_intersection_test_body(entries_1, entries_2);
-    }
-    property(keys_1, keys_2);
 }
 
 #[test]

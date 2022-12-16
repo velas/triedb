@@ -552,10 +552,12 @@ pub mod testing {
 pub mod tests {
     use std::{
         collections::{BTreeSet, HashMap},
+        marker::PhantomData,
         sync::Arc,
     };
 
     use crate::{
+        debug,
         merkle::nibble::{into_key, Nibble},
         MerkleNode,
     };
@@ -595,6 +597,12 @@ pub mod tests {
             key.copy_from_slice(&vec_data);
 
             Self(key)
+        }
+    }
+
+    impl AsRef<[u8]> for FixedKey {
+        fn as_ref(&self) -> &[u8] {
+            return &self.0;
         }
     }
 
@@ -648,6 +656,87 @@ pub mod tests {
             assert_eq!(len / 2, vec_data.len());
 
             Self(vec_data)
+        }
+    }
+    impl AsRef<[u8]> for VariableKey {
+        fn as_ref(&self) -> &[u8] {
+            return &self.0;
+        }
+    }
+
+    // pair; unique inserted values of same length ensure that all nodes in tree are unique
+    #[allow(unused, non_camel_case_types)]
+    pub struct NonUniqueValue;
+    #[allow(non_camel_case_types)]
+    pub struct UniqueValue;
+
+    pub struct NodesGenerator<D, K, V> {
+        pub data: D,
+        _k: PhantomData<K>,
+        _v: PhantomData<V>,
+    }
+    impl<D, K, V> Clone for NodesGenerator<D, K, V>
+    where
+        D: Clone,
+    {
+        fn clone(&self) -> Self {
+            Self {
+                data: self.data.clone(),
+                _k: PhantomData,
+                _v: PhantomData,
+            }
+        }
+    }
+    impl<K> Arbitrary for NodesGenerator<debug::EntriesHex, K, UniqueValue>
+    where
+        K: Arbitrary + Eq + AsRef<[u8]> + std::hash::Hash,
+    {
+        fn arbitrary(g: &mut Gen) -> Self {
+            let values: HashMap<RandomFixedData, K> = HashMap::arbitrary(g);
+            // dedup
+            let mut keys_first: HashMap<K, RandomFixedData> = HashMap::new();
+            for (value, key) in values.into_iter() {
+                keys_first.insert(key, value);
+            }
+
+            let mut entries = vec![];
+            for (key, value) in keys_first.into_iter() {
+                let entry = (key.as_ref().to_vec(), Some(value.0.to_vec()));
+                entries.push(entry);
+            }
+            entries.sort();
+            Self {
+                data: debug::EntriesHex::new(entries),
+                _k: PhantomData,
+                _v: PhantomData,
+            }
+        }
+    }
+
+    impl<K> Arbitrary for NodesGenerator<debug::EntriesHex, K, NonUniqueValue>
+    where
+        K: Arbitrary + Eq + AsRef<[u8]> + std::hash::Hash,
+    {
+        fn arbitrary(g: &mut Gen) -> Self {
+            let keys_first: HashMap<K, RandomFixedData> = HashMap::arbitrary(g);
+
+            let mut entries = vec![];
+            for (key, value) in keys_first.into_iter() {
+                let entry = (key.as_ref().to_vec(), Some(value.0.to_vec()));
+                entries.push(entry);
+            }
+            entries.sort();
+            Self {
+                data: debug::EntriesHex::new(entries),
+                _k: PhantomData,
+                _v: PhantomData,
+            }
+        }
+    }
+    impl<K, V> std::fmt::Debug for NodesGenerator<debug::EntriesHex, K, V> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let string = serde_json::to_string_pretty(&self.data).unwrap();
+            write!(f, "{}", string)
         }
     }
 
