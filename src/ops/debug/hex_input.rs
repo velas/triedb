@@ -1,9 +1,11 @@
+use std::collections::HashMap;
 use std::fmt;
 
 use serde::de::{Deserialize, SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserializer, Serialize, Serializer};
 
+#[derive(Clone)]
 pub struct EntriesHex {
     pub data: Vec<(Vec<u8>, Option<Vec<u8>>)>,
 }
@@ -13,6 +15,23 @@ impl EntriesHex {
         let res = Self { data };
         log::info!("{}", serde_json::to_string_pretty(&res).unwrap());
         res
+    }
+
+    pub fn join(&self, other: &Self) -> Self {
+        let mut join_map: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
+
+        for (key, val) in &self.data {
+            join_map.insert(key.clone(), val.clone());
+        }
+        for (key, val) in &other.data {
+            join_map.insert(key.clone(), val.clone());
+        }
+
+        let mut join_entries = vec![];
+        for (key, val) in join_map.into_iter() {
+            join_entries.push((key, val));
+        }
+        Self::new(join_entries)
     }
 }
 
