@@ -664,7 +664,32 @@ pub mod tests {
             }
         }
     }
-    impl<K, V> std::fmt::Debug for NodesGenerator<debug::EntriesHex, K, V> {
+
+    impl<K, V> Arbitrary for NodesGenerator<debug::InnerEntriesHex, K, V>
+    where
+        K: Arbitrary + Eq + AsRef<[u8]> + std::hash::Hash,
+        NodesGenerator<debug::EntriesHex, K, V>: Arbitrary,
+    {
+        fn arbitrary(g: &mut Gen) -> Self {
+            let mut entries = vec![];
+            let keys = Vec::<K>::arbitrary(g);
+            for key in keys {
+                let values: NodesGenerator<debug::EntriesHex, K, V> = NodesGenerator::arbitrary(g);
+                entries.push((key.as_ref().to_vec(), values.data))
+            }
+
+            Self {
+                data: debug::InnerEntriesHex::new(entries),
+                _k: PhantomData,
+                _v: PhantomData,
+            }
+        }
+    }
+
+    impl<D, K, V> std::fmt::Debug for NodesGenerator<D, K, V>
+    where
+        D: serde::Serialize,
+    {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             let string = serde_json::to_string_pretty(&self.data).unwrap();
             write!(f, "{}", string)
