@@ -50,3 +50,6 @@ name = "state_diff"
 path = "fuzz_targets/state_diff.rs"
 test = false
 doc = false
+
+[patch.crates-io]
+primitive-types = { git = "https://github.com/velas/parity-common", tag = "primitive-types-v0.11-with-borsh-support" }
