@@ -77,7 +77,7 @@ pub fn verify<D, F>(
     collect_dependencies: bool,
 ) -> crate::Result<VerifiedPatch>
 where
-    D: DbCounter + Send + Sync,
+    D: DbCounter,
     F: FnMut(&[u8]) -> Vec<H256> + Clone,
 {
     let mut map: HashMap<H256, Vec<u8>> = HashMap::new();
