@@ -12,7 +12,7 @@ use primitive_types::H256;
 use std::collections::HashMap;
 use triedb::debug::DebugPrintExt;
 
-use triedb::debug::MapWithCounterCached;
+use triedb::gc::SyncDashMap;
 use triedb::gc::TrieCollection;
 use triedb::merkle::nibble::{into_key, Nibble};
 use triedb::TrieMut;
@@ -86,8 +86,8 @@ impl<'a> Arbitrary<'a> for MyArgs {
 
 fn test_state_diff(changes: Vec<(Key, FixedData)>, changes2: Vec<(Key, FixedData)>) {
     let _ = env_logger::Builder::new().parse_filters("error").try_init();
-    let collection1 = TrieCollection::new(MapWithCounterCached::default());
-    let collection2 = TrieCollection::new(MapWithCounterCached::default());
+    let collection1 = TrieCollection::new(SyncDashMap::default());
+    let collection2 = TrieCollection::new(SyncDashMap::default());
 
     // Insert first trie into collections
     let mut collection1_trie1 = collection1.trie_for(crate::empty_trie_hash());

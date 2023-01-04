@@ -1,10 +1,9 @@
 use primitive_types::H256;
 use serde::{Deserialize, Serialize};
 
-use crate::gc::{RootGuard, TrieCollection};
+use crate::cache::Caching;
+use crate::gc::{MapWithCounterCachedParam, RootGuard, TrieCollection};
 use crate::TrieMut;
-
-use super::MapWithCounterCached;
 
 #[derive(Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct DataWithRoot {
@@ -27,14 +26,14 @@ impl Default for DataWithRoot {
         }
     }
 }
-pub fn insert_element<'a, F>(
-    collection: &'a TrieCollection<MapWithCounterCached>,
+pub fn insert_element<'a, F, C: Caching>(
+    collection: &'a TrieCollection<MapWithCounterCachedParam<C>>,
     account_key: &[u8],
     data_key: &[u8],
     data: &[u8],
     input_root: H256,
     child_extractor: F,
-) -> RootGuard<'a, MapWithCounterCached, F>
+) -> RootGuard<'a, MapWithCounterCachedParam<C>, F>
 where
     F: FnMut(&[u8]) -> Vec<H256> + Clone,
 {

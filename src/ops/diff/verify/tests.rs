@@ -1,7 +1,8 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use crate::cache::SyncCache;
 use crate::debug::child_extractor::DataWithRoot;
-use crate::debug::{DebugPrintExt, MapWithCounterCached};
+use crate::debug::DebugPrintExt;
 use crate::gc::tests::{FixedKey, RandomFixedData, VariableKey, RNG_DATA_SIZE};
 use crate::mutable::TrieMut;
 use crate::ops::diff::verify::VerificationError;
@@ -12,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha3::{Digest, Keccak256};
 
-use crate::gc::{RootGuard, TrieCollection};
+use crate::gc::{MapWithCounterCachedParam, RootGuard, TrieCollection};
 
 use super::VerifiedPatch;
 
@@ -34,7 +35,7 @@ fn check_changes(
     expected_trie_root: H256,
     expected_trie_data: debug::EntriesHex,
 ) {
-    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(MapWithCounterCachedParam::<SyncCache>::default());
     let mut trie = collection.trie_for(crate::empty_trie_hash());
     for (key, value) in &initial_trie_data.data {
         trie.insert(key, value.as_ref().unwrap());
@@ -81,6 +82,8 @@ fn no_childs(_: &[u8]) -> Vec<H256> {
     vec![]
 }
 
+type SyncDashMap = MapWithCounterCachedParam<SyncCache>;
+
 #[test]
 fn test_two_different_leaf_nodes() {
     let _ = env_logger::Builder::new().parse_filters("info").try_init();
@@ -99,7 +102,7 @@ fn test_two_different_leaf_nodes() {
     ]]);
     let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
 
-    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
 
     let mut trie1 = collection.trie_for(crate::empty_trie_hash());
     for (key, value) in &entries1.data {
@@ -204,7 +207,7 @@ fn test_1() {
         ]
     ]);
     let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
-    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
 
     let mut trie1 = collection.trie_for(crate::empty_trie_hash());
     for (key, value) in &entries1.data {
@@ -314,7 +317,7 @@ fn test_2() {
     ]);
     let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
 
-    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
 
     let mut trie1 = collection.trie_for(crate::empty_trie_hash());
     for (key, value) in &entries1.data {
@@ -420,7 +423,7 @@ fn test_3() {
     ]);
     let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
 
-    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
 
     let mut trie1 = collection.trie_for(crate::empty_trie_hash());
     for (key, value) in &entries1.data {
@@ -560,7 +563,7 @@ fn test_4() {
 
     let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
 
-    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
 
     let mut trie1 = collection.trie_for(crate::empty_trie_hash());
     for (key, value) in &entries1.data {
@@ -697,7 +700,7 @@ fn test_5() {
     ]);
     let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
 
-    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
 
     let mut trie1 = collection.trie_for(crate::empty_trie_hash());
     for (key, value) in &entries1.data {
@@ -823,7 +826,7 @@ fn test_get_changeset_trivial_tree() {
     ]);
 
     let entries1: debug::EntriesHex = serde_json::from_value(j).unwrap();
-    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
 
     let mut trie1 = collection.trie_for(crate::empty_trie_hash());
 
@@ -919,7 +922,7 @@ fn test_leaf_node_and_extension_node() {
 
     let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
 
-    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
 
     let mut trie = collection.trie_for(crate::empty_trie_hash());
 
@@ -1160,8 +1163,8 @@ fn test_diff_with_child_extractor() {
         (hexutil::read_hex("0x00000030").unwrap(), entries2_2),
     ];
 
-    let collection1 = TrieCollection::new(MapWithCounterCached::default());
-    let collection2 = TrieCollection::new(MapWithCounterCached::default());
+    let collection1 = TrieCollection::new(SyncDashMap::default());
+    let collection2 = TrieCollection::new(SyncDashMap::default());
     let mut collection1_trie1 = RootGuard::new(
         &collection1.database,
         crate::empty_trie_hash(),
@@ -1288,8 +1291,8 @@ fn test_diff_with_child_extractor() {
 #[test]
 fn test_try_verify_invalid_changes() {
     let _ = env_logger::Builder::new().parse_filters("info").try_init();
-    let collection1 = TrieCollection::new(MapWithCounterCached::default());
-    let collection2 = TrieCollection::new(MapWithCounterCached::default());
+    let collection1 = TrieCollection::new(SyncDashMap::default());
+    let collection2 = TrieCollection::new(SyncDashMap::default());
     let j = json!([
         [
             "0xbbaa",
@@ -1409,8 +1412,8 @@ fn test_try_apply_diff_with_deleted_db_dependency() {
     ]);
     let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
 
-    let collection = TrieCollection::new(MapWithCounterCached::default());
-    let collection2 = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
+    let collection2 = TrieCollection::new(SyncDashMap::default());
 
     let mut trie1 = collection.trie_for(crate::empty_trie_hash());
     for (key, value) in &entries1.data {
@@ -1546,8 +1549,8 @@ fn empty_keys_union_diff_intersection_test_body(
     entries_1: debug::EntriesHex,
     entries_2: debug::EntriesHex,
 ) {
-    let collection = TrieCollection::new(MapWithCounterCached::default());
-    let collection_2 = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
+    let collection_2 = TrieCollection::new(SyncDashMap::default());
 
     let mut trie1 = collection.trie_for(crate::empty_trie_hash());
     for (key, value) in &entries_1.data {
@@ -1616,9 +1619,9 @@ fn empty_keys_distinct_diff_empty_intersection_and_reversal_test_body(
     entries_1: debug::EntriesHex,
     entries_2: debug::EntriesHex,
 ) {
-    let collection = TrieCollection::new(MapWithCounterCached::default());
-    let collection_reversal_target = TrieCollection::new(MapWithCounterCached::default());
-    let collection_direct_target = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
+    let collection_reversal_target = TrieCollection::new(SyncDashMap::default());
+    let collection_direct_target = TrieCollection::new(SyncDashMap::default());
 
     let mut trie1 = collection.trie_for(crate::empty_trie_hash());
     for (key, value) in &entries_1.data {

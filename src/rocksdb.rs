@@ -4,7 +4,10 @@
 use derivative::*;
 use std::borrow::Borrow;
 
-use crate::merkle::MerkleNode;
+use crate::{
+    cache::{Cache, SyncCache},
+    merkle::MerkleNode,
+};
 
 use log::*;
 use primitive_types::H256;
@@ -16,7 +19,6 @@ pub type DB = OptimisticTransactionDB;
 
 use crate::{
     cache::CachedHandle,
-    cache::{AsyncCachedDatabaseHandle, AsyncCachedHandle},
     gc::{DbCounter, ReachableHashes},
     CachedDatabaseHandle,
 };
@@ -185,11 +187,35 @@ macro_rules! retry {
 
     };
 }
-pub type RocksHandle<'a, D> = CachedHandle<RocksDatabaseHandle<'a, D>>;
-pub type AsyncRocksHandle<D> = AsyncCachedHandle<AsyncCachedDatabaseHandle<D>>;
-pub type AsyncRocksDatabaseHandle<D> = AsyncCachedDatabaseHandle<D>;
 
-impl<'a, D: Borrow<DB>> DbCounter for RocksHandle<'a, D> {
+// `counter_cf: Option<&'a ColumnFamily>` as is doesn't allow type to become `Sync`
+pub struct RocksSyncDatabaseHandle<D> {
+    db: D,
+}
+
+impl<D> RocksSyncDatabaseHandle<D> {
+    pub fn new(db: D) -> Self {
+        RocksSyncDatabaseHandle { db }
+    }
+}
+
+impl<D: Borrow<DB>> CachedDatabaseHandle for RocksSyncDatabaseHandle<D> {
+    fn get(&self, key: H256) -> Vec<u8> {
+        self.db
+            .borrow()
+            .get(key.as_ref())
+            .expect("Error on reading database")
+            .unwrap_or_else(|| panic!("Value for {} not found in database", key))
+    }
+}
+
+pub type RocksHandle<'a, D> = CachedHandle<RocksDatabaseHandle<'a, D>, Cache>;
+pub type SyncRocksHandle<'a> = CachedHandle<RocksSyncDatabaseHandle<&'a DB>, SyncCache>;
+
+impl<'a, D, C> DbCounter for CachedHandle<RocksDatabaseHandle<'a, D>, C>
+where
+    D: Borrow<DB>,
+{
     // Insert value into db.
     // Check if value exist before, if not exist, increment child counter.
     fn gc_insert_node<F>(&self, key: H256, value: &[u8], mut child_extractor: F)
