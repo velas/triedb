@@ -1,12 +1,13 @@
 use rand::{rngs::StdRng, SeedableRng};
 use std::fmt;
+use triedb::gc::SyncDashMap;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use primitive_types::H256;
 use rand::seq::index::sample;
 
-use triedb::{debug::MapWithCounterCached, diff, empty_trie_hash, gc::TrieCollection, TrieMut};
+use triedb::{diff, empty_trie_hash, gc::TrieCollection, TrieMut};
 
 pub fn no_childs(_: &[u8]) -> Vec<H256> {
     vec![]
@@ -79,7 +80,7 @@ fn benchmark_same_key_range(c: &mut Criterion) {
         .map(|n| n.to_be_bytes())
         .collect();
 
-        let collection = TrieCollection::new(MapWithCounterCached::default());
+        let collection = TrieCollection::new(SyncDashMap::default());
 
         let mut trie = collection.trie_for(empty_trie_hash());
         for key in &keys1 {
@@ -167,7 +168,7 @@ fn benchmark_different_key_range(c: &mut Criterion) {
         .map(|n| n.to_be_bytes())
         .collect();
 
-        let collection = TrieCollection::new(MapWithCounterCached::default());
+        let collection = TrieCollection::new(SyncDashMap::default());
 
         let mut trie = collection.trie_for(empty_trie_hash());
         for key in &keys1 {
@@ -204,7 +205,7 @@ fn benchmark_different_key_range(c: &mut Criterion) {
 // Benchmark diff on two equal tries
 fn benchmark_equal_tries(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(0);
-    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
     let mut trie = collection.trie_for(empty_trie_hash());
     sample(&mut rng, 100000, 10000)
         .iter()

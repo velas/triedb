@@ -13,7 +13,8 @@ use triedb::debug::child_extractor::DataWithRoot;
 use std::collections::HashMap;
 
 use triedb::{empty_trie_hash, debug};
-use triedb::debug::MapWithCounterCached;
+
+use triedb::gc::SyncDashMap;
 use triedb::gc::{RootGuard, TrieCollection};
 use triedb::merkle::nibble::{into_key, Nibble};
 
@@ -102,8 +103,8 @@ fn test_state_diff(
     changes2: Vec<(Key, Vec<(Key, FixedData)>)>,
 ) {
     let _ = env_logger::Builder::new().parse_filters("error").try_init();
-    let collection1 = TrieCollection::new(MapWithCounterCached::default());
-    let collection2 = TrieCollection::new(MapWithCounterCached::default());
+    let collection1 = TrieCollection::new(SyncDashMap::default());
+    let collection2 = TrieCollection::new(SyncDashMap::default());
 
     let mut collection1_trie1 = RootGuard::new(
         &collection1.database,

@@ -4,9 +4,10 @@ use primitive_types::H256;
 use rlp::Rlp;
 use serde_json::json;
 
+use crate::cache::SyncCache;
 use crate::debug::DebugPrintExt;
-use crate::debug::MapWithCounterCached;
 use crate::gc::DbCounter;
+use crate::gc::MapWithCounterCachedParam;
 use crate::gc::TrieCollection;
 use crate::merkle::MerkleNode;
 use crate::mutable::TrieMut;
@@ -27,6 +28,8 @@ fn tracing_sub_init() {}
 fn no_childs(_: &[u8]) -> Vec<H256> {
     vec![]
 }
+
+type SyncDashMap = MapWithCounterCachedParam<SyncCache>;
 
 // compare_nodes: (Remove(Extension('aaa')), compare_nodes(2))
 // compare_nodes: reverse(compare_nodes(3))
@@ -63,7 +66,7 @@ fn test_extension_replaced_by_branch_extension() {
 
     let entries2: debug::EntriesHex = serde_json::from_value(j).unwrap();
 
-    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
 
     let mut trie = collection.trie_for(crate::empty_trie_hash());
 
@@ -104,7 +107,7 @@ fn test_extension_replaced_by_branch_extension() {
     .unwrap();
     log::info!("result change = {:#?}", changes);
 
-    let new_collection = TrieCollection::new(MapWithCounterCached::default());
+    let new_collection = TrieCollection::new(SyncDashMap::default());
     let mut trie = new_collection.trie_for(crate::empty_trie_hash());
     for (key, value) in &entries1.data {
         trie.insert(key, value.as_ref().unwrap());
@@ -153,7 +156,7 @@ fn test_extension_replaced_by_branch_extension() {
 fn test_two_empty_trees() {
     tracing_sub_init();
 
-    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
 
     let trie = collection.trie_for(crate::empty_trie_hash());
 
@@ -181,7 +184,7 @@ fn test_empty_tree_and_leaf() {
     let _ = env_logger::Builder::new().parse_filters("info").try_init();
     tracing_sub_init();
 
-    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
 
     // Set up initial trie
     let trie = collection.trie_for(crate::empty_trie_hash());
@@ -252,7 +255,7 @@ fn test_empty_tree_and_leaf() {
     changes.add_raw(*k, rrr.to_vec());
 
     // Take previous version of a tree
-    let new_collection = TrieCollection::new(MapWithCounterCached::default());
+    let new_collection = TrieCollection::new(SyncDashMap::default());
     // Process changes
     for (key, value) in changes.changes.into_iter().rev() {
         if let Some(value) = value {
@@ -300,7 +303,7 @@ fn test_insert_by_existing_key() {
     ]);
     let entries: debug::EntriesHex = serde_json::from_value(j).unwrap();
 
-    let collection = TrieCollection::new(MapWithCounterCached::default());
+    let collection = TrieCollection::new(SyncDashMap::default());
 
     let mut trie1 = collection.trie_for(crate::empty_trie_hash());
     for (key, value) in &entries.data {

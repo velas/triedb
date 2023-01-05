@@ -2,6 +2,7 @@ use std::borrow::Borrow;
 use std::collections::{hash_map, HashMap};
 use std::sync::Arc;
 
+use crate::cache::{Cache, SyncCache};
 use crate::merkle::{Branch, Extension, Leaf, MerkleValue};
 use crate::{
     cache::CachedHandle, delete, empty_trie_hash, get, insert, CachedDatabaseHandle, Change,
@@ -343,9 +344,13 @@ impl MapWithCounter {
     }
 }
 
-pub type MapWithCounterCached = CachedHandle<Arc<MapWithCounter>>;
+pub(crate) type MapWithCounterCachedParam<C> = CachedHandle<Arc<MapWithCounter>, C>;
 
-impl DbCounter for MapWithCounterCached {
+pub type MapWithCounterCached = MapWithCounterCachedParam<Cache>;
+
+pub type SyncDashMap = MapWithCounterCachedParam<SyncCache>;
+
+impl<C> DbCounter for MapWithCounterCachedParam<C> {
     // Insert value into db.
     // Check if value exist before, if not exist, increment child counter.
     fn gc_insert_node<F>(&self, key: H256, value: &[u8], child_extractor: F)
@@ -471,83 +476,6 @@ impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> Drop for RootGua
     }
 }
 
-pub mod testing {
-    use super::*;
-    use dashmap::mapref::entry::Entry;
-    use log::trace;
-    use primitive_types::H256;
-
-    use super::DbCounter;
-    use crate::debug::MapWithCounterCached;
-
-    impl DbCounter for MapWithCounterCached {
-        // Insert value into db.
-        // Check if value exist before, if not exist, increment child counter.
-        fn gc_insert_node<F>(&self, key: H256, value: &[u8], child_extractor: F)
-        where
-            F: FnMut(&[u8]) -> Vec<H256>,
-        {
-            match self.db.data.entry(key) {
-                Entry::Occupied(_) => {}
-                Entry::Vacant(v) => {
-                    let rlp = Rlp::new(value);
-                    let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-                    trace!("inserting node {:?}=>{:?}", key, node);
-                    for hash in ReachableHashes::collect(&node, child_extractor).childs() {
-                        self.db.increase(hash);
-                    }
-                    v.insert(value.to_vec());
-                }
-            };
-        }
-        fn gc_count(&self, key: H256) -> usize {
-            self.db.counter.get(&key).map(|v| *v).unwrap_or_default()
-        }
-
-        // Return true if node data is exist, and it counter more than 0;
-        fn node_exist(&self, key: H256) -> bool {
-            self.db.data.get(&key).is_some() && self.gc_count(key) > 0
-        }
-
-        // atomic operation:
-        // 1. check if key counter didn't increment in other thread.
-        // 2. remove key if counter == 0.
-        // 3. find all childs
-        // 4. decrease child counters
-        // 5. return list of childs with counter == 0
-        fn gc_try_cleanup_node<F>(&self, key: H256, child_extractor: F) -> Vec<H256>
-        where
-            F: FnMut(&[u8]) -> Vec<H256>,
-        {
-            match self.db.data.entry(key) {
-                Entry::Occupied(entry) => {
-                    // in this code we lock data, so it's okay to check counter from separate function
-                    if self.gc_count(key) == 0 {
-                        let value = entry.remove();
-                        let rlp = Rlp::new(&value);
-                        let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-                        return ReachableHashes::collect(&node, child_extractor)
-                            .childs()
-                            .into_iter()
-                            .filter(|k| self.db.decrease(*k) == 0)
-                            .collect();
-                    }
-                }
-                Entry::Vacant(_) => {}
-            };
-            vec![]
-        }
-
-        fn gc_pin_root(&self, key: H256) {
-            self.db.increase(key);
-        }
-
-        fn gc_unpin_root(&self, key: H256) -> bool {
-            self.db.decrease(key) == 0
-        }
-    }
-}
-
 #[cfg(test)]
 pub mod tests {
     use std::{
@@ -568,8 +496,11 @@ pub mod tests {
     use serde::{Deserialize, Serialize};
 
     use super::*;
+    use crate::cache::Cache;
     use crate::impls::tests::{Data, K};
     use hex_literal::hex;
+
+    type NotSyncDashMap = MapWithCounterCachedParam<Cache>;
 
     pub fn no_childs(_: &[u8]) -> Vec<H256> {
         vec![]
@@ -692,7 +623,7 @@ pub mod tests {
         let value3_1 = b"changed data_____________________";
         let value2_1 = b"changed data_____________________";
 
-        let collection = TrieCollection::new(MapWithCounterCached::default());
+        let collection = TrieCollection::new(NotSyncDashMap::default());
 
         let mut trie = collection.trie_for(crate::empty_trie_hash());
         trie.insert(key1, value1);
@@ -841,7 +772,7 @@ pub mod tests {
     fn two_threads_conflict() {
         let shared_db = Arc::new(MapWithCounter::default());
         fn routine(db: Arc<MapWithCounter>) {
-            let shared_db = CachedHandle::new(db);
+            let shared_db = CachedHandle::<Arc<MapWithCounter>, Cache>::new(db);
             let key1 = &hex!("bbaa");
             let key2 = &hex!("ffaa");
             let key3 = &hex!("bbcc");
@@ -911,7 +842,7 @@ pub mod tests {
         if kvs_1.is_empty() || kvs_2.is_empty() {
             return TestResult::discard();
         }
-        let collection = TrieCollection::new(MapWithCounterCached::default());
+        let collection = TrieCollection::new(NotSyncDashMap::default());
 
         let mut root = crate::empty_trie_hash();
         let mut roots = Vec::new();
@@ -1010,7 +941,7 @@ pub mod tests {
         if kvs_1.is_empty() || kvs_2.is_empty() {
             return TestResult::discard();
         }
-        let collection = TrieCollection::new(MapWithCounterCached::default());
+        let collection = TrieCollection::new(NotSyncDashMap::default());
 
         let mut root = crate::empty_trie_hash();
         let mut roots = Vec::new();
