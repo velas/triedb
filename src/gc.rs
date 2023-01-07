@@ -204,6 +204,60 @@ impl<D: DbCounter + Database> TrieCollection<D> {
     }
 }
 
+/// Sort changes from root to leaf and apply
+pub fn apply_diff_patch_par_check<F, D>(
+    database_lock: &D,
+    mut databases: Vec<D>,
+    patch: crate::VerifiedPatch,
+    mut child_extractor: F,
+) -> crate::Result<RootGuard<D, F>>
+where
+    F: FnMut(&[u8]) -> Vec<H256> + Clone + Send,
+    D: DbCounter + Database + Send,
+{
+    let root_guard = RootGuard::new(database_lock, patch.target_root, child_extractor.clone());
+    for (key, value) in patch.sorted_changes.iter() {
+        database_lock.gc_insert_node(*key, value, &mut child_extractor);
+    }
+
+    // verifying, that `patch_dependencies` haven't left db since patch verification moment
+    let mut chunks_iter = patch.sorted_changes.chunks(patch.sorted_changes.len() / 7);
+    let mut results = [None; 8];
+    let mut extractors = vec![];
+    for _index in 0..8 {
+        let extractor_copy = child_extractor.clone();
+        extractors.push(Some(extractor_copy));
+    }
+    rayon::scope(move |s| {
+        for index in 0..8 {
+            let moved_out = databases.remove(index);
+            let mut extractor = extractors[index].take();
+            if let Some(subvec) = chunks_iter.next() {
+                s.spawn(move |_| {
+                    for (_hash, value) in subvec {
+                        // TODO: double check if that unwrap is valid
+                        let node = MerkleNode::decode(&Rlp::new(value)).unwrap();
+
+                        let childs: Vec<H256> =
+                            ReachableHashes::collect(&node, extractor.take().unwrap()).childs();
+                        for hash in childs {
+                            if !moved_out.node_exist(hash) {
+                                results[index] = Some(hash);
+                                return;
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    });
+    if let Some(hash) = IntoIterator::into_iter(results).flatten().take(1).next() {
+        return Err(crate::error::Error::DiffPatchApply(hash));
+    }
+
+    Ok(root_guard)
+}
+
 pub struct DatabaseTrieMut<D> {
     database: D,
     change: Change,

@@ -2,7 +2,7 @@
 
 //use asterix to avoid unresolved import https://github.com/rust-analyzer/rust-analyzer/issues/7459#issuecomment-907714513
 use derivative::*;
-use std::borrow::Borrow;
+use std::{borrow::Borrow, sync::Arc};
 
 use crate::{
     cache::{Cache, SyncCache},
@@ -12,7 +12,7 @@ use crate::{
 use log::*;
 use primitive_types::H256;
 use rlp::Rlp;
-use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB, Transaction};
+use rocksdb_lib::{BoundColumnFamily, MergeOperands, OptimisticTransactionDB, Transaction};
 
 // We use optimistica transaction, to allow regular `get` operation execute without lock timeouts.
 pub type DB = OptimisticTransactionDB;
@@ -31,11 +31,11 @@ pub struct RocksDatabaseHandle<'a, D> {
     db: D,
 
     #[derivative(Debug = "ignore")]
-    counter_cf: Option<&'a ColumnFamily>,
+    counter_cf: Option<Arc<BoundColumnFamily<'a>>>,
 }
 
 impl<'a, D> RocksDatabaseHandle<'a, D> {
-    pub fn new(db: D, counter_cf: &'a ColumnFamily) -> Self {
+    pub fn new(db: D, counter_cf: Arc<BoundColumnFamily<'a>>) -> Self {
         RocksDatabaseHandle {
             db,
             counter_cf: counter_cf.into(),
@@ -53,7 +53,7 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         b: &mut Transaction<DB>,
         key: H256,
     ) -> Result<(), rocksdb_lib::Error> {
-        if let Some(counter_cf) = self.counter_cf {
+        if let Some(counter_cf) = &self.counter_cf {
             b.delete_cf(counter_cf, key)?
         }
         Ok(())
@@ -64,7 +64,7 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         b: &mut Transaction<DB>,
         key: H256,
     ) -> Result<(), rocksdb_lib::Error> {
-        if let Some(counter_cf) = self.counter_cf {
+        if let Some(counter_cf) = &self.counter_cf {
             if b.get_for_update_cf(counter_cf, key, EXCLUSIVE)?.is_none() {
                 b.put_cf(counter_cf, key, serialize_counter(0))?
             }
@@ -76,7 +76,7 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
     where
         D: Borrow<DB>,
     {
-        if let Some(counter_cf) = self.counter_cf {
+        if let Some(counter_cf) = &self.counter_cf {
             self.db
                 .borrow()
                 .merge_cf(counter_cf, key.as_ref(), serialize_counter(1))?
@@ -87,7 +87,7 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
     where
         D: Borrow<DB>,
     {
-        if let Some(counter_cf) = self.counter_cf {
+        if let Some(counter_cf) = &self.counter_cf {
             self.db
                 .borrow()
                 .merge_cf(counter_cf, key.as_ref(), serialize_counter(-1))?
@@ -95,7 +95,7 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         Ok(())
     }
     pub fn increase(&self, b: &mut Transaction<DB>, key: H256) -> Result<(), rocksdb_lib::Error> {
-        if let Some(counter_cf) = self.counter_cf {
+        if let Some(counter_cf) = &self.counter_cf {
             let mut value = self.get_counter_in_tx(b, key)?;
             value += 1;
             b.put_cf(counter_cf, key.as_ref(), serialize_counter(value))?;
@@ -104,7 +104,7 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         Ok(())
     }
     pub fn decrease(&self, b: &mut Transaction<DB>, key: H256) -> Result<i64, rocksdb_lib::Error> {
-        if let Some(counter_cf) = self.counter_cf {
+        if let Some(counter_cf) = &self.counter_cf {
             let mut value = self.get_counter_in_tx(b, key)?;
             value -= 1;
             b.put_cf(counter_cf, key.as_ref(), serialize_counter(value))?;
@@ -118,7 +118,7 @@ impl<'a, D> RocksDatabaseHandle<'a, D> {
         b: &mut Transaction<DB>,
         key: H256,
     ) -> Result<i64, rocksdb_lib::Error> {
-        if let Some(counter_cf) = self.counter_cf {
+        if let Some(counter_cf) = &self.counter_cf {
             b.get_for_update_cf(counter_cf, key.as_ref(), EXCLUSIVE)
                 .map(|s| s.map(|s| deserialize_counter(&s)).unwrap_or_default())
         } else {
@@ -558,7 +558,8 @@ mod tests {
 
         let cf = db.cf_handle("counter").unwrap();
 
-        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
+        let collection =
+            TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf.clone())));
 
         let mut root = crate::empty_trie_hash();
         let mut roots = Vec::new();
@@ -617,11 +618,11 @@ mod tests {
 
         println!("Debug cf");
 
-        for item in db.iterator_cf(cf, IteratorMode::Start) {
+        for item in db.iterator_cf(&cf, IteratorMode::Start) {
             let (k, v) = item.unwrap();
             println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
         }
-        assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);
+        assert_eq!(db.iterator_cf(&cf, IteratorMode::Start).count(), 0);
 
         TestResult::passed()
     }
@@ -644,7 +645,8 @@ mod tests {
 
         let cf = db.cf_handle("counter").unwrap();
 
-        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
+        let collection =
+            TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf.clone())));
 
         let mut top_level_root = collection.empty_guard(DataWithRoot::get_childs);
 
@@ -728,11 +730,11 @@ mod tests {
         assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
 
         println!("Debug cf");
-        for item in db.iterator_cf(cf, IteratorMode::Start) {
+        for item in db.iterator_cf(&cf, IteratorMode::Start) {
             let (k, v) = item.unwrap();
             println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
         }
-        assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);
+        assert_eq!(db.iterator_cf(&cf, IteratorMode::Start).count(), 0);
 
         TestResult::passed()
     }
@@ -751,7 +753,8 @@ mod tests {
 
         let cf = db.cf_handle("counter").unwrap();
 
-        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
+        let collection =
+            TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf.clone())));
 
         let mut root = crate::empty_trie_hash();
         let mut root_guards = vec![];
@@ -800,11 +803,11 @@ mod tests {
         assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
 
         println!("Debug cf");
-        for item in db.iterator_cf(cf, IteratorMode::Start) {
+        for item in db.iterator_cf(&cf, IteratorMode::Start) {
             let (k, v) = item.unwrap();
             println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
         }
-        assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);
+        assert_eq!(db.iterator_cf(&cf, IteratorMode::Start).count(), 0);
 
         TestResult::passed()
     }
@@ -881,11 +884,11 @@ mod tests {
         let cf = shared_db.cf_handle("counter").unwrap();
         assert_eq!(shared_db.iterator(IteratorMode::Start).count(), 0);
 
-        for item in shared_db.iterator_cf(cf, IteratorMode::Start) {
+        for item in shared_db.iterator_cf(&cf, IteratorMode::Start) {
             let (k, v) = item.unwrap();
             println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
         }
-        assert_eq!(shared_db.iterator_cf(cf, IteratorMode::Start).count(), 0);
+        assert_eq!(shared_db.iterator_cf(&cf, IteratorMode::Start).count(), 0);
     }
 
     #[test]
@@ -1191,10 +1194,10 @@ mod tests {
         let cf = db.cf_handle("counter").unwrap();
         assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
 
-        for item in db.iterator_cf(cf, IteratorMode::Start) {
+        for item in db.iterator_cf(&cf, IteratorMode::Start) {
             let (k, v) = item.unwrap();
             println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
         }
-        assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);
+        assert_eq!(db.iterator_cf(&cf, IteratorMode::Start).count(), 0);
     }
 }
