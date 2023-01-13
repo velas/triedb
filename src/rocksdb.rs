@@ -834,7 +834,6 @@ mod tests {
         // check cleanup db
         drop(top_level_root);
 
-        use rocksdb_lib::IteratorMode;
         println!("Debug DB");
         for item in db.iterator(IteratorMode::Start) {
             let (k, v) = item.unwrap();

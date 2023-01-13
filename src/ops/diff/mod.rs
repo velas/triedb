@@ -413,6 +413,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
             // TODO: Replace by static array, child_collector: Fn(&data) -> Option<Array<STATIC_LEN>>
             let mut left_iter = left_roots.into_iter().flatten();
             let mut right_iter = right_roots.into_iter().flatten();
+            // iter::zip, but with optional elements on any side.
             loop {
                 let left = left_iter.next();
                 let right = right_iter.next();
@@ -424,7 +425,11 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                 let left = left.unwrap_or_else(crate::empty_trie_hash);
                 let right = right.unwrap_or_else(crate::empty_trie_hash);
                 let child_changes = self.compare_roots(left, right)?;
-                changes.extend_from_slice(&child_changes.changes)
+                let Changes {
+                    changes: subchanges,
+                    data_diff: _child_data_diff,
+                } = child_changes;
+                changes.extend_from_slice(&subchanges)
             }
         }
         return Ok(changes);
@@ -537,11 +542,11 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
             right_entry.value.merkle_node(),
         ) {
             (MerkleNode::Extension(..), _) => {
-                unreachable!("Matching extension node is not possible during content coparsion")
+                unreachable!("Matching extension node is not possible during content comparsion")
             }
 
             (_, MerkleNode::Extension(..)) => {
-                unreachable!("Matching extension node is not possible during content coparsion")
+                unreachable!("Matching extension node is not possible during content comparsion")
             }
             // One leaf was replaced by other. (data changed)
             (MerkleNode::Leaf(..), MerkleNode::Leaf(..)) => {
@@ -597,6 +602,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                 changes.register_data_change(&left_entry.value, Some(&right_entry.value));
 
                 changes.remove_node(&left_entry.value);
+                // TODO: deep_insert produce second data change for right_entry.value
                 changes.extend(&self.deep_insert(right_entry.value));
             }
             (MerkleNode::Branch(Branch { .. }), MerkleNode::Leaf(Leaf { .. })) => {
@@ -617,12 +623,11 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
         right_entry: Entry<KeyedMerkleNode>,
         mut changes: Changes,
     ) -> Changes {
-        changes.register_data_change(&left_entry.value, None);
-        changes.remove_node(&left_entry.value);
+        changes.remove_with_register_child(left_entry.value.db_node_key(), &left_entry.value);
 
         match left_entry.value.merkle_node() {
             MerkleNode::Extension(..) => {
-                unreachable!("Matching extension node is not possible during content coparsion")
+                unreachable!("Matching extension node is not possible during content comparsion")
             }
             // because we compare only a case where right is deeper,
             // This branch is only possible when leaf was removed
