@@ -2,6 +2,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
+    fmt,
     sync::Arc,
 };
 
@@ -31,7 +32,7 @@ pub use ops::debug::{self, draw, Child};
 pub use ops::diff::verify::{verify as verify_diff, VerifiedPatch};
 pub use ops::diff::Change as DiffChange;
 
-use ops::{build, delete, diff, get, insert};
+use ops::{build, debug::OwnedData, delete, diff, get, insert};
 
 use merkle::nibble::Entry;
 
@@ -59,16 +60,16 @@ impl<T: Database> Database for Arc<T> {
 }
 
 /// Change for a merkle trie operation.
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Change {
     /// Additions to the database.
-    pub changes: VecDeque<(H256, Option<Vec<u8>>)>,
+    pub changes: VecDeque<(H256, Option<OwnedData>)>,
 }
 
 impl Change {
     /// Change to add a new raw value.
     pub fn add_raw(&mut self, key: H256, value: Vec<u8>) {
-        self.changes.push_back((key, Some(value)));
+        self.changes.push_back((key, Some(value.into())));
     }
 
     /// Change to add a new node.
@@ -112,7 +113,7 @@ impl Change {
     pub fn merge(&mut self, other: &Change) {
         for (key, v) in &other.changes {
             if let Some(v) = v {
-                self.add_raw(*key, v.clone());
+                self.add_raw(*key, v.clone().into());
             } else {
                 self.remove_raw(*key);
             }

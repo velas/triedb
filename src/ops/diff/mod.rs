@@ -2,6 +2,7 @@ use std::borrow::Borrow;
 use std::ops::Deref;
 use std::sync::RwLock;
 
+use crate::debug::OwnedData;
 use crate::merkle::nibble::{self, Entry, Nibble};
 use crate::merkle::{Branch, Leaf, MerkleNode, MerkleValue};
 use crate::walker::inspector::{NoopInspector, TrieInspector};
@@ -19,8 +20,8 @@ use tracing::instrument;
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum Change {
-    Insert(H256, Vec<u8>),
-    Removal(H256, Vec<u8>),
+    Insert(H256, OwnedData),
+    Removal(H256, OwnedData),
 }
 
 impl fmt::Debug for Change {
@@ -29,12 +30,12 @@ impl fmt::Debug for Change {
             Self::Insert(h, d) => f
                 .debug_struct("Insert")
                 .field("hash", &h)
-                .field("data", &hexutil::to_hex(&d))
+                .field("data", &d)
                 .finish(),
             Self::Removal(h, d) => f
                 .debug_struct("Removal")
                 .field("hash", &h)
-                .field("data", &hexutil::to_hex(&d))
+                .field("data", &d)
                 .finish(),
         }
     }
@@ -46,14 +47,14 @@ impl fmt::Debug for Change {
 #[derive(Clone, PartialEq, Eq)]
 struct DataNode {
     hash: H256,
-    data: Vec<u8>,
+    data: OwnedData,
 }
 
 impl fmt::Debug for DataNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DataNode")
             .field("hash", &self.hash)
-            .field("data", &hexutil::to_hex(&self.data))
+            .field("data", &self.data)
             .finish()
     }
 }
@@ -66,7 +67,7 @@ impl<'a> From<KeyedMerkleNode<'a>> for Option<DataNode> {
                 merkle_node.data().map(|data| DataNode {
                     hash,
                     // TODO: allocation
-                    data: data.to_vec(),
+                    data: data.into(),
                 })
             }
             KeyedMerkleNode::Partial(_) => {
@@ -161,7 +162,7 @@ impl Changes {
 
     fn remove_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a>>) {
         if let KeyedMerkleNode::FullEncoded(hash, data) = node.borrow() {
-            self.changes.push(Change::Removal(*hash, data.to_vec()))
+            self.changes.push(Change::Removal(*hash, (*data).into()))
         } else {
             log::trace!("Skipping to remove inline node")
         }
@@ -169,7 +170,7 @@ impl Changes {
 
     fn insert_node<'a>(&mut self, node: impl Borrow<KeyedMerkleNode<'a>>) {
         if let KeyedMerkleNode::FullEncoded(hash, data) = node.borrow() {
-            self.changes.push(Change::Insert(*hash, data.to_vec()))
+            self.changes.push(Change::Insert(*hash, (*data).into()))
         } else {
             log::trace!("Skipping to insert inline node")
         }
@@ -187,7 +188,7 @@ impl Changes {
                 .and_then(MerkleNode::data)
                 .map(|data| DataNode {
                     hash: hash,
-                    data: data.to_vec(),
+                    data: data.into(),
                 }),
         };
 
@@ -209,7 +210,7 @@ impl Changes {
                 .and_then(MerkleNode::data)
                 .map(|data| DataNode {
                     hash: hash,
-                    data: data.to_vec(),
+                    data: data.into(),
                 }),
             right: None,
         };
@@ -229,12 +230,12 @@ impl Changes {
         let data_change = DataNodeChange {
             left: left_entry.merkle_node().data().map(|data| DataNode {
                 hash: left_entry.db_node_key(),
-                data: data.to_vec(),
+                data: data.into(),
             }),
             right: right_entry.and_then(|e| {
                 e.merkle_node().data().map(|data| DataNode {
                     hash: e.db_node_key(),
-                    data: data.to_vec(),
+                    data: data.into(),
                 })
             }),
         };

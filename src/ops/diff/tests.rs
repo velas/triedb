@@ -227,7 +227,7 @@ fn test_empty_tree_and_leaf() {
     .unwrap();
 
     // H256::from_slice(&hex!("bbcc"));
-    let expected_changeset = vec![Change::Insert(key, val)];
+    let expected_changeset = vec![Change::Insert(key, val.into())];
 
     let changeset = diff(
         &collection.database,

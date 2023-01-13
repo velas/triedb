@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 mod tests;
 
+use crate::debug::no_childs;
 use crate::diff;
 use crate::gc::{DbCounter, ReachableHashes};
 use crate::merkle::MerkleNode;
@@ -18,7 +19,7 @@ use crate::merkle::MerkleNode;
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct VerifiedPatch {
     pub(crate) patch_dependencies: Option<BTreeSet<H256>>,
-    pub(crate) sorted_changes: Vec<(H256, Vec<u8>)>,
+    pub(crate) sorted_changes: Vec<(H256, bool, Vec<u8>)>,
     pub(crate) target_root: H256,
 }
 
@@ -84,32 +85,57 @@ where
     for change in unsorted.into_iter() {
         match change {
             diff::Change::Insert(key, value) => {
-                map.insert(key, value);
+                map.insert(key, value.into());
             }
             diff::Change::Removal(..) => {}
         };
     }
+    dbg!(expected_root);
     let (value, node) = verify_node(expected_root, &map)?
         .ok_or(VerificationError::MissExpectedRoot(expected_root))?;
 
     let mut patch_dependencies: BTreeSet<H256> = BTreeSet::new();
-    let mut sorted_changes: Vec<(H256, Vec<u8>)> = vec![];
-    sorted_changes.push((expected_root, value));
+    let mut sorted_changes: Vec<(H256, bool, Vec<u8>)> = vec![];
+    sorted_changes.push((expected_root, true, value));
 
-    let mut current_subtrees: Vec<H256> =
+    let (direct_childs, indirect_childs) =
         ReachableHashes::collect(&node, child_extractor.clone()).childs();
-    let mut next_childs: Vec<H256> = vec![];
+
+    let mut current_subtrees: Vec<_> = direct_childs
+        .into_iter()
+        .map(|k| (k, true))
+        .chain(indirect_childs.into_iter().map(|k| (k, false)))
+        .collect();
 
     while !current_subtrees.is_empty() {
-        for hash in current_subtrees.drain(..) {
+        let mut next_childs = vec![];
+        dbg!(&current_subtrees);
+        for (hash, is_direct) in current_subtrees.drain(..) {
+            dbg!((hash, is_direct));
             match verify_node(hash, &map)? {
                 Some((value, node)) => {
-                    sorted_changes.push((hash, value));
-                    let reachable =
-                        ReachableHashes::collect(&node, child_extractor.clone()).childs();
+                    sorted_changes.push((hash, is_direct, value));
+                    let (direct_childs, indirect_childs) = if is_direct {
+                        ReachableHashes::collect(&node, child_extractor.clone()).childs()
+                    } else {
+                        // prevent more than one layer of indirection
+                        let childs = ReachableHashes::collect(&node, no_childs).childs();
+                        assert!(
+                            childs.1.is_empty(),
+                            "There should be no childs with no_childs extractor"
+                        );
+                        let empty = childs.1;
+                        // All direct childs for indirect childs should be handled as indirect.
+                        (empty, childs.0)
+                    };
                     // continue verification downward, if current node is inserted as part of
                     // patch
-                    next_childs.extend(reachable.into_iter());
+                    next_childs.extend(
+                        direct_childs
+                            .into_iter()
+                            .map(|k| (k, true))
+                            .chain(indirect_childs.into_iter().map(|k| (k, false))),
+                    );
                 }
                 None => {
                     if database.node_exist(hash) {

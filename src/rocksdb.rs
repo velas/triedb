@@ -18,7 +18,6 @@ use rocksdb_lib::{
 
 // We use optimistica transaction, to allow regular `get` operation execute without lock timeouts.
 pub type DB = OptimisticTransactionDB;
-
 use crate::{
     cache::CachedHandle,
     gc::{DbCounter, ReachableHashes},
@@ -236,7 +235,7 @@ where
                 .is_none()
             {
                 trace!("inserting node {}=>{:?}", key, node);
-                for hash in &childs {
+                for hash in childs.0.iter().chain(&childs.1) {
                     self.db.increase(&mut tx, *hash)?;
                 }
 
@@ -271,28 +270,32 @@ where
     // 3. find all childs
     // 4. decrease child counters
     // 5. return list of childs with counter == 0
-    fn gc_try_cleanup_node<F>(&self, key: H256, mut child_extractor: F) -> Vec<H256>
+    fn gc_try_cleanup_node<F>(&self, key: H256, mut child_extractor: F) -> (Vec<H256>, Vec<H256>)
     where
         F: FnMut(&[u8]) -> Vec<H256>,
     {
         let db = self.db.db.borrow();
         if self.db.counter_cf.is_none() {
-            return vec![];
+            return (vec![], vec![]);
         };
 
+        let mut orig_nodes = (Vec::with_capacity(16), Vec::new());
+
+        let nodes = &mut orig_nodes;
         // To make second retry execute faster, cache child keys.
         let mut cached_childs = None;
         trace!("try removing node {}", key);
         retry! {
-            let mut nodes = Vec::with_capacity(16);
             //TODO: retry
+            nodes.0.clear();
+            nodes.1.clear();
 
             let mut tx = db.transaction();
             if let Some(value) = tx.get_for_update(key.as_ref(), EXCLUSIVE)? {
                 let count = self.db.get_counter_in_tx(&mut tx, key)?;
                 if count > 0 {
                     trace!("ignore removing node {}, counter: {}", key, count);
-                    return Ok(vec![]);
+                    return Ok(());
                 }
                 tx.delete(key.as_ref())?;
                 self.db.remove_counter(&mut tx, key)?;
@@ -304,19 +307,25 @@ where
                     ReachableHashes::collect(&node, &mut child_extractor).childs()
                 });
 
-                for hash in &childs {
+                for hash in childs.0.iter(){
                     let child_count = self.db.decrease(&mut tx, *hash)?;
                     if child_count <= 0 {
-                        nodes.push(*hash);
+                        nodes.0.push(*hash);
                     }
                 }
-
+                for hash in childs.1.iter(){
+                    let child_count = self.db.decrease(&mut tx, *hash)?;
+                    if child_count <= 0 {
+                        nodes.1.push(*hash);
+                    }
+                }
                 cached_childs = Some(childs);
 
                 tx.commit()?;
             }
-            nodes
+            ()
         }
+        orig_nodes
     }
 
     fn gc_pin_root(&self, key: H256) {
@@ -363,6 +372,7 @@ mod tests {
     use crate::gc::RootGuard;
     use crate::impls::tests::{Data, K};
     use crate::mutable::TrieMut;
+    use crate::ops::debug::tests::*;
     use crate::Database;
 
     pub type YetAnotherDB = rocksdb_lib::DBWithThreadMode<rocksdb_lib::SingleThreaded>;
@@ -420,9 +430,9 @@ mod tests {
         let rlp = Rlp::new(node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let childs = ReachableHashes::collect(&node, no_childs).childs();
-        assert_eq!(childs.len(), 2); // "bb..", "ffaa", check test doc comments
+        assert_eq!(childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 
-        for child in &childs {
+        for child in &childs.0 {
             assert_eq!(collection.database.gc_count(*child), 1);
         }
 
@@ -443,10 +453,10 @@ mod tests {
         let rlp = Rlp::new(node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();
-        assert_eq!(another_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
+        assert_eq!(another_root_childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 
-        let first_set: BTreeSet<_> = childs.into_iter().collect();
-        let another_set: BTreeSet<_> = another_root_childs.into_iter().collect();
+        let first_set: BTreeSet<_> = childs.0.into_iter().collect();
+        let another_set: BTreeSet<_> = another_root_childs.0.into_iter().collect();
 
         let diff_child: Vec<_> = another_set.intersection(&first_set).collect();
         assert_eq!(diff_child.len(), 1);
@@ -483,9 +493,9 @@ mod tests {
         let rlp = Rlp::new(node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();
-        assert_eq!(latest_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
+        assert_eq!(latest_root_childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 
-        let latest_set: BTreeSet<_> = latest_root_childs.into_iter().collect();
+        let latest_set: BTreeSet<_> = latest_root_childs.0.into_iter().collect();
         assert_eq!(latest_set.intersection(&first_set).count(), 0);
 
         // check only newest childs
@@ -511,12 +521,12 @@ mod tests {
         drop(root_guard);
         assert!(collection.database.gc_unpin_root(root));
 
-        let mut elems = collection.database.gc_cleanup_layer(&[root], no_childs);
+        let mut elems = collection.database.gc_cleanup_layer(&[root], no_childs).0;
         assert_eq!(elems.len(), 1);
         while !elems.is_empty() {
             // perform additional check, that all removed elements should be also removed from db.
             let cloned_elems = elems.clone();
-            elems = collection.database.gc_cleanup_layer(&elems, no_childs);
+            elems = collection.database.gc_cleanup_layer(&elems, no_childs).0;
             for child in cloned_elems {
                 assert!(collection.database.db.db.get(child).unwrap().is_none());
             }
@@ -725,6 +735,15 @@ mod tests {
         bob_key: FixedKey,
         bob_storage: HashMap<FixedKey, FixedData>,
     ) -> TestResult {
+        qc_handles_inner_roots_body(alice_key, alice_chages, bob_key, bob_storage)
+    }
+
+    fn qc_handles_inner_roots_body(
+        alice_key: FixedKey,
+        alice_chages: Vec<(FixedKey, FixedData)>,
+        bob_key: FixedKey,
+        bob_storage: HashMap<FixedKey, FixedData>,
+    ) -> TestResult {
         if alice_chages.is_empty() || bob_storage.is_empty() {
             return TestResult::discard();
         }
@@ -816,6 +835,11 @@ mod tests {
         drop(top_level_root);
 
         use rocksdb_lib::IteratorMode;
+        println!("Debug DB");
+        for item in db.iterator(IteratorMode::Start) {
+            let (k, v) = item.unwrap();
+            println!("{:?}=>{:?}", hexutil::to_hex(&k), hexutil::to_hex(&v))
+        }
         assert_eq!(db.iterator(IteratorMode::Start).count(), 0);
 
         println!("Debug cf");
@@ -826,6 +850,34 @@ mod tests {
         assert_eq!(db.iterator_cf(cf, IteratorMode::Start).count(), 0);
 
         TestResult::passed()
+    }
+
+    #[test]
+    fn test_from_qc() {
+        tracing_sub_init();
+        let mut bob_storage = HashMap::new();
+        bob_storage.insert(
+            FixedKey([127, 3, 123, 251]),
+            FixedData([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0,
+            ]),
+        );
+
+        let alice_changes = vec![(
+            FixedKey([119, 55, 15, 0]),
+            FixedData([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0,
+            ]),
+        )];
+
+        qc_handles_inner_roots_body(
+            FixedKey([123, 127, 55, 115]),
+            alice_changes,
+            FixedKey([247, 7, 176, 187]),
+            bob_storage,
+        );
     }
 
     #[quickcheck]

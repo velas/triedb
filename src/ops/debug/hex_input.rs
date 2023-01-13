@@ -5,7 +5,7 @@ use serde::de::{Deserialize, SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserializer, Serialize, Serializer};
 
-#[derive(Clone, Default, Eq, PartialEq)]
+#[derive(Clone, Default, Eq, PartialEq, Hash)]
 pub struct EntriesHex {
     pub data: Vec<(Vec<u8>, Option<Vec<u8>>)>,
 }
@@ -13,7 +13,7 @@ pub struct EntriesHex {
 impl EntriesHex {
     pub fn new(data: Vec<(Vec<u8>, Option<Vec<u8>>)>) -> Self {
         let res = Self { data };
-        log::info!("{}", serde_json::to_string_pretty(&res).unwrap());
+        // log::info!("{}", serde_json::to_string_pretty(&res).unwrap());
         res
     }
 
@@ -54,10 +54,8 @@ impl InnerEntriesHex {
             join_map.insert(key.clone(), val.clone());
         }
         for (key, val) in &other.data {
-            join_map
-                .entry(key.clone())
-                .or_insert(EntriesHex::default())
-                .join(val);
+            let entry = join_map.entry(key.clone()).or_insert(EntriesHex::default());
+            *entry = entry.join(val);
         }
 
         let mut join_entries = vec![];
