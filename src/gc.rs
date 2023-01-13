@@ -525,13 +525,13 @@ impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> Drop for RootGua
 #[cfg(test)]
 pub mod tests {
     use std::{
-        collections::{BTreeSet, HashMap},
+        collections::{BTreeSet, HashMap, HashSet},
         marker::PhantomData,
         sync::Arc,
     };
 
     use crate::{
-        debug::{self, EntriesHex},
+        debug,
         merkle::nibble::{into_key, Nibble},
         MerkleNode,
     };
@@ -717,7 +717,6 @@ pub mod tests {
                 let entry = (key.as_ref().to_vec(), Some(value.0.to_vec()));
                 entries.push(entry);
             }
-            entries.sort();
             Self {
                 data: debug::EntriesHex::new(entries),
                 _k: PhantomData,
@@ -744,7 +743,7 @@ pub mod tests {
     {
         fn arbitrary(g: &mut Gen) -> Self {
             let mut entries = vec![];
-            let keys = Vec::<K>::arbitrary(g);
+            let keys = HashSet::<K>::arbitrary(g);
             for key in keys {
                 let values: NodesGenerator<debug::EntriesHex, K, NonUniqueValue> =
                     NodesGenerator::arbitrary(g);
@@ -757,36 +756,36 @@ pub mod tests {
                 _v: PhantomData,
             }
         }
-        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-            // Because EntriesHex doesnt have any Arbitrary implementation, we should propagate it to NodeGenerator<EntriesHex,_,_>::shrink
-            let data: Vec<_> = self
-                .data
-                .data
-                .iter()
-                .cloned()
-                .map(|(k, v)| {
-                    (
-                        k,
-                        NodesGenerator {
-                            data: v,
-                            _k: self._k,
-                            _v: self._v,
-                        },
-                    )
-                })
-                .collect();
-            Box::new(data.shrink().map(|vec_kv| {
-                // make uniq keys
-                let entries: HashMap<_, _> = vec_kv.into_iter().map(|(k, v)| (k, v.data)).collect();
-                Self {
-                    data: debug::InnerEntriesHex {
-                        data: entries.into_iter().collect(),
-                    },
-                    _k: PhantomData,
-                    _v: PhantomData,
-                }
-            }))
-        }
+        // fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+        //     // Because EntriesHex doesnt have any Arbitrary implementation, we should propagate it to NodeGenerator<EntriesHex,_,_>::shrink
+        //     let data: Vec<_> = self
+        //         .data
+        //         .data
+        //         .iter()
+        //         .cloned()
+        //         .map(|(k, v)| {
+        //             (
+        //                 k,
+        //                 NodesGenerator {
+        //                     data: v,
+        //                     _k: self._k,
+        //                     _v: self._v,
+        //                 },
+        //             )
+        //         })
+        //         .collect();
+        //     Box::new(data.shrink().map(|vec_kv| {
+        //         // make uniq keys
+        //         let entries: HashMap<_, _> = vec_kv.into_iter().map(|(k, v)| (k, v.data)).collect();
+        //         Self {
+        //             data: debug::InnerEntriesHex {
+        //                 data: entries.into_iter().collect(),
+        //             },
+        //             _k: PhantomData,
+        //             _v: PhantomData,
+        //         }
+        //     }))
+        // }
     }
 
     impl<K> Arbitrary for NodesGenerator<debug::InnerEntriesHex, K, UniqueValue>
@@ -795,12 +794,14 @@ pub mod tests {
         NodesGenerator<debug::EntriesHex, K, UniqueValue>: Arbitrary + Eq + std::hash::Hash,
     {
         fn arbitrary(g: &mut Gen) -> Self {
-            let mut entries = vec![];
+            let mut entries = HashMap::new();
             let values: HashMap<NodesGenerator<debug::EntriesHex, K, UniqueValue>, K> =
                 HashMap::arbitrary(g);
+
             for (value, key) in values {
-                entries.push((key.as_ref().to_vec(), value.data))
+                entries.insert(key.as_ref().to_vec(), value.data);
             }
+            let entries = entries.into_iter().collect();
 
             Self {
                 data: debug::InnerEntriesHex::new(entries),
@@ -808,35 +809,37 @@ pub mod tests {
                 _v: PhantomData,
             }
         }
-        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-            // Because EntriesHex doesnt have any Arbitrary implementation, we should propagate it to NodeGenerator<EntriesHex,_,_>::shrink
-            let data: Vec<_> = self
-                .data
-                .data
-                .iter()
-                .cloned()
-                .map(|(k, v)| {
-                    (
-                        k,
-                        NodesGenerator {
-                            data: v,
-                            _k: self._k,
-                            _v: self._v,
-                        },
-                    )
-                })
-                .collect();
-            Box::new(data.shrink().map(|vec_kv| {
-                let entries: HashMap<_, _> = vec_kv.into_iter().map(|(k, v)| (k, v.data)).collect();
-                Self {
-                    data: debug::InnerEntriesHex {
-                        data: entries.into_iter().collect(),
-                    },
-                    _k: PhantomData,
-                    _v: PhantomData,
-                }
-            }))
-        }
+        // this shrink method can help you debug test, but can lead to very long shrinking procedure.
+
+        // fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+        //     // Because EntriesHex doesnt have any Arbitrary implementation, we should propagate it to NodeGenerator<EntriesHex,_,_>::shrink
+        //     let data: Vec<_> = self
+        //         .data
+        //         .data
+        //         .iter()
+        //         .cloned()
+        //         .map(|(k, v)| {
+        //             (
+        //                 k,
+        //                 NodesGenerator {
+        //                     data: v,
+        //                     _k: self._k,
+        //                     _v: self._v,
+        //                 },
+        //             )
+        //         })
+        //         .collect();
+        //     Box::new(data.shrink().map(|vec_kv| {
+        //         let entries: HashMap<_, _> = vec_kv.into_iter().map(|(k, v)| (k, v.data)).collect();
+        //         Self {
+        //             data: debug::InnerEntriesHex {
+        //                 data: entries.into_iter().collect(),
+        //             },
+        //             _k: PhantomData,
+        //             _v: PhantomData,
+        //         }
+        //     }))
+        // }
     }
 
     impl<D, K, V> std::fmt::Debug for NodesGenerator<D, K, V>

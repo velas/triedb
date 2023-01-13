@@ -2,7 +2,6 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    fmt,
     sync::Arc,
 };
 
