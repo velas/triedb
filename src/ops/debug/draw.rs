@@ -7,6 +7,8 @@ use crate::merkle::nibble::NibbleVec;
 use crate::merkle::{Branch, Extension, Leaf, MerkleNode, MerkleValue};
 use crate::{empty_trie_hash, Database};
 
+use super::no_childs;
+
 pub enum Child<'a> {
     Hash(H256),
     Inline(Box<MerkleNode<'a>>),
@@ -206,7 +208,7 @@ where
             value: Some(hash.as_bytes().to_vec()),
         };
         let mut link_tree = termtree::Tree::new(link_node);
-        link_tree.push(draw(db, Child::Hash(hash), vec![], child_extractor.clone()));
+        link_tree.push(draw(db, Child::Hash(hash), vec![], no_childs));
         result.push(link_tree);
     }
     result
