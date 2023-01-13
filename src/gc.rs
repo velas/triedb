@@ -18,10 +18,13 @@ use log::*;
 use primitive_types::H256;
 use rlp::Rlp;
 
+use crate::ops::debug::no_childs;
+
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct ReachableHashes<F> {
-    childs: Vec<H256>,
+    direct_childs: Vec<H256>,
+    indirect_childs: Vec<H256>,
     #[derivative(Debug = "ignore")]
     child_extractor: F,
 }
@@ -32,7 +35,8 @@ where
 {
     pub fn collect(merkle_node: &MerkleNode, child_extractor: F) -> Self {
         let mut this = Self {
-            childs: Default::default(),
+            direct_childs: Default::default(),
+            indirect_childs: Default::default(),
             child_extractor,
         };
         this.process_node(merkle_node);
@@ -41,9 +45,9 @@ where
 
     fn process_node(&mut self, merkle_node: &MerkleNode) {
         match merkle_node {
-            MerkleNode::Leaf(Leaf { data: d, .. }) => {
-                self.childs.extend_from_slice(&(self.child_extractor)(d))
-            }
+            MerkleNode::Leaf(Leaf { data: d, .. }) => self
+                .indirect_childs
+                .extend_from_slice(&(self.child_extractor)(d)),
             MerkleNode::Extension(Extension {
                 value: merkle_value,
                 ..
@@ -55,7 +59,8 @@ where
                 data,
             }) => {
                 if let Some(d) = data {
-                    self.childs.extend_from_slice(&(self.child_extractor)(d))
+                    self.indirect_childs
+                        .extend_from_slice(&(self.child_extractor)(d))
                 }
                 for merkle_value in merkle_values {
                     self.process_value(merkle_value);
@@ -67,16 +72,33 @@ where
     fn process_value(&mut self, merkle_value: &MerkleValue) {
         match merkle_value {
             MerkleValue::Empty => {}
+            // TODO: Full node can't have link to any roots, because len < 32.
             MerkleValue::Full(merkle_node) => self.process_node(merkle_node),
-            MerkleValue::Hash(hash) => self.childs.push(*hash),
+            MerkleValue::Hash(hash) => self.direct_childs.push(*hash),
         }
     }
 
-    pub fn childs(self) -> Vec<H256> {
-        self.childs
+    pub fn childs(self) -> (Vec<H256>, Vec<H256>) {
+        (
+            self.direct_childs
+                .into_iter()
+                // Empty trie is a common default value for most
+                // objects that contain submap, filtering it will reduce collissions.
+                .filter(|i| *i != empty_trie_hash!())
+                .collect(),
+            self.indirect_childs
+                .into_iter()
+                // Empty trie is a common default value for most
+                // objects that contain submap, filtering it will reduce collissions.
+                .filter(|i| *i != empty_trie_hash!())
+                .collect(),
+        )
+    }
+
+    pub fn any_childs(self) -> Vec<H256> {
+        self.direct_childs
             .into_iter()
-            // Empty trie is a common default value for most
-            // objects that contain submap, filtering it will reduce collissions.
+            .chain(self.indirect_childs)
             .filter(|i| *i != empty_trie_hash!())
             .collect()
     }
@@ -95,7 +117,7 @@ pub trait DbCounter {
     // 3. find all childs
     // 4. decrease child counters
     // 5. return list of childs with counter == 0
-    fn gc_try_cleanup_node<F>(&self, key: H256, child_extractor: F) -> Vec<H256>
+    fn gc_try_cleanup_node<F>(&self, key: H256, child_extractor: F) -> (Vec<H256>, Vec<H256>)
     where
         F: FnMut(&[u8]) -> Vec<H256>;
 
@@ -119,13 +141,19 @@ pub trait DbCounter {
     // 1. checks if removes counter == 0.
     // 2. if it == 0 remove from database, and decrement child counters.
     // 3. return list of childs with counter == 0
-    fn gc_cleanup_layer<F>(&self, removes: &[H256], mut child_extractor: F) -> Vec<H256>
+    fn gc_cleanup_layer<F>(
+        &self,
+        removes: &[H256],
+        mut child_extractor: F,
+    ) -> (Vec<H256>, Vec<H256>)
     where
         F: FnMut(&[u8]) -> Vec<H256>,
     {
-        let mut result = Vec::new();
+        let mut result = (Vec::new(), Vec::new());
         for remove in removes {
-            result.extend_from_slice(&self.gc_try_cleanup_node(*remove, &mut child_extractor))
+            let (direct, extracted) = self.gc_try_cleanup_node(*remove, &mut child_extractor);
+            result.0.extend_from_slice(&direct);
+            result.1.extend_from_slice(&extracted);
         }
         result
     }
@@ -182,17 +210,19 @@ impl<D: DbCounter + Database> TrieCollection<D> {
         F: FnMut(&[u8]) -> Vec<H256> + Clone,
     {
         let root_guard = RootGuard::new(&self.database, patch.target_root, child_extractor.clone());
-        for (key, value) in patch.sorted_changes.iter() {
+        for (key, _is_direct, value) in patch.sorted_changes.iter() {
             self.database
                 .gc_insert_node(*key, value, &mut child_extractor);
         }
 
         // verifying, that `patch_dependencies` haven't left db since patch verification moment
-        for (_, value) in patch.sorted_changes.iter() {
+        for (_, is_direct, value) in patch.sorted_changes.iter() {
             let node = MerkleNode::decode(&Rlp::new(value))?;
-
-            let childs: Vec<H256> =
-                ReachableHashes::collect(&node, child_extractor.clone()).childs();
+            let childs = if *is_direct {
+                ReachableHashes::collect(&node, child_extractor.clone()).any_childs()
+            } else {
+                ReachableHashes::collect(&node, no_childs).any_childs()
+            };
             for hash in childs {
                 if !self.database.node_exist(hash) {
                     return Err(crate::error::Error::DiffPatchApply(hash));
@@ -212,7 +242,7 @@ pub struct DatabaseTrieMut<D> {
     root: H256,
 }
 
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct DatabaseTrieMutPatch {
     pub root: H256,
     pub change: Change,
@@ -265,7 +295,7 @@ impl<D: Database> DatabaseTrieMut<D> {
                             e.into_mut().1 += 1;
                         }
                         hash_map::Entry::Vacant(e) => {
-                            e.insert((v.clone(), 1));
+                            e.insert((v.clone().into(), 1));
                         }
                     };
                 }
@@ -363,7 +393,8 @@ impl<C> DbCounter for MapWithCounterCachedParam<C> {
                 let rlp = Rlp::new(value);
                 let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
                 trace!("inserting node {:?}=>{:?}", key, node);
-                for hash in ReachableHashes::collect(&node, child_extractor).childs() {
+                let childs = ReachableHashes::collect(&node, child_extractor).childs();
+                for hash in childs.0.into_iter().chain(childs.1) {
                     self.db.increase(hash);
                 }
                 v.insert(value.to_vec());
@@ -385,7 +416,7 @@ impl<C> DbCounter for MapWithCounterCachedParam<C> {
     // 3. find all childs
     // 4. decrease child counters
     // 5. return list of childs with counter == 0
-    fn gc_try_cleanup_node<F>(&self, key: H256, child_extractor: F) -> Vec<H256>
+    fn gc_try_cleanup_node<F>(&self, key: H256, child_extractor: F) -> (Vec<H256>, Vec<H256>)
     where
         F: FnMut(&[u8]) -> Vec<H256>,
     {
@@ -396,16 +427,24 @@ impl<C> DbCounter for MapWithCounterCachedParam<C> {
                     let value = entry.remove();
                     let rlp = Rlp::new(&value);
                     let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
-                    return ReachableHashes::collect(&node, child_extractor)
-                        .childs()
-                        .into_iter()
-                        .filter(|k| self.db.decrease(*k) == 0)
-                        .collect();
+                    let childs = ReachableHashes::collect(&node, child_extractor).childs();
+                    return (
+                        childs
+                            .0
+                            .into_iter()
+                            .filter(|k| self.db.decrease(*k) == 0)
+                            .collect(),
+                        childs
+                            .1
+                            .into_iter()
+                            .filter(|k| self.db.decrease(*k) == 0)
+                            .collect(),
+                    );
                 }
             }
             Entry::Vacant(_) => {}
         };
-        vec![]
+        (vec![], vec![])
     }
 
     fn gc_pin_root(&self, key: H256) {
@@ -465,12 +504,19 @@ impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> Drop for RootGua
             return;
         }
         if self.db.gc_unpin_root(self.root) {
-            let mut elems = self
+            let (mut direct, mut indirect) = self
                 .db
                 .gc_cleanup_layer(&[self.root], &mut self.child_collector);
 
-            while !elems.is_empty() {
-                elems = self.db.gc_cleanup_layer(&elems, &mut self.child_collector);
+            while !dbg!(&direct).is_empty() {
+                let childs = self.db.gc_cleanup_layer(&direct, &mut self.child_collector);
+                direct = childs.0;
+                indirect.extend_from_slice(&childs.1);
+            }
+            while !dbg!(&indirect).is_empty() {
+                let childs = self.db.gc_cleanup_layer(&indirect, no_childs);
+                assert!(childs.1.is_empty());
+                indirect = childs.0;
             }
         }
     }
@@ -485,7 +531,7 @@ pub mod tests {
     };
 
     use crate::{
-        debug,
+        debug::{self, EntriesHex},
         merkle::nibble::{into_key, Nibble},
         MerkleNode,
     };
@@ -596,11 +642,12 @@ pub mod tests {
     }
 
     // pair; unique inserted values of same length ensure that all nodes in tree are unique
-    #[allow(unused, non_camel_case_types)]
+    #[derive(Eq, Hash, PartialEq)]
     pub struct NonUniqueValue;
-    #[allow(non_camel_case_types)]
+    #[derive(Eq, Hash, PartialEq)]
     pub struct UniqueValue;
 
+    #[derive(Eq, Hash, PartialEq)]
     pub struct NodesGenerator<D, K, V> {
         pub data: D,
         _k: PhantomData<K>,
@@ -642,6 +689,20 @@ pub mod tests {
                 _v: PhantomData,
             }
         }
+
+        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+            //todo: in future make shrinker support Fixed/Variable/Unique/Nonunique combinations.
+            // currently only support Variable|NonUniq
+            Box::new(self.data.data.clone().shrink().map(|entries| {
+                // make uniq keys
+                let entries: HashMap<_, _> = entries.into_iter().collect();
+                Self {
+                    data: debug::EntriesHex::new(entries.into_iter().collect()),
+                    _k: PhantomData,
+                    _v: PhantomData,
+                }
+            }))
+        }
     }
 
     impl<K> Arbitrary for NodesGenerator<debug::EntriesHex, K, NonUniqueValue>
@@ -663,18 +724,30 @@ pub mod tests {
                 _v: PhantomData,
             }
         }
+        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+            Box::new(self.data.data.clone().shrink().map(|entries| {
+                // make uniq keys
+                let entries: HashMap<_, _> = entries.into_iter().collect();
+                Self {
+                    data: debug::EntriesHex::new(entries.into_iter().collect()),
+                    _k: PhantomData,
+                    _v: PhantomData,
+                }
+            }))
+        }
     }
 
-    impl<K, V> Arbitrary for NodesGenerator<debug::InnerEntriesHex, K, V>
+    impl<K> Arbitrary for NodesGenerator<debug::InnerEntriesHex, K, NonUniqueValue>
     where
         K: Arbitrary + Eq + AsRef<[u8]> + std::hash::Hash,
-        NodesGenerator<debug::EntriesHex, K, V>: Arbitrary,
+        NodesGenerator<debug::EntriesHex, K, NonUniqueValue>: Arbitrary,
     {
         fn arbitrary(g: &mut Gen) -> Self {
             let mut entries = vec![];
             let keys = Vec::<K>::arbitrary(g);
             for key in keys {
-                let values: NodesGenerator<debug::EntriesHex, K, V> = NodesGenerator::arbitrary(g);
+                let values: NodesGenerator<debug::EntriesHex, K, NonUniqueValue> =
+                    NodesGenerator::arbitrary(g);
                 entries.push((key.as_ref().to_vec(), values.data))
             }
 
@@ -683,6 +756,86 @@ pub mod tests {
                 _k: PhantomData,
                 _v: PhantomData,
             }
+        }
+        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+            // Because EntriesHex doesnt have any Arbitrary implementation, we should propagate it to NodeGenerator<EntriesHex,_,_>::shrink
+            let data: Vec<_> = self
+                .data
+                .data
+                .iter()
+                .cloned()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        NodesGenerator {
+                            data: v,
+                            _k: self._k,
+                            _v: self._v,
+                        },
+                    )
+                })
+                .collect();
+            Box::new(data.shrink().map(|vec_kv| {
+                // make uniq keys
+                let entries: HashMap<_, _> = vec_kv.into_iter().map(|(k, v)| (k, v.data)).collect();
+                Self {
+                    data: debug::InnerEntriesHex {
+                        data: entries.into_iter().collect(),
+                    },
+                    _k: PhantomData,
+                    _v: PhantomData,
+                }
+            }))
+        }
+    }
+
+    impl<K> Arbitrary for NodesGenerator<debug::InnerEntriesHex, K, UniqueValue>
+    where
+        K: Arbitrary + Eq + AsRef<[u8]> + std::hash::Hash,
+        NodesGenerator<debug::EntriesHex, K, UniqueValue>: Arbitrary + Eq + std::hash::Hash,
+    {
+        fn arbitrary(g: &mut Gen) -> Self {
+            let mut entries = vec![];
+            let values: HashMap<NodesGenerator<debug::EntriesHex, K, UniqueValue>, K> =
+                HashMap::arbitrary(g);
+            for (value, key) in values {
+                entries.push((key.as_ref().to_vec(), value.data))
+            }
+
+            Self {
+                data: debug::InnerEntriesHex::new(entries),
+                _k: PhantomData,
+                _v: PhantomData,
+            }
+        }
+        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+            // Because EntriesHex doesnt have any Arbitrary implementation, we should propagate it to NodeGenerator<EntriesHex,_,_>::shrink
+            let data: Vec<_> = self
+                .data
+                .data
+                .iter()
+                .cloned()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        NodesGenerator {
+                            data: v,
+                            _k: self._k,
+                            _v: self._v,
+                        },
+                    )
+                })
+                .collect();
+            Box::new(data.shrink().map(|vec_kv| {
+                let entries: HashMap<_, _> = vec_kv.into_iter().map(|(k, v)| (k, v.data)).collect();
+                Self {
+                    data: debug::InnerEntriesHex {
+                        data: entries.into_iter().collect(),
+                    },
+                    _k: PhantomData,
+                    _v: PhantomData,
+                }
+            }))
         }
     }
 
@@ -754,9 +907,9 @@ pub mod tests {
         let rlp = Rlp::new(node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let childs = ReachableHashes::collect(&node, no_childs).childs();
-        assert_eq!(childs.len(), 2); // "bb..", "ffaa", check test doc comments
+        assert_eq!(childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 
-        for child in &childs {
+        for child in &childs.0 {
             assert_eq!(collection.database.gc_count(*child), 1);
         }
 
@@ -777,10 +930,10 @@ pub mod tests {
         let rlp = Rlp::new(node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();
-        assert_eq!(another_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
+        assert_eq!(another_root_childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 
-        let first_set: BTreeSet<_> = childs.into_iter().collect();
-        let another_set: BTreeSet<_> = another_root_childs.into_iter().collect();
+        let first_set: BTreeSet<_> = childs.0.into_iter().collect();
+        let another_set: BTreeSet<_> = another_root_childs.0.into_iter().collect();
 
         let diff_child: Vec<_> = another_set.intersection(&first_set).collect();
         assert_eq!(diff_child.len(), 1);
@@ -815,9 +968,9 @@ pub mod tests {
         let rlp = Rlp::new(node);
         let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
         let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();
-        assert_eq!(latest_root_childs.len(), 2); // "bb..", "ffaa", check test doc comments
+        assert_eq!(latest_root_childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 
-        let latest_set: BTreeSet<_> = latest_root_childs.into_iter().collect();
+        let latest_set: BTreeSet<_> = latest_root_childs.0.into_iter().collect();
         assert_eq!(latest_set.intersection(&first_set).count(), 0);
 
         // check only newest childs
@@ -847,12 +1000,12 @@ pub mod tests {
         // TRY cleanup first root.
 
         assert!(collection.database.gc_unpin_root(root));
-        let mut elems = collection.database.gc_cleanup_layer(&[root], no_childs);
+        let mut elems = collection.database.gc_cleanup_layer(&[root], no_childs).0;
         assert_eq!(elems.len(), 1);
         while !elems.is_empty() {
             // perform additional check, that all removed elements should be also removed from db.
             let cloned_elems = elems.clone();
-            elems = collection.database.gc_cleanup_layer(&elems, no_childs);
+            elems = collection.database.gc_cleanup_layer(&elems, no_childs).0;
             for child in cloned_elems {
                 assert!(collection.database.db.data.get(&child).is_none());
             }

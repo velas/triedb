@@ -72,7 +72,7 @@ impl MemoryTrieMut {
     fn apply_change(&mut self, change: Change) {
         for (key, v) in &change.changes {
             if let Some(v) = v {
-                self.database.insert(*key, v.clone());
+                self.database.insert(*key, v.clone().into());
             } else {
                 self.database.remove(key);
             }
