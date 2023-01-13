@@ -1,7 +1,4 @@
-use crate::cache::CachedHandle;
-use crate::gc::MapWithCounter;
 use std::ops::DerefMut;
-use std::sync::Arc;
 use std::{fmt, ops::Deref};
 mod draw;
 
@@ -16,7 +13,6 @@ pub use draw::{draw, Child, DebugPrintExt};
 pub use hex_input::{EntriesHex, InnerEntriesHex};
 
 use primitive_types::H256;
-
 
 pub fn no_childs(_: &[u8]) -> Vec<H256> {
     vec![]

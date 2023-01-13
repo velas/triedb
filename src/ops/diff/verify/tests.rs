@@ -1258,7 +1258,7 @@ fn test_diff_with_child_extractor() {
     let _common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
     // TODO: uncomment
     // ERROR:
-    // assert!(_common.is_empty());
+    assert!(_common.is_empty());
 
     let apply_result = collection2.apply_diff_patch(diff_patch, DataWithRoot::get_childs);
     assert!(apply_result.is_ok());
