@@ -12,7 +12,9 @@ use crate::{
 use log::*;
 use primitive_types::H256;
 use rlp::Rlp;
-use rocksdb_lib::{ColumnFamily, MergeOperands, OptimisticTransactionDB, Transaction};
+use rocksdb_lib::{
+    ColumnFamily, DBAccess, MergeOperands, OptimisticTransactionDB, ReadOptions, Transaction,
+};
 
 // We use optimistica transaction, to allow regular `get` operation execute without lock timeouts.
 pub type DB = OptimisticTransactionDB;
@@ -27,22 +29,22 @@ const EXCLUSIVE: bool = true;
 
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct RocksDatabaseHandle<'a, D> {
+pub struct RocksDatabaseHandleGC<'a, D> {
     db: D,
 
     #[derivative(Debug = "ignore")]
     counter_cf: Option<&'a ColumnFamily>,
 }
 
-impl<'a, D> RocksDatabaseHandle<'a, D> {
+impl<'a, D> RocksDatabaseHandleGC<'a, D> {
     pub fn new(db: D, counter_cf: &'a ColumnFamily) -> Self {
-        RocksDatabaseHandle {
+        RocksDatabaseHandleGC {
             db,
             counter_cf: counter_cf.into(),
         }
     }
     pub fn without_counter(db: D) -> Self {
-        RocksDatabaseHandle {
+        RocksDatabaseHandleGC {
             db,
             counter_cf: None,
         }
@@ -152,7 +154,7 @@ fn deserialize_counter(counter: &[u8]) -> i64 {
     i64::from_le_bytes(bytes)
 }
 
-impl<'a, D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandle<'a, D> {
+impl<'a, D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandleGC<'a, D> {
     fn get(&self, key: H256) -> Vec<u8> {
         self.db
             .borrow()
@@ -189,30 +191,29 @@ macro_rules! retry {
 }
 
 // `counter_cf: Option<&'a ColumnFamily>` as is doesn't allow type to become `Sync`
-pub struct RocksSyncDatabaseHandle<D> {
-    db: D,
+pub struct RocksDatabaseHandle<'a, D> {
+    db: &'a D,
 }
 
-impl<D> RocksSyncDatabaseHandle<D> {
-    pub fn new(db: D) -> Self {
-        RocksSyncDatabaseHandle { db }
+impl<'a, D> RocksDatabaseHandle<'a, D> {
+    pub fn new(db: &'a D) -> Self {
+        RocksDatabaseHandle { db }
     }
 }
 
-impl<D: Borrow<DB>> CachedDatabaseHandle for RocksSyncDatabaseHandle<D> {
+impl<'a, D: DBAccess> CachedDatabaseHandle for RocksDatabaseHandle<'a, D> {
     fn get(&self, key: H256) -> Vec<u8> {
         self.db
-            .borrow()
-            .get(key.as_ref())
+            .get_opt(key.as_ref(), &ReadOptions::default())
             .expect("Error on reading database")
             .unwrap_or_else(|| panic!("Value for {} not found in database", key))
     }
 }
 
-pub type RocksHandle<'a, D> = CachedHandle<RocksDatabaseHandle<'a, D>, Cache>;
-pub type SyncRocksHandle<'a> = CachedHandle<RocksSyncDatabaseHandle<&'a DB>, SyncCache>;
+pub type RocksHandle<'a, D> = CachedHandle<RocksDatabaseHandleGC<'a, D>, Cache>;
+pub type SyncRocksHandle<'a, D> = CachedHandle<RocksDatabaseHandle<'a, D>, SyncCache>;
 
-impl<'a, D, C> DbCounter for CachedHandle<RocksDatabaseHandle<'a, D>, C>
+impl<'a, D, C> DbCounter for CachedHandle<RocksDatabaseHandleGC<'a, D>, C>
 where
     D: Borrow<DB>,
 {
@@ -364,6 +365,8 @@ mod tests {
     use crate::mutable::TrieMut;
     use crate::Database;
 
+    pub type YetAnotherDB = rocksdb_lib::DBWithThreadMode<rocksdb_lib::SingleThreaded>;
+
     fn no_childs(_: &[u8]) -> Vec<H256> {
         vec![]
     }
@@ -400,7 +403,7 @@ mod tests {
 
         let cf = db.cf_handle("counter").unwrap();
 
-        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
+        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandleGC::new(&db, cf)));
 
         let mut trie = collection.trie_for(crate::empty_trie_hash());
         trie.insert(key1, value1);
@@ -558,7 +561,7 @@ mod tests {
 
         let cf = db.cf_handle("counter").unwrap();
 
-        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
+        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandleGC::new(&db, cf)));
 
         let mut root = crate::empty_trie_hash();
         let mut roots = Vec::new();
@@ -626,6 +629,94 @@ mod tests {
         TestResult::passed()
     }
 
+    #[test]
+    #[should_panic]
+    fn test_secondary_open_panic() {
+        let dir = tempdir().unwrap();
+        let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
+        let _db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
+
+        let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
+        let _second_db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
+    }
+
+    #[test]
+    fn test_secondary_open_should_not_panic() {
+        let dir = tempdir().unwrap();
+        let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
+        let _db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
+
+        let secondary_path = dir.as_ref().join("secondary");
+        let _second_db = YetAnotherDB::open_cf_as_secondary(
+            &default_opts(),
+            dir.as_ref(),
+            secondary_path.as_path(),
+            ["counter"],
+        )
+        .unwrap();
+    }
+    #[test]
+    fn test_secondary_open_keys() {
+        let _ = env_logger::Builder::new().parse_filters("info").try_init();
+        let key1 = &hex!("bbaa");
+        let key2 = &hex!("ffaa");
+        let key3 = &hex!("bbcc");
+
+        // make data too long for inline
+        let value1 = b"same data________________________";
+        let value2 = b"same data________________________";
+        let value3 = b"other data_______________________";
+
+        let dir = tempdir().unwrap();
+        let counter_cf = ColumnFamilyDescriptor::new("counter", counter_cf_opts());
+        let db = DB::open_cf_descriptors(&default_opts(), &dir, [counter_cf]).unwrap();
+
+        let cf = db.cf_handle("counter").unwrap();
+
+        let rocks_handle_primary = RocksHandle::new(RocksDatabaseHandleGC::new(&db, cf));
+        let collection = TrieCollection::new(rocks_handle_primary);
+
+        let mut trie = collection.trie_for(crate::empty_trie_hash());
+        trie.insert(key1, value1);
+        trie.insert(key2, value2);
+        trie.insert(key3, value3);
+        let patch = trie.into_patch();
+        let root_guard = collection.apply_increase(patch, no_childs);
+        root_guard.leak_root();
+        drop(collection);
+
+        let keys: Vec<_> = [
+            "0xdf42730b6b88285f489aecc74b2a2abf13c46464a4607115a8d6810d7450441b",
+            "0x8a5ffd47c08a95606dbb1f6c1304c84ebac07e4fb190d5429f73ccd9d892df6a",
+            "0xdf7d03aafaec7d2728cea82903cac520546254151519d9a46803051918cdaf82",
+            "0xf94d27f6720120a25a9fcf0e2e7677cd0aa15b780b9caa51952e6a90d33236fa",
+            "0xcbbdeaee35b1a04fb30f96d496584cb187c1a6c79183bb08ed2976278c324870",
+            "0x8dfaead6d8e85b86daed51bae8f4b870aaabc7bb1ff3210660a7c282237e4321",
+        ]
+        .iter()
+        .map(|string| H256::from_slice(&hexutil::read_hex(string).unwrap()))
+        .collect();
+        let rocks_handle_primary = RocksHandle::new(RocksDatabaseHandleGC::new(&db, cf));
+
+        let secondary_path = dir.as_ref().join("secondary");
+        let second_db = YetAnotherDB::open_cf_as_secondary(
+            &default_opts(),
+            dir.as_ref(),
+            secondary_path.as_path(),
+            ["counter"],
+        )
+        .unwrap();
+        let rocks_handle_secondary = SyncRocksHandle::new(RocksDatabaseHandle::new(&second_db));
+        for key in keys.clone() {
+            assert_eq!(
+                rocks_handle_primary.get(key),
+                rocks_handle_secondary.get(key)
+            );
+        }
+
+        rocks_handle_primary.get(keys[0]);
+    }
+
     // todo implement data with child collection.
     #[quickcheck]
     fn qc_handles_inner_roots(
@@ -644,7 +735,7 @@ mod tests {
 
         let cf = db.cf_handle("counter").unwrap();
 
-        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
+        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandleGC::new(&db, cf)));
 
         let mut top_level_root = collection.empty_guard(DataWithRoot::get_childs);
 
@@ -751,7 +842,7 @@ mod tests {
 
         let cf = db.cf_handle("counter").unwrap();
 
-        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
+        let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandleGC::new(&db, cf)));
 
         let mut root = crate::empty_trie_hash();
         let mut root_guards = vec![];
@@ -820,7 +911,7 @@ mod tests {
         fn routine(db: std::sync::Arc<DB>) {
             let cf = db.cf_handle("counter").unwrap();
             let collection =
-                TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&*db, cf)));
+                TrieCollection::new(RocksHandle::new(RocksDatabaseHandleGC::new(&*db, cf)));
 
             let key1 = &hex!("bbaa");
             let key2 = &hex!("ffaa");
@@ -1063,7 +1154,7 @@ mod tests {
         fn routine(db: std::sync::Arc<DB>, changes: Vec<(FixedKey, Vec<(FixedKey, FixedData)>)>) {
             let cf = db.cf_handle("counter").unwrap();
             let collection =
-                TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&*db, cf)));
+                TrieCollection::new(RocksHandle::new(RocksDatabaseHandleGC::new(&*db, cf)));
 
             let mut top_level_root = RootGuard::new(
                 &collection.database,

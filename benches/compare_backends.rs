@@ -9,7 +9,7 @@ use rocksdb_lib::{ColumnFamilyDescriptor, Options, DB};
 use tempfile::tempdir;
 use triedb::{
     gc::TrieCollection,
-    rocksdb::{RocksDatabaseHandle, RocksHandle},
+    rocksdb::{RocksDatabaseHandleGC, RocksHandle},
     MemoryTrieMut, TrieMut,
 };
 
@@ -215,7 +215,7 @@ fn bench_insert_backends(
 
         let cf = db.cf_handle("counter").unwrap();
 
-        let handle = RocksHandle::new(RocksDatabaseHandle::new(&db, cf));
+        let handle = RocksHandle::new(RocksDatabaseHandleGC::new(&db, cf));
 
         let collection = TrieCollection::new(handle);
 
@@ -389,7 +389,7 @@ fn bench_get_backends(
 
         let cf = db.cf_handle("counter").unwrap();
 
-        let handle = RocksHandle::new(RocksDatabaseHandle::new(&db, cf));
+        let handle = RocksHandle::new(RocksDatabaseHandleGC::new(&db, cf));
 
         let collection = TrieCollection::new(handle);
 
