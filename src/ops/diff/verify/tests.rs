@@ -33,7 +33,7 @@ fn check_changes(
     }
 
     let patch = trie.into_patch();
-    let _initial_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let _initial_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     let apply_result = collection.apply_diff_patch(changes, no_childs);
     assert!(apply_result.is_ok());
@@ -99,7 +99,7 @@ fn test_two_different_leaf_nodes() {
         trie1.insert(key, value.as_ref().unwrap());
     }
     let patch = trie1.into_patch();
-    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let first_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -114,7 +114,7 @@ fn test_two_different_leaf_nodes() {
         trie2.insert(key, value.as_ref().unwrap());
     }
     let patch = trie2.into_patch();
-    let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let second_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -205,7 +205,7 @@ fn test_1() {
         trie1.insert(key, value.as_ref().unwrap());
     }
     let patch = trie1.into_patch();
-    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let first_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -220,7 +220,7 @@ fn test_1() {
         trie2.insert(key, value.as_ref().unwrap());
     }
     let patch = trie2.into_patch();
-    let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let second_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -315,7 +315,7 @@ fn test_2() {
         trie1.insert(key, value.as_ref().unwrap());
     }
     let patch = trie1.into_patch();
-    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let first_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -330,7 +330,7 @@ fn test_2() {
         trie2.insert(key, value.as_ref().unwrap());
     }
     let patch = trie2.into_patch();
-    let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let second_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -421,7 +421,7 @@ fn test_3() {
         trie1.insert(key, value.as_ref().unwrap());
     }
     let patch = trie1.into_patch();
-    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let first_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -436,7 +436,7 @@ fn test_3() {
         trie2.insert(key, value.as_ref().unwrap());
     }
     let patch = trie2.into_patch();
-    let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let second_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -561,7 +561,7 @@ fn test_4() {
         trie1.insert(key, value.as_ref().unwrap());
     }
     let patch = trie1.into_patch();
-    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let first_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -576,7 +576,7 @@ fn test_4() {
         trie2.insert(key, value.as_ref().unwrap());
     }
     let patch = trie2.into_patch();
-    let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let second_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -698,7 +698,7 @@ fn test_5() {
         trie1.insert(key, value.as_ref().unwrap());
     }
     let patch = trie1.into_patch();
-    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let first_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -713,7 +713,7 @@ fn test_5() {
         trie2.insert(key, value.as_ref().unwrap());
     }
     let patch = trie2.into_patch();
-    let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let second_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -833,7 +833,7 @@ fn test_get_changeset_trivial_tree() {
         trie1.insert(key, value.as_ref().unwrap());
     }
     let patch = trie1.into_patch();
-    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let first_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -922,7 +922,7 @@ fn test_leaf_node_and_extension_node() {
     }
 
     let patch = trie.into_patch();
-    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let first_root = collection.apply_increase(patch, crate::debug::no_childs);
     debug::draw(
         &collection.database,
         debug::Child::Hash(first_root.root),
@@ -938,7 +938,7 @@ fn test_leaf_node_and_extension_node() {
     }
     let patch = trie.into_patch();
 
-    let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let last_root = collection.apply_increase(patch, crate::debug::no_childs);
     debug::draw(
         &collection.database,
         debug::Child::Hash(last_root.root),
@@ -994,7 +994,7 @@ fn test_leaf_node_and_extension_node() {
     log::info!("second trie dropped")
 }
 
-fn split_changes(input: Vec<Change>) -> (HashSet<H256>, HashSet<H256>) {
+pub fn split_changes(input: Vec<Change>) -> (HashSet<H256>, HashSet<H256>) {
     let mut removes = HashSet::<H256>::new();
     let mut inserts = HashSet::<H256>::new();
     for element in input {
@@ -1410,7 +1410,7 @@ fn test_try_apply_diff_with_deleted_db_dependency() {
         trie1.insert(key, value.as_ref().unwrap());
     }
     let patch = trie1.into_patch();
-    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let first_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -1425,7 +1425,7 @@ fn test_try_apply_diff_with_deleted_db_dependency() {
         trie2.insert(key, value.as_ref().unwrap());
     }
     let patch = trie2.into_patch();
-    let second_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let second_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -1448,7 +1448,7 @@ fn test_try_apply_diff_with_deleted_db_dependency() {
         trie2.insert(key, value.as_ref().unwrap());
     }
     let patch = trie2.into_patch();
-    let first_root2 = collection2.apply_increase(patch, crate::gc::tests::no_childs);
+    let first_root2 = collection2.apply_increase(patch, crate::debug::no_childs);
 
     let verify_result = verify_diff(
         &collection2.database,
@@ -1501,7 +1501,7 @@ fn reverse_changes(changes: Vec<Change>) -> Vec<Change> {
 trait ChildExtractor: Serialize {
     type Child: ChildExtractor;
     fn extract(data: &[u8]) -> Vec<H256> {
-        crate::gc::tests::no_childs(data)
+        crate::debug::no_childs(data)
     }
     // Change existing data, so it will refer to link root
     fn merge_root_to_data(data: &[u8], _root: H256) -> Vec<u8> {
@@ -1795,6 +1795,7 @@ where
     .unwrap();
 
     let (removes, inserts) = split_changes(changes.clone());
+    assert_eq!(removes.len() + inserts.len(), changes.len());
 
     let common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
     assert!(common.is_empty());

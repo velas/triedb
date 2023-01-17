@@ -414,7 +414,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
             // TODO: Replace by static array, child_collector: Fn(&data) -> Option<Array<STATIC_LEN>>
             let mut left_iter = left_roots.into_iter().flatten();
             let mut right_iter = right_roots.into_iter().flatten();
-            // iter::zip, but with optional elements on any side.
+            // iter::zip, but with optional tail elements on any side.
             loop {
                 let left = left_iter.next();
                 let right = right_iter.next();
