@@ -131,7 +131,6 @@ fn test_two_different_leaf_nodes() {
         second_root.root,
     )
     .unwrap();
-    dbg!(&changes);
 
     let verify_result = verify_diff(
         &collection.database,
@@ -1607,7 +1606,6 @@ where
                 });
                 let patch = sub_trie1.into_patch();
 
-                dbg!(&patch.change);
                 let root_guard =
                     // currently rootguard is limited to one layer of indirection
                     collection.apply_increase(patch.clone(), no_childs as ChildExtractorFn);
@@ -1639,11 +1637,8 @@ where
     }
     roots_set.remove(&empty_trie_hash!());
 
-    dbg!(&patch.change);
-    dbg!(&roots_set);
     assert!(roots_set.is_empty());
 
-    // dbg!(&patch.change);
     let first_root = collection.apply_increase(patch.clone(), D::extract as ChildExtractorFn);
 
     first_root
@@ -1661,12 +1656,10 @@ where
     // Second layer should has Childs ().
     <D as ChildExtractor>::Child: ChildExtractor<Child = ()>,
 {
-    dbg!(serde_json::to_string(entries).unwrap());
     let trie1 = collection.trie_for(root);
     entries.for_each(|key, value, child| {
         let data_from_db = TrieMut::get(&trie1, key).unwrap_or_default();
 
-        dbg!(serde_json::to_string(child).unwrap());
         let roots = D::extract(&data_from_db);
         let data_with_root = match *roots {
             [] => data_from_db.clone(),
@@ -1730,8 +1723,6 @@ where
     )
     .unwrap();
 
-    dbg!(&changes);
-
     let (removes, inserts) = split_changes(changes.clone());
 
     let common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
@@ -1745,7 +1736,7 @@ where
         true,
     );
 
-    let verify_result = dbg!(verify_result.unwrap());
+    let verify_result = verify_result.unwrap();
     let apply_result = collection_2.apply_diff_patch(verify_result, D::extract);
     let _rg = apply_result.unwrap();
 
@@ -1799,8 +1790,6 @@ where
 
     let common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
     assert!(common.is_empty());
-    dbg!("changes_before");
-    dbg!(&changes);
     let reversed = reverse_changes(changes.clone());
 
     for (changes, collection, target_root, tested_entries) in [
@@ -1825,8 +1814,6 @@ where
         )
         .print();
 
-        dbg!(&changes, target_root);
-        dbg!("iter");
         let verify_result =
             verify_diff(&collection.database, target_root, changes, D::extract, true);
         let verify_result = verify_result.unwrap();
