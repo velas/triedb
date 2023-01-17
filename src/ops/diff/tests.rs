@@ -403,15 +403,11 @@ fn test_leaf_replaced_by_branch() {
             .unwrap_or_else(|| empty_trie_hash());
         let mut inner_trie = collection.trie_for(key_root);
         for (k, value) in &value.data {
-            dbg!("insert");
-            dbg!(hexutil::to_hex(&key));
-            dbg!(hexutil::to_hex(&k));
             inner_trie.insert(k, value.as_ref().unwrap())
         }
         let patch = inner_trie.into_patch();
         let g = collection.apply_increase(patch, no_childs);
         let root = g.leak_root();
-        dbg!(root);
         new_trie.insert(key, root.as_bytes());
     }
     let patch = new_trie.into_patch();
@@ -425,9 +421,6 @@ fn test_leaf_replaced_by_branch() {
             .unwrap_or_else(|| empty_trie_hash());
         let inner_trie = collection.trie_for(key_root);
         for (k, v) in &values.data {
-            dbg!("get");
-            dbg!(hexutil::to_hex(&key));
-            dbg!(hexutil::to_hex(&k));
             assert_eq!(&inner_trie.get(&k), v)
         }
     }
@@ -455,7 +448,6 @@ fn test_leaf_replaced_by_branch() {
         second_root.root,
     )
     .unwrap();
-    dbg!(&changes);
     let (removes, inserts) = super::verify::tests::split_changes(changes.clone());
     // assert that there is no duplicates
     assert_eq!(removes.len() + inserts.len(), changes.len());

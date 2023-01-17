@@ -410,7 +410,6 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
         for data_change in data_diff {
             let left_roots = data_change.left_roots(self.child_extractor.clone());
             let right_roots = data_change.right_roots(self.child_extractor.clone());
-            dbg!(&data_change);
             // TODO: Replace by static array, child_collector: Fn(&data) -> Option<Array<STATIC_LEN>>
             let mut left_iter = left_roots.into_iter().flatten();
             let mut right_iter = right_roots.into_iter().flatten();
@@ -418,8 +417,6 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
             loop {
                 let left = left_iter.next();
                 let right = right_iter.next();
-                dbg!(&left);
-                dbg!(&right);
                 if left.is_none() && right.is_none() {
                     break;
                 }
@@ -712,7 +709,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
             right_slice.extend(v)
         }
 
-        let common = nibble::common(dbg!(&left_slice), dbg!(&right_slice));
+        let common = nibble::common(&left_slice, &right_slice);
         match (
             common.len() != left_slice.len(),
             common.len() != right_slice.len(),
