@@ -508,12 +508,12 @@ impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> Drop for RootGua
                 .db
                 .gc_cleanup_layer(&[self.root], &mut self.child_collector);
 
-            while !dbg!(&direct).is_empty() {
+            while !direct.is_empty() {
                 let childs = self.db.gc_cleanup_layer(&direct, &mut self.child_collector);
                 direct = childs.0;
                 indirect.extend_from_slice(&childs.1);
             }
-            while !dbg!(&indirect).is_empty() {
+            while !indirect.is_empty() {
                 let childs = self.db.gc_cleanup_layer(&indirect, no_childs);
                 assert!(childs.1.is_empty());
                 indirect = childs.0;

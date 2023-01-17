@@ -90,7 +90,6 @@ where
             diff::Change::Removal(..) => {}
         };
     }
-    dbg!(expected_root);
     let (value, node) = verify_node(expected_root, &map)?
         .ok_or(VerificationError::MissExpectedRoot(expected_root))?;
 
@@ -109,9 +108,7 @@ where
 
     while !current_subtrees.is_empty() {
         let mut next_childs = vec![];
-        dbg!(&current_subtrees);
         for (hash, is_direct) in current_subtrees.drain(..) {
-            dbg!((hash, is_direct));
             match verify_node(hash, &map)? {
                 Some((value, node)) => {
                     sorted_changes.push((hash, is_direct, value));
