@@ -2,7 +2,8 @@ use std::borrow::Borrow;
 use std::ops::Deref;
 use std::sync::RwLock;
 
-use crate::debug::OwnedData;
+use crate::debug::{no_childs, OwnedData};
+use crate::gc::ReachableHashes;
 use crate::merkle::nibble::{self, Entry, Nibble};
 use crate::merkle::{Branch, Leaf, MerkleNode, MerkleValue};
 use crate::walker::inspector::{NoopInspector, TrieInspector};
@@ -447,8 +448,8 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                 righ_root == crate::empty_trie_hash(),
             ) {
                 (true, true) => Changes::default(),
-                (true, false) => self.deep_insert(self.fetch_node(righ_root)),
-                (false, true) => self.deep_remove(self.fetch_node(left_root)),
+                (true, false) => self.deep_insert(self.fetch_node(righ_root), false),
+                (false, true) => self.deep_remove(self.fetch_node(left_root), false),
                 (false, false) => {
                     let left_node = self.fetch_node(left_root);
                     let right_node = self.fetch_node(righ_root);
@@ -508,8 +509,8 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
         match branch_level {
             // We found two completely different paths
             ComparePathResult::Uncomparable => {
-                changes.extend(&self.deep_remove(left_entry.value));
-                changes.extend(&self.deep_insert(right_entry.value));
+                changes.extend(&self.deep_remove(left_entry.value, false));
+                changes.extend(&self.deep_insert(right_entry.value, false));
                 changes
             }
             // We always trying to keep this function on same level, or when right node is deeper.
@@ -591,8 +592,8 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                             Entry::new(branch_key.clone(), lnode),
                             Entry::new(branch_key.clone(), rnode),
                         )),
-                        (Some(lnode), None) => changes.extend(&self.deep_remove(lnode)),
-                        (None, Some(rnode)) => changes.extend(&self.deep_insert(rnode)),
+                        (Some(lnode), None) => changes.extend(&self.deep_remove(lnode, false)),
+                        (None, Some(rnode)) => changes.extend(&self.deep_insert(rnode, false)),
                         (None, None) => {}
                     }
                 }
@@ -602,13 +603,15 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                 changes.register_data_change(&left_entry.value, Some(&right_entry.value));
 
                 changes.remove_node(&left_entry.value);
+                changes.insert_node(&right_entry.value);
                 // TODO: deep_insert produce second data change for right_entry.value
-                changes.extend(&self.deep_insert(right_entry.value));
+                changes.extend(&self.deep_insert(right_entry.value, true));
             }
             (MerkleNode::Branch(Branch { .. }), MerkleNode::Leaf(Leaf { .. })) => {
                 changes.register_data_change(&left_entry.value, Some(&right_entry.value));
 
-                changes.extend(&self.deep_remove(left_entry.value));
+                changes.remove_node(&left_entry.value);
+                changes.extend(&self.deep_remove(left_entry.value, true));
                 changes.insert_node(&right_entry.value);
             }
         }
@@ -634,7 +637,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
             // And new series of branches with longer keys was added
             // So mark leaf as removed, and traverse branch as new insertion.
             MerkleNode::Leaf(..) => {
-                changes.extend(&self.deep_insert(right_entry.value));
+                changes.extend(&self.deep_insert(right_entry.value, false));
             }
             MerkleNode::Branch(branch) => {
                 changes
@@ -645,23 +648,32 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
         changes
     }
     // TODO: add a way to handle PartialNode
-    fn deep_op<FN>(&self, node: KeyedMerkleNode, ti: OpCollector<FN>) -> Changes
+    fn deep_op<FN>(&self, node: KeyedMerkleNode, skip_root: bool, ti: OpCollector<FN>) -> Changes
     where
         OpCollector<FN>: TrieInspector + Sync + Send,
     {
         //TODO: Check that partial node can be handled correctly in diff
-        let merkle_hash = match node {
-            KeyedMerkleNode::FullEncoded(hash, _) => hash,
+        let (root_hash, data) = match node {
+            KeyedMerkleNode::FullEncoded(hash, data) => (hash, data),
             KeyedMerkleNode::Partial(_) => {
                 unreachable!("Partial can't have any hashes"); //its len < 32
             }
         };
+        if !skip_root {
+            ti.inspect_node(root_hash, data).unwrap();
+        }
+
+        let direct_childs = ReachableHashes::collect(&node.merkle_node(), no_childs)
+            .childs()
+            .0;
 
         let walker = crate::walker::Walker::new_raw(self.db.borrow(), ti, NoopInspector);
 
-        walker
-            .traverse(merkle_hash)
-            .expect("We should be able to traverse tree.");
+        for merkle_hash in direct_childs {
+            walker
+                .traverse(merkle_hash)
+                .expect("We should be able to traverse tree.");
+        }
         walker
             .trie_inspector
             .changes
@@ -670,21 +682,21 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
     }
 
     #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
-    fn deep_insert(&self, node: KeyedMerkleNode) -> Changes {
+    fn deep_insert(&self, node: KeyedMerkleNode, skip_root: bool) -> Changes {
         let collector = OpCollector::new(|c: &mut Changes, h: H256, d: Vec<u8>| {
             let node = KeyedMerkleNode::FullEncoded(h, &d);
             c.insert_with_register_child(h, &node)
         });
-        self.deep_op(node, collector)
+        self.deep_op(node, skip_root, collector)
     }
 
     #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
-    fn deep_remove(&self, node: KeyedMerkleNode) -> Changes {
+    fn deep_remove(&self, node: KeyedMerkleNode, skip_root: bool) -> Changes {
         let collector = OpCollector::new(|c: &mut Changes, h: H256, d: Vec<u8>| {
             let node = KeyedMerkleNode::FullEncoded(h, &d);
             c.remove_with_register_child(h, &node)
         });
-        self.deep_op(node, collector)
+        self.deep_op(node, skip_root, collector)
     }
 
     fn compare_node_levels(
@@ -749,7 +761,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                 &self.compare_nodes(Entry::new(conflict_key, conflict_branch), right_entry),
             );
         } else {
-            changes.extend(&self.deep_insert(right_entry.value))
+            changes.extend(&self.deep_insert(right_entry.value, false))
         }
 
         for (index, value) in left_entry.value.childs.iter().enumerate() {
@@ -765,7 +777,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                     continue;
                 } else {
                     // mark all remaining nodes as removed
-                    changes.extend(&self.deep_remove(branch))
+                    changes.extend(&self.deep_remove(branch, false))
                 }
             } else {
                 log::trace!("Node {:?} was not found in branch", branch_key);
