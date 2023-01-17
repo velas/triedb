@@ -8,7 +8,7 @@ use sha3::{Digest, Keccak256};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use crate::debug::no_childs;
 use crate::diff;
