@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::str::FromStr;
 
 use primitive_types::H256;
@@ -6,6 +7,7 @@ use serde_json::json;
 
 use crate::cache::SyncCache;
 use crate::debug::DebugPrintExt;
+use crate::empty_trie_hash;
 use crate::gc::DbCounter;
 use crate::gc::MapWithCounterCachedParam;
 use crate::gc::TrieCollection;
@@ -76,7 +78,7 @@ fn test_extension_replaced_by_branch_extension() {
         trie.insert(key, value.as_ref().unwrap());
     }
     let patch = trie.into_patch();
-    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let first_root = collection.apply_increase(patch, crate::debug::no_childs);
     debug::draw(
         &collection.database,
         debug::Child::Hash(first_root.root),
@@ -90,7 +92,7 @@ fn test_extension_replaced_by_branch_extension() {
         trie.insert(key, value.as_ref().unwrap());
     }
     let patch = trie.into_patch();
-    let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let last_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -115,7 +117,7 @@ fn test_extension_replaced_by_branch_extension() {
         trie.insert(key, value.as_ref().unwrap());
     }
     let patch = trie.into_patch();
-    let _first_root = new_collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let _first_root = new_collection.apply_increase(patch, crate::debug::no_childs);
     let changes = crate::Change {
         changes: changes
             .into_iter()
@@ -131,7 +133,7 @@ fn test_extension_replaced_by_branch_extension() {
             log::info!("change(insert): key={}, value={:?}", key, value);
             new_collection
                 .database
-                .gc_insert_node(key, &value, crate::gc::tests::no_childs);
+                .gc_insert_node(key, &value, crate::debug::no_childs);
         }
     }
 
@@ -163,11 +165,11 @@ fn test_two_empty_trees() {
     let trie = collection.trie_for(crate::empty_trie_hash());
 
     let patch = trie.into_patch();
-    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let first_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     let trie = collection.trie_for(first_root.root);
     let patch = trie.into_patch();
-    let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let last_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     let changes = diff(
         &collection.database,
@@ -183,7 +185,6 @@ fn test_two_empty_trees() {
 
 #[test]
 fn test_empty_tree_and_leaf() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
     tracing_sub_init();
 
     let collection = TrieCollection::new(SyncDashMap::default());
@@ -191,7 +192,7 @@ fn test_empty_tree_and_leaf() {
     // Set up initial trie
     let trie = collection.trie_for(crate::empty_trie_hash());
     let patch = trie.into_patch();
-    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let first_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     // Set up final trie
     let mut trie = collection.trie_for(first_root.root);
@@ -207,7 +208,7 @@ fn test_empty_tree_and_leaf() {
         trie.insert(key, value.as_ref().unwrap());
     }
     let patch = trie.into_patch();
-    let last_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let last_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -264,7 +265,7 @@ fn test_empty_tree_and_leaf() {
             log::info!("change(insert): key={}, value={:?}", key, value);
             new_collection
                 .database
-                .gc_insert_node(key, &value, crate::gc::tests::no_childs);
+                .gc_insert_node(key, &value, crate::debug::no_childs);
         }
     }
 
@@ -282,7 +283,6 @@ fn test_empty_tree_and_leaf() {
 
 #[test]
 fn test_insert_by_existing_key() {
-    let _ = env_logger::Builder::new().parse_filters("info").try_init();
     tracing_sub_init();
 
     let j = json!([
@@ -312,7 +312,7 @@ fn test_insert_by_existing_key() {
         trie1.insert(key, value.as_ref().unwrap());
     }
     let patch = trie1.into_patch();
-    let first_root = collection.apply_increase(patch, crate::gc::tests::no_childs);
+    let first_root = collection.apply_increase(patch, crate::debug::no_childs);
 
     debug::draw(
         &collection.database,
@@ -335,4 +335,131 @@ fn test_insert_by_existing_key() {
         TrieMut::get(&new_trie, &entries.data[3].0),
         entries.data[3].1.as_ref().map(|val| val.to_vec())
     );
+}
+
+#[test]
+fn test_leaf_replaced_by_branch() {
+    tracing_sub_init();
+    let first = json!([[
+        "0x70",
+        [[
+            "0x01",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ]]
+    ],]);
+
+    let second = json!([
+        [
+            "0x70",
+            [
+                [
+                    "0x01",
+                    "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+                ],
+                [
+                    "0x02",
+                    "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f38"
+                ]
+            ]
+        ],
+        [
+            "0x70000030",
+            [[
+                "0x02",
+                "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f33"
+            ]]
+        ],
+    ]);
+    fn child_collecting(data: &[u8]) -> Vec<H256> {
+        vec![H256::from_slice(data)]
+    }
+    let first_entries: debug::InnerEntriesHex = serde_json::from_value(first).unwrap();
+    let second_entries: debug::InnerEntriesHex = serde_json::from_value(second).unwrap();
+
+    let collection = TrieCollection::new(SyncDashMap::default());
+
+    let mut trie1 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &first_entries.data {
+        let val = trie1.get(key);
+        let key_root = val
+            .map(|v| H256::from_slice(&v))
+            .unwrap_or_else(|| empty_trie_hash());
+        let mut inner_trie = collection.trie_for(key_root);
+        for (key, value) in &value.data {
+            inner_trie.insert(key, value.as_ref().unwrap())
+        }
+        let patch = inner_trie.into_patch();
+        let g = collection.apply_increase(patch, no_childs);
+        trie1.insert(key, g.leak_root().as_bytes());
+    }
+    let patch = trie1.into_patch();
+    let first_root = collection.apply_increase(patch, child_collecting);
+
+    let mut new_trie = collection.trie_for(first_root.root);
+    for (key, value) in &second_entries.data {
+        let val = new_trie.get(key);
+        let key_root = val
+            .map(|v| H256::from_slice(&v))
+            .unwrap_or_else(|| empty_trie_hash());
+        let mut inner_trie = collection.trie_for(key_root);
+        for (k, value) in &value.data {
+            dbg!("insert");
+            dbg!(hexutil::to_hex(&key));
+            dbg!(hexutil::to_hex(&k));
+            inner_trie.insert(k, value.as_ref().unwrap())
+        }
+        let patch = inner_trie.into_patch();
+        let g = collection.apply_increase(patch, no_childs);
+        let root = g.leak_root();
+        dbg!(root);
+        new_trie.insert(key, root.as_bytes());
+    }
+    let patch = new_trie.into_patch();
+    let second_root = collection.apply_increase(patch, child_collecting);
+
+    let new_trie = collection.trie_for(second_root.root);
+    for (key, values) in &second_entries.data {
+        let val = new_trie.get(key);
+        let key_root = val
+            .map(|v| H256::from_slice(&v))
+            .unwrap_or_else(|| empty_trie_hash());
+        let inner_trie = collection.trie_for(key_root);
+        for (k, v) in &values.data {
+            dbg!("get");
+            dbg!(hexutil::to_hex(&key));
+            dbg!(hexutil::to_hex(&k));
+            assert_eq!(&inner_trie.get(&k), v)
+        }
+    }
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(first_root.root),
+        vec![],
+        child_collecting,
+    )
+    .print();
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(second_root.root),
+        vec![],
+        child_collecting,
+    )
+    .print();
+
+    let changes = diff(
+        &collection.database,
+        child_collecting,
+        first_root.root,
+        second_root.root,
+    )
+    .unwrap();
+    dbg!(&changes);
+    let (removes, inserts) = super::verify::tests::split_changes(changes.clone());
+    // assert that there is no duplicates
+    assert_eq!(removes.len() + inserts.len(), changes.len());
+
+    let common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
+    assert!(common.is_empty());
 }
