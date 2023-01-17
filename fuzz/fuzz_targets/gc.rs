@@ -14,7 +14,7 @@ use tempfile::tempdir;
 use triedb::empty_trie_hash;
 use triedb::gc::{RootGuard, TrieCollection};
 use triedb::merkle::nibble::{into_key, Nibble};
-use triedb::rocksdb::{merge_counter, RocksDatabaseHandle, RocksHandle};
+use triedb::rocksdb::{merge_counter, RocksDatabaseHandleGC, RocksHandle};
 use triedb::rocksdb_lib::{ColumnFamilyDescriptor, IteratorMode, OptimisticTransactionDB, Options};
 use triedb::TrieMut;
 type DB = OptimisticTransactionDB;
@@ -124,7 +124,7 @@ fn qc_handles_inner_roots(changes: Vec<(Key, Vec<(Key, FixedData)>)>) {
 
     let cf = db.cf_handle("counter").unwrap();
 
-    let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandle::new(&db, cf)));
+    let collection = TrieCollection::new(RocksHandle::new(RocksDatabaseHandleGC::new(&db, cf)));
 
     let mut top_level_root = RootGuard::new(
         &collection.database,
