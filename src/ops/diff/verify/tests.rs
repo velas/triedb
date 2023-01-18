@@ -1519,9 +1519,7 @@ impl ChildExtractor for () {
         F: FnMut(&[u8], &[u8], &Self::Child),
     {
     }
-    fn join(&self, _other: &Self) -> Self {
-        ()
-    }
+    fn join(&self, _other: &Self) -> Self {}
 }
 
 impl ChildExtractor for EntriesHex {
@@ -1532,7 +1530,7 @@ impl ChildExtractor for EntriesHex {
         F: FnMut(&[u8], &[u8], &Self::Child),
     {
         for (key, value) in &self.data {
-            f(&key, value.as_deref().unwrap_or(&[]), &())
+            f(key, value.as_deref().unwrap_or(&[]), &())
         }
     }
     fn join(&self, other: &Self) -> Self {
@@ -1566,7 +1564,7 @@ impl ChildExtractor for InnerEntriesHex {
         for (key, value) in &self.data {
             // This struct is designed for tests and does not contain any old roots.
             // So during insert we always create new trie
-            f(&key, empty_trie_hash!().as_bytes(), value)
+            f(key, empty_trie_hash!().as_bytes(), value)
         }
     }
     fn join(&self, other: &Self) -> Self {
@@ -1626,7 +1624,7 @@ where
     {
         for (_k, v) in &patch.change.changes {
             if let Some(n) = v {
-                let rlp = Rlp::new(&n);
+                let rlp = Rlp::new(n);
                 let node = MerkleNode::decode(&rlp).unwrap();
                 let childs = ReachableHashes::collect(&node, D::extract).childs();
                 for n in childs.0.into_iter().chain(childs.1) {
@@ -1639,15 +1637,13 @@ where
 
     assert!(roots_set.is_empty());
 
-    let first_root = collection.apply_increase(patch.clone(), D::extract as ChildExtractorFn);
-
-    first_root
+    collection.apply_increase(patch, D::extract as ChildExtractorFn)
 }
 
 // Check that after inserting entries, data in trie correct.
 // 1. Check that for low level trie db.get(k) == v from original entries;
 // 2. Check that for high level trie db.get(key) == (value + merge_root_to_data(new_root))
-fn assert_contain<'a, D, DB>(collection: &'a TrieCollection<DB>, root: H256, entries: &D)
+fn assert_contain<D, DB>(collection: &TrieCollection<DB>, root: H256, entries: &D)
 where
     DB: DbCounter + Database,
     D: ChildExtractor,
@@ -1822,7 +1818,7 @@ where
         assert!(apply_result.is_ok());
         // removing duplicates from tested_entries, checking for last value
 
-        assert_contain(&collection, target_root, tested_entries);
+        assert_contain(collection, target_root, tested_entries);
     }
 }
 
