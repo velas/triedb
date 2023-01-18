@@ -188,7 +188,7 @@ impl Changes {
                 .filter_extension()
                 .and_then(MerkleNode::data)
                 .map(|data| DataNode {
-                    hash: hash,
+                    hash,
                     data: data.into(),
                 }),
         };
@@ -200,7 +200,7 @@ impl Changes {
     }
 
     #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
-    fn remove_with_register_child<'a>(&mut self, hash: H256, node: &KeyedMerkleNode<'a>) {
+    fn remove_with_register_child(&mut self, hash: H256, node: &KeyedMerkleNode) {
         self.remove_node(node.borrow());
 
         let data_change = DataNodeChange {
@@ -210,7 +210,7 @@ impl Changes {
                 .filter_extension()
                 .and_then(MerkleNode::data)
                 .map(|data| DataNode {
-                    hash: hash,
+                    hash,
                     data: data.into(),
                 }),
             right: None,
@@ -223,7 +223,7 @@ impl Changes {
     }
 
     #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
-    fn register_data_change<'a>(
+    fn register_data_change(
         &mut self,
         left_entry: &KeyedMerkleNode,
         right_entry: Option<&KeyedMerkleNode>,
@@ -272,7 +272,7 @@ where
 {
     fn inspect_node<Data: AsRef<[u8]>>(&self, trie_key: H256, node: Data) -> anyhow::Result<bool> {
         (self.func)(
-            &mut *self.changes.write().unwrap(),
+            &mut self.changes.write().unwrap(),
             trie_key,
             node.as_ref().to_vec(),
         );
@@ -356,7 +356,7 @@ impl<'a> fmt::Debug for KeyedMerkleNode<'a> {
             Self::FullEncoded(h, d) => f
                 .debug_struct("FullEncoded")
                 .field("hash", &h)
-                .field("node", &hexutil::to_hex(&d))
+                .field("node", &hexutil::to_hex(d))
                 .finish(),
         }
     }
@@ -430,7 +430,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                 changes.extend_from_slice(&subchanges)
             }
         }
-        return Ok(changes);
+        Ok(changes)
     }
 
     fn fetch_node(&self, hash: H256) -> KeyedMerkleNode<'_> {
