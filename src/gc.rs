@@ -579,7 +579,7 @@ pub mod tests {
 
     impl AsRef<[u8]> for FixedKey {
         fn as_ref(&self) -> &[u8] {
-            return &self.0;
+            &self.0
         }
     }
 
@@ -637,7 +637,7 @@ pub mod tests {
     }
     impl AsRef<[u8]> for VariableKey {
         fn as_ref(&self) -> &[u8] {
-            return &self.0;
+            &self.0
         }
     }
 

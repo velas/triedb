@@ -383,7 +383,7 @@ fn test_leaf_replaced_by_branch() {
         let val = trie1.get(key);
         let key_root = val
             .map(|v| H256::from_slice(&v))
-            .unwrap_or_else(|| empty_trie_hash());
+            .unwrap_or_else(empty_trie_hash);
         let mut inner_trie = collection.trie_for(key_root);
         for (key, value) in &value.data {
             inner_trie.insert(key, value.as_ref().unwrap())
@@ -400,7 +400,7 @@ fn test_leaf_replaced_by_branch() {
         let val = new_trie.get(key);
         let key_root = val
             .map(|v| H256::from_slice(&v))
-            .unwrap_or_else(|| empty_trie_hash());
+            .unwrap_or_else(empty_trie_hash);
         let mut inner_trie = collection.trie_for(key_root);
         for (k, value) in &value.data {
             inner_trie.insert(k, value.as_ref().unwrap())
@@ -418,10 +418,10 @@ fn test_leaf_replaced_by_branch() {
         let val = new_trie.get(key);
         let key_root = val
             .map(|v| H256::from_slice(&v))
-            .unwrap_or_else(|| empty_trie_hash());
+            .unwrap_or_else(empty_trie_hash);
         let inner_trie = collection.trie_for(key_root);
         for (k, v) in &values.data {
-            assert_eq!(&inner_trie.get(&k), v)
+            assert_eq!(&inner_trie.get(k), v)
         }
     }
 

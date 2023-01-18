@@ -12,9 +12,9 @@ pub struct EntriesHex {
 
 impl EntriesHex {
     pub fn new(data: Vec<(Vec<u8>, Option<Vec<u8>>)>) -> Self {
-        let res = Self { data };
+        
         // log::info!("{}", serde_json::to_string_pretty(&res).unwrap());
-        res
+        Self { data }
     }
 
     pub fn join(&self, other: &Self) -> Self {
@@ -54,7 +54,7 @@ impl InnerEntriesHex {
             join_map.insert(key.clone(), val.clone());
         }
         for (key, val) in &other.data {
-            let entry = join_map.entry(key.clone()).or_insert(EntriesHex::default());
+            let entry = join_map.entry(key.clone()).or_default();
             *entry = entry.join(val);
         }
 
