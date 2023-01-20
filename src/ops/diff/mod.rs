@@ -47,34 +47,14 @@ impl fmt::Debug for Change {
 ///
 #[derive(Clone, PartialEq, Eq)]
 struct DataNode {
-    hash: H256,
     data: OwnedData,
 }
 
 impl fmt::Debug for DataNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DataNode")
-            .field("hash", &self.hash)
             .field("data", &self.data)
             .finish()
-    }
-}
-
-impl<'a> From<KeyedMerkleNode<'a>> for Option<DataNode> {
-    fn from(rhs: KeyedMerkleNode<'a>) -> Self {
-        match rhs {
-            KeyedMerkleNode::FullEncoded(hash, _d) => {
-                let merkle_node = rhs.merkle_node();
-                merkle_node.data().map(|data| DataNode {
-                    hash,
-                    // TODO: allocation
-                    data: data.into(),
-                })
-            }
-            KeyedMerkleNode::Partial(_) => {
-                unimplemented!()
-            }
-        }
     }
 }
 
@@ -178,7 +158,7 @@ impl Changes {
     }
 
     #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
-    fn insert_with_register_child<'a>(&mut self, hash: H256, node: &KeyedMerkleNode<'a>) {
+    fn insert_with_register_child<'a>(&mut self, node: &KeyedMerkleNode<'a>) {
         self.insert_node(node.borrow());
         let data_change = DataNodeChange {
             left: None,
@@ -187,10 +167,7 @@ impl Changes {
                 .merkle_node()
                 .filter_extension()
                 .and_then(MerkleNode::data)
-                .map(|data| DataNode {
-                    hash,
-                    data: data.into(),
-                }),
+                .map(|data| DataNode { data: data.into() }),
         };
 
         // skip empty inserts
@@ -200,7 +177,7 @@ impl Changes {
     }
 
     #[cfg_attr(feature = "tracing-enable", instrument(skip(self)))]
-    fn remove_with_register_child(&mut self, hash: H256, node: &KeyedMerkleNode) {
+    fn remove_with_register_child(&mut self, node: &KeyedMerkleNode) {
         self.remove_node(node.borrow());
 
         let data_change = DataNodeChange {
@@ -209,10 +186,7 @@ impl Changes {
                 .merkle_node()
                 .filter_extension()
                 .and_then(MerkleNode::data)
-                .map(|data| DataNode {
-                    hash,
-                    data: data.into(),
-                }),
+                .map(|data| DataNode { data: data.into() }),
             right: None,
         };
 
@@ -229,15 +203,14 @@ impl Changes {
         right_entry: Option<&KeyedMerkleNode>,
     ) {
         let data_change = DataNodeChange {
-            left: left_entry.merkle_node().data().map(|data| DataNode {
-                hash: left_entry.db_node_key(),
-                data: data.into(),
-            }),
+            left: left_entry
+                .merkle_node()
+                .data()
+                .map(|data| DataNode { data: data.into() }),
             right: right_entry.and_then(|e| {
-                e.merkle_node().data().map(|data| DataNode {
-                    hash: e.db_node_key(),
-                    data: data.into(),
-                })
+                e.merkle_node()
+                    .data()
+                    .map(|data| DataNode { data: data.into() })
             }),
         };
         // skip empty inserts
@@ -376,12 +349,6 @@ impl<'a> KeyedMerkleNode<'a> {
                 let rlp = Rlp::new(n);
                 MerkleNode::decode(&rlp).expect("Cannot deserialize value")
             }
-        }
-    }
-    fn db_node_key(&self) -> H256 {
-        match self {
-            Self::Partial(..) => unimplemented!(),
-            Self::FullEncoded(h, ..) => *h,
         }
     }
 }
@@ -623,7 +590,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
         right_entry: Entry<KeyedMerkleNode>,
         mut changes: Changes,
     ) -> Changes {
-        changes.remove_with_register_child(left_entry.value.db_node_key(), &left_entry.value);
+        changes.remove_with_register_child(&left_entry.value);
 
         match left_entry.value.merkle_node() {
             MerkleNode::Extension(..) => {
@@ -653,7 +620,8 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
         let (root_hash, data) = match node {
             KeyedMerkleNode::FullEncoded(hash, data) => (hash, data),
             KeyedMerkleNode::Partial(_) => {
-                unreachable!("Partial can't have any hashes"); //its len < 32
+                //its len < 32
+                return Changes::default();
             }
         };
         if !skip_root {
@@ -682,7 +650,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
     fn deep_insert(&self, node: KeyedMerkleNode, skip_root: bool) -> Changes {
         let collector = OpCollector::new(|c: &mut Changes, h: H256, d: Vec<u8>| {
             let node = KeyedMerkleNode::FullEncoded(h, &d);
-            c.insert_with_register_child(h, &node)
+            c.insert_with_register_child(&node)
         });
         self.deep_op(node, skip_root, collector)
     }
@@ -691,7 +659,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
     fn deep_remove(&self, node: KeyedMerkleNode, skip_root: bool) -> Changes {
         let collector = OpCollector::new(|c: &mut Changes, h: H256, d: Vec<u8>| {
             let node = KeyedMerkleNode::FullEncoded(h, &d);
-            c.remove_with_register_child(h, &node)
+            c.remove_with_register_child(&node)
         });
         self.deep_op(node, skip_root, collector)
     }

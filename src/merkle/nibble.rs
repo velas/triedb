@@ -6,7 +6,7 @@ use rlp::{Rlp, RlpStream};
 
 use crate::Result;
 
-use super::{Branch, Extension, MerkleValue};
+use super::{Extension, MerkleValue};
 
 /// Represents a nibble. A 16-variant value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -257,16 +257,6 @@ impl<V> Entry<V> {
         Entry {
             nibble: nibbles,
             value: extension.value,
-        }
-    }
-
-    pub fn push_branch_child<'a>(&self, branch: Branch<'a>, idx: Nibble) -> Entry<MerkleValue<'a>> {
-        let index = idx as usize;
-        let mut nibbles = self.nibble.clone();
-        nibbles.push(idx);
-        Entry {
-            nibble: nibbles,
-            value: branch.childs[index].clone(),
         }
     }
 }
