@@ -455,3 +455,80 @@ fn test_leaf_replaced_by_branch() {
     let common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
     assert!(common.is_empty());
 }
+
+#[test]
+fn test_same_tree_inline() {
+    tracing_sub_init();
+    let first = json!([["0x70", "0x32"], ["0x70000030", "0x33"],]);
+
+    let second = json!([
+        [
+            "0x70",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f32"
+        ],
+        [
+            "0x70000030",
+            "0x5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f33"
+        ],
+    ]);
+    fn child_collecting(data: &[u8]) -> Vec<H256> {
+        if data.len() == 32 {
+            vec![H256::from_slice(data)]
+        } else {
+            vec![]
+        }
+    }
+    let first_entries: debug::EntriesHex = serde_json::from_value(first).unwrap();
+    let second_entries: debug::EntriesHex = serde_json::from_value(second).unwrap();
+
+    let collection = TrieCollection::new(SyncDashMap::default());
+
+    let mut trie1 = collection.trie_for(crate::empty_trie_hash());
+    for (key, value) in &first_entries.data {
+        trie1.insert(key, value.as_ref().unwrap());
+    }
+    let patch = trie1.into_patch();
+    let first_root = collection.apply_increase(patch, child_collecting);
+
+    let mut new_trie = collection.trie_for(first_root.root);
+    for (key, value) in &second_entries.data {
+        new_trie.insert(key, value.as_ref().unwrap());
+    }
+    let patch = new_trie.into_patch();
+    let second_root = collection.apply_increase(patch, child_collecting);
+
+    let new_trie = collection.trie_for(second_root.root);
+    for (key, values) in &second_entries.data {
+        assert_eq!(&new_trie.get(key), values)
+    }
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(first_root.root),
+        vec![],
+        child_collecting,
+    )
+    .print();
+
+    debug::draw(
+        &collection.database,
+        debug::Child::Hash(second_root.root),
+        vec![],
+        child_collecting,
+    )
+    .print();
+
+    let changes = diff(
+        &collection.database,
+        child_collecting,
+        first_root.root,
+        second_root.root,
+    )
+    .unwrap();
+    let (removes, inserts) = super::verify::tests::split_changes(changes.clone());
+    // assert that there is no duplicates
+    assert_eq!(removes.len() + inserts.len(), changes.len());
+
+    let common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
+    assert!(common.is_empty());
+}

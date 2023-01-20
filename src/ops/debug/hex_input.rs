@@ -12,7 +12,6 @@ pub struct EntriesHex {
 
 impl EntriesHex {
     pub fn new(data: Vec<(Vec<u8>, Option<Vec<u8>>)>) -> Self {
-        
         // log::info!("{}", serde_json::to_string_pretty(&res).unwrap());
         Self { data }
     }

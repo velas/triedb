@@ -1620,7 +1620,7 @@ where
     let patch = trie1.into_patch();
 
     // internall check: assert that all storage roots was written to the storage
-    let mut roots_set: HashSet<_> = root_guards.iter().map(|(root, _)| *root).collect();
+    let mut roots_set: HashSet<_> = root_guards.keys().copied().collect();
     {
         for (_k, v) in &patch.change.changes {
             if let Some(n) = v {
