@@ -1,102 +1,201 @@
-use rlp_old as rlp;
-
-use rlp::RlpStream;
-use std::borrow::Borrow;
-
 use super::NibblePair;
-use crate::merkle::{nibble::NibbleType, Branch, Extension, Leaf, MerkleNode, MerkleValue};
+use crate::merkle::{Branch, Extension, Leaf, MerkleNode, MerkleValue};
+use crate::nibble::NibbleType;
 
-pub use rlp::encode;
-pub use rlp::Encodable;
+pub use fastrlp::Encodable;
 
-impl rlp::Encodable for NibblePair {
-    fn rlp_append(&self, s: &mut RlpStream) {
-        let NibblePair(vec, typ) = self;
-        let mut ret: Vec<u8> = Vec::new();
+pub fn encode<V: fastrlp::Encodable>(val: &V) -> Vec<u8> {
+    let mut vec_buffer = Vec::with_capacity(val.length());
+    val.encode(&mut vec_buffer);
+    vec_buffer
+}
 
-        if vec.len() & 1 == 0 {
-            // even
-            ret.push(0b00000000);
-
-            for (i, val) in vec.iter().enumerate() {
-                if i & 1 == 0 {
-                    let v: u8 = (*val).into();
-                    ret.push(v << 4);
-                } else {
-                    let end = ret.len() - 1;
-                    let v: u8 = (*val).into();
-                    ret[end] |= v;
+impl<'a> fastrlp::Encodable for MerkleNode<'a> {
+    fn encode(&self, out: &mut dyn bytes::BufMut) {
+        match self {
+            MerkleNode::Leaf(Leaf { nibbles, data }) => {
+                let pair = NibblePair(nibbles.clone(), NibbleType::Leaf);
+                let len = pair.length() + data.length();
+                fastrlp::Header {
+                    list: true,
+                    payload_length: len,
                 }
+                .encode(out);
+                pair.encode(out);
+                data.encode(out);
             }
-        } else {
-            ret.push(0b00010000);
-
-            for (i, val) in vec.iter().enumerate() {
-                if i & 1 == 0 {
-                    let end = ret.len() - 1;
-                    let v: u8 = (*val).into();
-                    ret[end] |= v;
-                } else {
-                    let v: u8 = (*val).into();
-                    ret.push(v << 4);
+            MerkleNode::Extension(Extension { nibbles, value }) => {
+                let pair = NibblePair(nibbles.clone(), NibbleType::Extension);
+                let len = pair.length() + value.length();
+                fastrlp::Header {
+                    list: true,
+                    payload_length: len,
                 }
+                .encode(out);
+                pair.encode(out);
+                value.encode(out);
+            }
+            MerkleNode::Branch(Branch { childs, data }) => {
+                let mut len = 0;
+                for node in childs.iter() {
+                    len += node.length()
+                }
+                len += data.unwrap_or_default().length();
+
+                fastrlp::Header {
+                    list: true,
+                    payload_length: len,
+                }
+                .encode(out);
+                for node in childs.iter() {
+                    node.encode(out);
+                }
+                data.unwrap_or_default().encode(out)
             }
         }
+    }
+    fn length(&self) -> usize {
+        match self {
+            MerkleNode::Leaf(Leaf { nibbles, data }) => {
+                let pair = NibblePair(nibbles.clone(), NibbleType::Leaf);
+                let len = pair.length() + data.length();
+                fastrlp::Header {
+                    list: true,
+                    payload_length: len,
+                }
+                .length()
+                    + len
+            }
+            MerkleNode::Extension(Extension { nibbles, value }) => {
+                let pair = NibblePair(nibbles.clone(), NibbleType::Extension);
+                let len = pair.length() + value.length();
+                fastrlp::Header {
+                    list: true,
+                    payload_length: len,
+                }
+                .length()
+                    + len
+            }
+            MerkleNode::Branch(Branch { childs, data }) => {
+                let mut len = 0;
+                for node in childs.iter() {
+                    len += node.length()
+                }
 
-        ret[0] |= match typ {
+                len += data.unwrap_or_default().length();
+
+                fastrlp::Header {
+                    list: true,
+                    payload_length: len,
+                }
+                .length()
+                    + len
+            }
+        }
+    }
+}
+
+impl<'a> fastrlp::Encodable for MerkleValue<'a> {
+    fn encode(&self, out: &mut dyn bytes::BufMut) {
+        match *self {
+            MerkleValue::Empty => fastrlp::Header {
+                payload_length: 0,
+                list: false,
+            }
+            .encode(out),
+            MerkleValue::Hash(ref hash) => fastrlp::Encodable::encode(hash, out),
+            MerkleValue::Full(ref node) => node.encode(out),
+        }
+    }
+    fn length(&self) -> usize {
+        match *self {
+            MerkleValue::Empty => fastrlp::Header {
+                payload_length: 0,
+                list: false,
+            }
+            .length(),
+            MerkleValue::Hash(_) => {
+                fastrlp::Header {
+                    payload_length: 32,
+                    list: false,
+                }
+                .length()
+                    + 32
+            }
+            MerkleValue::Full(ref node) => {
+                node.length() // node include header
+            }
+        }
+    }
+}
+
+impl fastrlp::Encodable for NibblePair {
+    fn encode(&self, out: &mut dyn bytes::BufMut) {
+        let payload_length = self.payload_length();
+        if !self.skip_rlp_header() {
+            fastrlp::Header {
+                payload_length: payload_length,
+                list: false,
+            }
+            .encode(out);
+        }
+        let typ = match self.1 {
             NibbleType::Leaf => 0b00100000,
             NibbleType::Extension => 0b00000000,
         };
-
-        s.append(&ret);
-    }
-}
-
-impl<'a> rlp::Encodable for MerkleNode<'a> {
-    fn rlp_append(&self, s: &mut RlpStream) {
-        match *self {
-            MerkleNode::Leaf(Leaf { ref nibbles, data }) => {
-                s.begin_list(2);
-                NibblePair::rlp_append(&NibblePair(nibbles.to_vec(), NibbleType::Leaf), s);
-                data.rlp_append(s);
-            }
-            MerkleNode::Extension(Extension {
-                ref nibbles,
-                ref value,
-            }) => {
-                s.begin_list(2);
-                NibblePair::rlp_append(&NibblePair(nibbles.to_vec(), NibbleType::Extension), s);
-                value.rlp_append(s);
-            }
-            MerkleNode::Branch(Branch { ref childs, data }) => {
-                s.begin_list(17);
-                for node in childs.iter().take(16) {
-                    node.rlp_append(s);
-                }
-                if let Some(value) = data {
-                    s.append(&value);
+        if self.0.len() % 2 == 0 {
+            // even
+            out.put_u8(0b00000000 | typ);
+            let mut last_u8 = 0;
+            for (i, val) in self.0.iter().enumerate() {
+                let v: u8 = (*val).into();
+                if i % 2 == 0 {
+                    last_u8 = v << 4;
                 } else {
-                    s.append_empty_data();
-                };
+                    last_u8 |= v;
+                    out.put_u8(last_u8);
+                }
+            }
+        } else {
+            let mut last_u8 = 0b00010000 | typ;
+
+            for (i, val) in self.0.iter().enumerate() {
+                let v: u8 = (*val).into();
+                if i % 2 == 0 {
+                    last_u8 |= v;
+                    out.put_u8(last_u8)
+                } else {
+                    last_u8 = v << 4;
+                }
             }
         }
     }
+    fn length(&self) -> usize {
+        let payload_length = self.payload_length();
+        if !self.skip_rlp_header() {
+            return fastrlp::Header {
+                payload_length,
+                list: false,
+            }
+            .length()
+                + payload_length;
+        };
+        payload_length
+    }
 }
 
-impl<'a> rlp::Encodable for MerkleValue<'a> {
-    fn rlp_append(&self, s: &mut RlpStream) {
-        match *self {
-            MerkleValue::Empty => {
-                s.append_empty_data();
-            }
-            MerkleValue::Full(ref node) => {
-                debug_assert!(node.inlinable());
-                let node: &MerkleNode = node.borrow();
-                s.append(node);
-            }
-            MerkleValue::Hash(ref hash) => {
-                s.append(hash);
-            }
-        }
+impl NibblePair {
+    // 1 byte prefix + ceil(len_in_nible / 2)
+    // exampe:
+    // 1 nibble  = 1 + 0
+    // 2 nibbles = 1 + 1
+    // 3 nibbles = 1 + 1
+    // ...
+    fn payload_length(&self) -> usize {
+        1 + self.0.len() / 2
+    }
+    // If we have zero or one nible, it's byte representation would be less < EMPTY_STRING_CODE(0x80), and be serialized as single byte without length prefix
+    fn skip_rlp_header(&self) -> bool {
+        self.payload_length() == 1
     }
 }

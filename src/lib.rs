@@ -267,6 +267,6 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(empty_trie_hash(), H256(Keccak256::digest(NULL_RLP).into()));
-        assert_eq!(NULL_RLP, rlp::encode(&""))
+        assert_eq!(NULL_RLP, crate::rlp::encode(&String::from("")))
     }
 }

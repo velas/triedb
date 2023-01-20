@@ -70,11 +70,6 @@ impl<'a> MerkleNode<'a> {
             _ => Some(self),
         }
     }
-
-    /// Whether the node can be inlined to a merkle value.
-    pub fn inlinable(&self) -> bool {
-        crate::rlp::encode(self).to_vec().len() < 32
-    }
 }
 
 /// Represents a merkle value.

@@ -1,7 +1,10 @@
 pub mod decode;
 pub mod encode;
+#[cfg(feature = "old_rlp)")]
+pub mod old;
 
-pub use decode::{Decodable, DecoderError};
+pub use decode::{Decodable, DecodeError as DecoderError};
+
 pub use encode::Encodable;
 
 use crate::merkle::nibble::{NibbleType, NibbleVec};
@@ -9,6 +12,21 @@ use crate::merkle::nibble::{NibbleType, NibbleVec};
 pub use encode::encode;
 
 pub use decode::decode;
+
+#[cfg(feature = "old_rlp)")]
+mod testing {
+
+    //!
+    //! Implement marker traits for types that Decodable both from regular rlp, and from fastrlp.
+    //! Usefull when need to test that both implementation has same output.
+    //!
+
+    trait Decodable<'a>: crate::rlp::Decodable<'a> + crate::rlp::old::Decodable<'a> {}
+    impl<T> Decodable<'a> for T where T: crate::rlp::Decodable<'a> + crate::rlp::old::Decodable<'a> {}
+
+    trait Encodable: crate::rlp::Encodable + crate::rlp::old::Encodable {}
+    impl<T> Encodable for T where T: crate::rlp::Encodable + crate::rlp::old::Encodable {}
+}
 
 #[derive(Eq, PartialEq, Debug)]
 pub struct NibblePair(pub NibbleVec, pub NibbleType);
@@ -27,10 +45,28 @@ mod tests {
     macro_rules! check_roundtrip {
         ($v: expr => $type: ty) => {{
             // use fastrlp::Decodable;
-            let rlp_raw = crate::rlp::encode(&$v);
-            dbg!(hexutil::to_hex(&rlp_raw));
-            let decoded_node: $type = crate::rlp::decode(&mut (&*rlp_raw)).unwrap();
-            assert_eq!(decoded_node, $v);
+
+            #[cfg(feature = "old_rlp)")]
+            let old_rlp_raw: Vec<u8>;
+            let rlp_raw;
+            #[cfg(feature = "old_rlp)")]
+            {
+                old_rlp_raw = crate::rlp::old::encode(&$v);
+                dbg!(hexutil::to_hex(&old_rlp_raw));
+                let decoded_node: $type = crate::rlp::old::decode(&mut (&*old_rlp_raw)).unwrap();
+                assert_eq!(decoded_node, $v);
+            }
+            {
+                rlp_raw = crate::rlp::encode(&$v);
+                dbg!(hexutil::to_hex(&rlp_raw));
+                let decoded_node: $type = crate::rlp::decode(&mut (&*rlp_raw)).unwrap();
+                assert_eq!(decoded_node, $v);
+            }
+
+            #[cfg(feature = "old_rlp)")]
+            {
+                assert_eq!(old_rlp_raw, rlp_raw);
+            }
 
             // let mut vec_buf = Vec::with_capacity(v.length());
 

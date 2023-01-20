@@ -97,7 +97,7 @@ pub fn insert_by_value<'a, D: Database>(
         }
         MerkleValue::Hash(h) => {
             let sub_node =
-                crate::rlp::decode(database.get(h)).expect("Unable to decide Node value");
+                crate::rlp::decode(database.get(h)).expect("Unable to decode Node value");
             change.remove_node(&sub_node);
             get_value(sub_node, inserted, database, &mut change)
         }
