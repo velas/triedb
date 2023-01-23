@@ -163,7 +163,6 @@ fn test_two_different_leaf_nodes() {
 #[test]
 fn test_1() {
     tracing_sub_init();
-    tracing_sub_init();
 
     let j = json!([
         [
@@ -277,7 +276,6 @@ fn test_1() {
 #[test]
 fn test_2() {
     tracing_sub_init();
-    tracing_sub_init();
 
     let j = json!([
         [
@@ -380,7 +378,6 @@ fn test_2() {
 
 #[test]
 fn test_3() {
-    tracing_sub_init();
     tracing_sub_init();
 
     let j = json!([
@@ -499,7 +496,6 @@ fn test_3() {
 
 #[test]
 fn test_4() {
-    tracing_sub_init();
     tracing_sub_init();
 
     let j = json!([
@@ -1503,7 +1499,7 @@ trait ChildExtractor: Serialize {
         crate::debug::no_childs(data)
     }
     // Change existing data, so it will refer to link root
-    fn merge_root_to_data(data: &[u8], _root: H256) -> Vec<u8> {
+    fn update_child_root(data: &[u8], _root: H256) -> Vec<u8> {
         data.to_vec()
     }
     fn for_each<F>(&self, f: F)
@@ -1553,7 +1549,7 @@ impl ChildExtractor for InnerEntriesHex {
         vec![result]
     }
 
-    fn merge_root_to_data(_data: &[u8], root: H256) -> Vec<u8> {
+    fn update_child_root(_data: &[u8], root: H256) -> Vec<u8> {
         root.as_bytes().to_vec()
     }
 
@@ -1606,11 +1602,11 @@ where
 
                 let root_guard =
                     // currently rootguard is limited to one layer of indirection
-                    collection.apply_increase(patch.clone(), no_childs as ChildExtractorFn);
+                    collection.apply_increase(patch.clone(), D::Child::extract as ChildExtractorFn);
 
                 root_guards.remove(&old_root);
                 root_guards.insert(root_guard.root, root_guard);
-                let data = D::merge_root_to_data(value, patch.root);
+                let data = D::update_child_root(value, patch.root);
                 trie1.insert(key, data.as_ref())
             }
             _ => panic!("Expecting only 0 or 1 child tries"),
@@ -1642,7 +1638,7 @@ where
 
 // Check that after inserting entries, data in trie correct.
 // 1. Check that for low level trie db.get(k) == v from original entries;
-// 2. Check that for high level trie db.get(key) == (value + merge_root_to_data(new_root))
+// 2. Check that for high level trie db.get(key) == (value + update_child_root(new_root))
 fn assert_contain<D, DB>(collection: &TrieCollection<DB>, root: H256, entries: &D)
 where
     DB: DbCounter + Database,
@@ -1664,7 +1660,7 @@ where
                 child.for_each(|k, v, _| {
                     assert_eq!(TrieMut::get(&sub_trie1, k).unwrap_or_default(), v);
                 });
-                D::merge_root_to_data(value, root)
+                D::update_child_root(value, root)
             }
             _ => {
                 panic!("Expecting only 0 or 1 child tries")

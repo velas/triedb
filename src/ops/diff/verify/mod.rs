@@ -94,8 +94,7 @@ where
         .ok_or(VerificationError::MissExpectedRoot(expected_root))?;
 
     let mut patch_dependencies: BTreeSet<H256> = BTreeSet::new();
-    let mut sorted_changes: Vec<(H256, bool, Vec<u8>)> = vec![];
-    sorted_changes.push((expected_root, true, value));
+    let mut sorted_changes: Vec<(H256, bool, Vec<u8>)> = vec![(expected_root, true, value)];
 
     let (direct_childs, indirect_childs) =
         ReachableHashes::collect(&node, child_extractor.clone()).childs();
@@ -119,11 +118,10 @@ where
                         let childs = ReachableHashes::collect(&node, no_childs).childs();
                         assert!(
                             childs.1.is_empty(),
-                            "There should be no childs with no_childs extractor"
+                            "There should be no subtrie with 'no_childs' extractor"
                         );
-                        let empty = childs.1;
                         // All direct childs for indirect childs should be handled as indirect.
-                        (empty, childs.0)
+                        (vec![], childs.0)
                     };
                     // continue verification downward, if current node is inserted as part of
                     // patch

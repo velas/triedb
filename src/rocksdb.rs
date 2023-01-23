@@ -353,6 +353,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeSet, HashMap};
+    use std::fmt::Write as _;
     use std::io::Write;
     use std::sync::Arc;
 
@@ -1239,19 +1240,19 @@ mod tests {
 
                         let mut roots = String::new();
                         for (key, v) in storage_patch.change.changes.iter().rev() {
-                            roots.push_str(&format!("=>{}({})", key, v.is_some() as i32))
+                            write!(roots, "=>{}({})", key, v.is_some() as i32).unwrap();
                         }
                         trace!("storage_root:{}", roots);
                         let mut roots = String::new();
                         for (key, v) in account_patch.change.changes.iter().rev() {
-                            roots.push_str(&format!("=>{}({})", key, v.is_some() as i32))
+                            write!(roots, "=>{}({})", key, v.is_some() as i32).unwrap();
                         }
                         trace!("account_root:{}", roots);
                         account_patch.change.merge_child(&storage_patch.change);
 
                         let mut roots = String::new();
                         for (key, v) in account_patch.change.changes.iter().rev() {
-                            roots.push_str(&format!("=>{}({})", key, v.is_some() as i32))
+                            write!(roots, "=>{}({})", key, v.is_some() as i32).unwrap();
                         }
                         trace!("full_root:{}", roots);
 

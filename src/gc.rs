@@ -80,12 +80,7 @@ where
 
     pub fn childs(self) -> (Vec<H256>, Vec<H256>) {
         (
-            self.direct_childs
-                .into_iter()
-                // Empty trie is a common default value for most
-                // objects that contain submap, filtering it will reduce collissions.
-                .filter(|i| *i != empty_trie_hash!())
-                .collect(),
+            self.direct_childs,
             self.indirect_childs
                 .into_iter()
                 // Empty trie is a common default value for most
@@ -393,8 +388,8 @@ impl<C> DbCounter for MapWithCounterCachedParam<C> {
                 let rlp = Rlp::new(value);
                 let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
                 trace!("inserting node {:?}=>{:?}", key, node);
-                let childs = ReachableHashes::collect(&node, child_extractor).childs();
-                for hash in childs.0.into_iter().chain(childs.1) {
+                let childs = ReachableHashes::collect(&node, child_extractor).any_childs();
+                for hash in childs {
                     self.db.increase(hash);
                 }
                 v.insert(value.to_vec());
