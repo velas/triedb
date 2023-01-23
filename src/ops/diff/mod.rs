@@ -315,6 +315,7 @@ enum ComparePathResult {
     Uncomparable,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum KeyedMerkleNode<'a> {
     // Merkle node is only exist as inlined node

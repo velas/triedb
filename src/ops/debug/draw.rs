@@ -69,16 +69,7 @@ where
     }
 
     pub fn childs(self) -> (Vec<(NibbleVec, Child<'a>)>, Vec<H256>) {
-        let direct = self
-            .direct_childs
-            .into_iter()
-            // Empty trie is a common default value for most
-            // objects that contain submap, filtering it will reduce collissions.
-            .filter(|i| match i {
-                (_, Child::Hash(hash)) => *hash != empty_trie_hash(),
-                (_, Child::Inline(..)) => true,
-            })
-            .collect();
+        let direct = self.direct_childs;
         let extracted = self
             .extracted_childs
             .into_iter()
