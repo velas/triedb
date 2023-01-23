@@ -611,6 +611,23 @@ pub mod tests {
         }
     }
 
+    const RANDOM_SHORT_FIXED_DATA_SIZE: usize = 4;
+    #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Eq, Debug, Hash)]
+    pub struct RandomShortFixedData(pub [u8; 4]);
+
+    impl Arbitrary for RandomShortFixedData {
+        fn arbitrary(g: &mut Gen) -> Self {
+            let mut vec = Vec::arbitrary(g);
+            while vec.len() < RANDOM_SHORT_FIXED_DATA_SIZE {
+                vec = Vec::arbitrary(g);
+            }
+            let slice: &[u8] = &vec[0..RANDOM_SHORT_FIXED_DATA_SIZE];
+            let mut arr = [0; 4];
+            arr.copy_from_slice(slice);
+            Self(arr)
+        }
+    }
+
     #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub struct VariableKey(pub Vec<u8>);
 
@@ -638,7 +655,7 @@ pub mod tests {
 
     // pair; unique inserted values of same length ensure that all nodes in tree are unique
     #[derive(Eq, Hash, PartialEq)]
-    pub struct NonUniqueValue;
+    pub struct MixedNonUniqueValue;
     #[derive(Eq, Hash, PartialEq)]
     pub struct UniqueValue;
 
@@ -700,15 +717,24 @@ pub mod tests {
         }
     }
 
-    impl<K> Arbitrary for NodesGenerator<debug::EntriesHex, K, NonUniqueValue>
+    impl<K> Arbitrary for NodesGenerator<debug::EntriesHex, K, MixedNonUniqueValue>
     where
         K: Arbitrary + Eq + AsRef<[u8]> + std::hash::Hash,
     {
         fn arbitrary(g: &mut Gen) -> Self {
             let keys_first: HashMap<K, RandomFixedData> = HashMap::arbitrary(g);
+            let mut keys_second: HashMap<K, RandomShortFixedData> = HashMap::arbitrary(g);
+            while keys_second.len() < 1 {
+                keys_second = HashMap::arbitrary(g);
+                    
+            }
 
             let mut entries = vec![];
             for (key, value) in keys_first.into_iter() {
+                let entry = (key.as_ref().to_vec(), Some(value.0.to_vec()));
+                entries.push(entry);
+            }
+            for (key, value) in keys_second.into_iter() {
                 let entry = (key.as_ref().to_vec(), Some(value.0.to_vec()));
                 entries.push(entry);
             }
@@ -718,29 +744,19 @@ pub mod tests {
                 _v: PhantomData,
             }
         }
-        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-            Box::new(self.data.data.clone().shrink().map(|entries| {
-                // make uniq keys
-                let entries: HashMap<_, _> = entries.into_iter().collect();
-                Self {
-                    data: debug::EntriesHex::new(entries.into_iter().collect()),
-                    _k: PhantomData,
-                    _v: PhantomData,
-                }
-            }))
-        }
+        
     }
 
-    impl<K> Arbitrary for NodesGenerator<debug::InnerEntriesHex, K, NonUniqueValue>
+    impl<K> Arbitrary for NodesGenerator<debug::InnerEntriesHex, K, MixedNonUniqueValue>
     where
         K: Arbitrary + Eq + AsRef<[u8]> + std::hash::Hash,
-        NodesGenerator<debug::EntriesHex, K, NonUniqueValue>: Arbitrary,
+        NodesGenerator<debug::EntriesHex, K, MixedNonUniqueValue>: Arbitrary,
     {
         fn arbitrary(g: &mut Gen) -> Self {
             let mut entries = vec![];
             let keys = HashSet::<K>::arbitrary(g);
             for key in keys {
-                let values: NodesGenerator<debug::EntriesHex, K, NonUniqueValue> =
+                let values: NodesGenerator<debug::EntriesHex, K, MixedNonUniqueValue> =
                     NodesGenerator::arbitrary(g);
                 entries.push((key.as_ref().to_vec(), values.data))
             }
