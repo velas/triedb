@@ -3,7 +3,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use crate::cache::SyncCache;
 use crate::debug::child_extractor::DataWithRoot;
 use crate::debug::{DebugPrintExt, EntriesHex, InnerEntriesHex};
-use crate::gc::tests::{FixedKey, NodesGenerator, UniqueValue, VariableKey, RNG_DATA_SIZE};
+use crate::gc::tests::{
+    FixedKey, MixedNonUniqueValue, NodesGenerator, UniqueValue, VariableKey, RNG_DATA_SIZE,
+};
 use crate::merkle::MerkleNode;
 use crate::mutable::TrieMut;
 use crate::ops::diff::verify::VerificationError;
@@ -1658,7 +1660,10 @@ where
             [root] => {
                 let sub_trie1 = collection.trie_for(root);
                 child.for_each(|k, v, _| {
-                    assert_eq!(TrieMut::get(&sub_trie1, k).unwrap_or_default(), v);
+                    assert_eq!(
+                        hexutil::to_hex(&TrieMut::get(&sub_trie1, k).unwrap_or_default()),
+                        hexutil::to_hex(v)
+                    );
                 });
                 D::update_child_root(value, root)
             }
@@ -1674,8 +1679,11 @@ where
     });
 }
 
-fn empty_keys_union_diff_intersection_test_body<D>(entries_1: D, entries_2: D)
-where
+fn empty_keys_union_diff_intersection_test_body<D>(
+    entries_1: D,
+    entries_2: D,
+    redundancy_checks: bool,
+) where
     D: ChildExtractor,
 
     // Limit to max two layers.
@@ -1715,10 +1723,12 @@ where
     )
     .unwrap();
 
-    let (removes, inserts) = split_changes(changes.clone());
+    if redundancy_checks {
+        let (removes, inserts) = split_changes(changes.clone());
 
-    let common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
-    assert!(common.is_empty());
+        let common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
+        assert!(common.is_empty());
+    }
 
     let verify_result = verify_diff(
         &collection_2.database,
@@ -1736,8 +1746,11 @@ where
     assert_contain(&collection_2, second_root.root, &entries);
 }
 
-fn empty_keys_distinct_diff_empty_intersection_and_reversal_test_body<D>(entries_1: D, entries_2: D)
-where
+fn empty_keys_distinct_diff_empty_intersection_and_reversal_test_body<D>(
+    entries_1: D,
+    entries_2: D,
+    redundancy_checks: bool,
+) where
     D: ChildExtractor,
     // Limit to max two layers.
     // Second layer should has no childs Child=().
@@ -1777,11 +1790,13 @@ where
     )
     .unwrap();
 
-    let (removes, inserts) = split_changes(changes.clone());
-    assert_eq!(removes.len() + inserts.len(), changes.len());
+    if redundancy_checks {
+        let (removes, inserts) = split_changes(changes.clone());
+        assert_eq!(removes.len() + inserts.len(), changes.len());
 
-    let common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
-    assert!(common.is_empty());
+        let common: HashSet<H256> = removes.intersection(&inserts).copied().collect();
+        assert!(common.is_empty());
+    }
     let reversed = reverse_changes(changes.clone());
 
     for (changes, collection, target_root, tested_entries) in [
@@ -1825,8 +1840,13 @@ type FixedKeyUniqueValuesInner = NodesGenerator<debug::InnerEntriesHex, FixedKey
 type VariableKeyUniqueValuesInner =
     NodesGenerator<debug::InnerEntriesHex, VariableKey, UniqueValue>;
 
+type VariableKeyMixedValues = NodesGenerator<debug::EntriesHex, VariableKey, MixedNonUniqueValue>;
+
+type VariableKeyMixedValuesInner =
+    NodesGenerator<debug::InnerEntriesHex, VariableKey, MixedNonUniqueValue>;
+
 macro_rules! generate_tests {
-    ($name: ident => $type_name:ident) => {
+    ($name: ident => $type_name:ident, $redundancy_checks: expr) => {
         mod $name {
             use super::*;
             #[test]
@@ -1847,7 +1867,11 @@ macro_rules! generate_tests {
                         "entries_2 = {}",
                         serde_json::to_string_pretty(&gen_2.data).unwrap()
                     );
-                    empty_keys_union_diff_intersection_test_body(gen_1.data, gen_2.data);
+                    empty_keys_union_diff_intersection_test_body(
+                        gen_1.data,
+                        gen_2.data,
+                        $redundancy_checks,
+                    );
 
                     TestResult::passed()
                 }
@@ -1877,7 +1901,9 @@ macro_rules! generate_tests {
                         serde_json::to_string_pretty(&gen_2.data).unwrap()
                     );
                     empty_keys_distinct_diff_empty_intersection_and_reversal_test_body(
-                        gen_1.data, gen_2.data,
+                        gen_1.data,
+                        gen_2.data,
+                        $redundancy_checks,
                     );
 
                     TestResult::passed()
@@ -1892,18 +1918,26 @@ macro_rules! generate_tests {
 }
 
 generate_tests! {
-    fixed_key=> FixedKeyUniqueValues
+    fixed_key=> FixedKeyUniqueValues, true
 }
 
 generate_tests! {
-    variable_key=> VariableKeyUniqueValues
+    variable_key=> VariableKeyUniqueValues, true
 }
 
 generate_tests! {
-    inner_fixed_key=> FixedKeyUniqueValuesInner
+    inner_fixed_key=> FixedKeyUniqueValuesInner, true
 }
 generate_tests! {
-    inner_variable_key=> VariableKeyUniqueValuesInner
+    inner_variable_key=> VariableKeyUniqueValuesInner, true
+}
+
+generate_tests! {
+    variable_key_mixed_values=> VariableKeyMixedValues, false
+}
+
+generate_tests! {
+    inner_variable_key_mixed_values=> VariableKeyMixedValuesInner, false
 }
 #[test]
 fn data_from_qc1() {
@@ -1948,5 +1982,5 @@ fn data_from_qc1() {
         "entries_2 = {}",
         serde_json::to_string_pretty(&entries_2).unwrap()
     );
-    empty_keys_union_diff_intersection_test_body(entries_1, entries_2);
+    empty_keys_union_diff_intersection_test_body(entries_1, entries_2, true);
 }
