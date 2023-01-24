@@ -15,6 +15,7 @@ pub struct NibblePair(pub NibbleVec, pub NibbleType);
 
 #[cfg(test)]
 mod tests {
+    use crate::merkle::nibble::Nibble;
     use crate::merkle::{Branch, Extension, Leaf, MerkleNode, MerkleValue};
     use crate::{
         merkle::nibble::{self, NibbleType},
@@ -177,5 +178,48 @@ mod tests {
         let decoded_node: MerkleNode = rlp::Decodable::decode(&mut &*buffer).unwrap();
         println!("{:?}", decoded_node);
         check_roundtrip!(decoded_node => MerkleNode);
+    }
+
+    #[test]
+    fn serialise_data_from_qc() {
+        let leaf_node = MerkleNode::Leaf(Leaf {
+            nibbles: vec![Nibble::N1],
+            data: &[],
+        });
+        use MerkleValue::*;
+        let node = MerkleNode::Branch(Branch {
+            childs: [
+                Empty,
+                Empty,
+                Empty,
+                Empty,
+                Empty,
+                Empty,
+                Empty,
+                Empty,
+                Empty,
+                Empty,
+                Empty,
+                Empty,
+                Empty,
+                Empty,
+                Empty,
+                Full(Box::new(leaf_node)),
+            ],
+            data: Some(&[1]),
+        });
+
+        check_roundtrip!(node => MerkleNode);
+
+        assert!(node.inlinable());
+    }
+
+    #[test]
+    #[should_panic] // this example contain invalid usage of rlp that should be avoided
+    fn rlp_serialize_lists() {
+        use rlp_old::Encodable;
+        let mut stream = rlp_old::RlpStream::new_list(1);
+        "value".rlp_append(&mut stream); // to fix use stream.append("value")
+        stream.out();
     }
 }

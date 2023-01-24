@@ -524,7 +524,7 @@ pub mod tests {
     };
 
     use crate::{
-        debug,
+        debug::{self, tests::tracing_sub_init, DebugPrintExt},
         merkle::nibble::{into_key, Nibble},
     };
 
@@ -533,6 +533,7 @@ pub mod tests {
 
     use quickcheck::{Arbitrary, Gen};
     use serde::{Deserialize, Serialize};
+    use serde_json::json;
 
     use super::*;
     use crate::cache::Cache;
@@ -734,6 +735,8 @@ pub mod tests {
             for (key, value) in keys_second.into_iter() {
                 entries.insert(key.as_ref().to_vec(), value.0.to_vec());
             }
+            // remove empty value
+            entries.remove(&vec![]);
             Self {
                 data: debug::EntriesHex::new(
                     entries.into_iter().map(|(k, v)| (k, Some(v))).collect(),
@@ -764,36 +767,36 @@ pub mod tests {
                 _v: PhantomData,
             }
         }
-        // fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-        //     // Because EntriesHex doesnt have any Arbitrary implementation, we should propagate it to NodeGenerator<EntriesHex,_,_>::shrink
-        //     let data: Vec<_> = self
-        //         .data
-        //         .data
-        //         .iter()
-        //         .cloned()
-        //         .map(|(k, v)| {
-        //             (
-        //                 k,
-        //                 NodesGenerator {
-        //                     data: v,
-        //                     _k: self._k,
-        //                     _v: self._v,
-        //                 },
-        //             )
-        //         })
-        //         .collect();
-        //     Box::new(data.shrink().map(|vec_kv| {
-        //         // make uniq keys
-        //         let entries: HashMap<_, _> = vec_kv.into_iter().map(|(k, v)| (k, v.data)).collect();
-        //         Self {
-        //             data: debug::InnerEntriesHex {
-        //                 data: entries.into_iter().collect(),
-        //             },
-        //             _k: PhantomData,
-        //             _v: PhantomData,
-        //         }
-        //     }))
-        // }
+        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+            // Because EntriesHex doesnt have any Arbitrary implementation, we should propagate it to NodeGenerator<EntriesHex,_,_>::shrink
+            let data: Vec<_> = self
+                .data
+                .data
+                .iter()
+                .cloned()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        NodesGenerator {
+                            data: v,
+                            _k: self._k,
+                            _v: self._v,
+                        },
+                    )
+                })
+                .collect();
+            Box::new(data.shrink().map(|vec_kv| {
+                // make uniq keys
+                let entries: HashMap<_, _> = vec_kv.into_iter().map(|(k, v)| (k, v.data)).collect();
+                Self {
+                    data: debug::InnerEntriesHex {
+                        data: entries.into_iter().collect(),
+                    },
+                    _k: PhantomData,
+                    _v: PhantomData,
+                }
+            }))
+        }
     }
 
     impl<K> Arbitrary for NodesGenerator<debug::InnerEntriesHex, K, UniqueValue>
@@ -1278,5 +1281,73 @@ pub mod tests {
         }
 
         TestResult::passed()
+    }
+
+    #[test]
+    fn test_many_inline_nodes() {
+        tracing_sub_init();
+        let first = json!([
+            ["0x70", "0x01"],
+            ["0x7010", "0x02"],
+            ["0x701101", "0x03"],
+            ["0x70110001", "0x04"],
+            ["0x7011000001", "0x05"],
+            ["0x701100000001", "0x06"],
+            ["0x7011000000001", "0x08"],
+            ["0x7011111", "0x09"],
+            ["0x70111110", "0x0a"],
+            ["0x70111111", "0x0b"],
+        ]);
+
+        let first_entries: debug::EntriesHex = serde_json::from_value(first).unwrap();
+
+        let collection = TrieCollection::new(SyncDashMap::default());
+        let mut trie = collection.trie_for(empty_trie_hash());
+        for (key, value) in &first_entries.data {
+            trie.insert(key, value.as_ref().unwrap());
+        }
+        let patch = trie.into_patch();
+        let first_root = collection.apply_increase(patch, no_childs);
+
+        let new_trie = collection.trie_for(first_root.root);
+        for (key, values) in &first_entries.data {
+            assert_eq!(&TrieMut::get(&new_trie, key), values)
+        }
+
+        debug::draw(
+            &collection.database,
+            debug::Child::Hash(first_root.root),
+            vec![],
+            no_childs,
+        )
+        .print();
+    }
+
+    #[test]
+    fn data_from_qc3() {
+        tracing_sub_init();
+        let first = json!([["0x00f3", "0x7bff657a"], ["0x00", "0x913b6f3c"]]);
+        let first_entries: debug::EntriesHex = serde_json::from_value(first).unwrap();
+
+        let collection = TrieCollection::new(SyncDashMap::default());
+        let mut trie = collection.trie_for(empty_trie_hash());
+        for (key, value) in &first_entries.data {
+            trie.insert(key, value.as_ref().unwrap());
+        }
+        let patch = trie.into_patch();
+        let first_root = collection.apply_increase(patch, no_childs);
+
+        let new_trie = collection.trie_for(first_root.root);
+        for (key, values) in &first_entries.data {
+            assert_eq!(&TrieMut::get(&new_trie, key), values)
+        }
+
+        debug::draw(
+            &collection.database,
+            debug::Child::Hash(first_root.root),
+            vec![],
+            no_childs,
+        )
+        .print();
     }
 }
