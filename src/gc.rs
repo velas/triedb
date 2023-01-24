@@ -682,7 +682,10 @@ pub mod tests {
         K: Arbitrary + Eq + AsRef<[u8]> + std::hash::Hash,
     {
         fn arbitrary(g: &mut Gen) -> Self {
-            let values: HashMap<RandomFixedData, K> = HashMap::arbitrary(g);
+            let mut values: HashMap<RandomFixedData, K> = HashMap::arbitrary(g);
+            while values.is_empty() {
+                values = HashMap::arbitrary(g);
+            }
             // dedup
             let mut keys_first: HashMap<K, RandomFixedData> = HashMap::new();
             for (value, key) in values.into_iter() {

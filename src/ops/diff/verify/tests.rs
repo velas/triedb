@@ -1933,11 +1933,11 @@ generate_tests! {
 }
 
 generate_tests! {
-    variable_key_mixed_values=> VariableKeyMixedValues, true
+    variable_key_mixed_values=> VariableKeyMixedValues, false
 }
 
 generate_tests! {
-    inner_variable_key_mixed_values=> VariableKeyMixedValuesInner, true
+    inner_variable_key_mixed_values=> VariableKeyMixedValuesInner, false
 }
 #[test]
 fn data_from_qc1() {
