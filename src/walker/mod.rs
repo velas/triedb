@@ -47,7 +47,7 @@ where
             let bytes = db.get(hash);
             trace!("raw bytes: {:?}", bytes);
 
-            let node = crate::rlp::decode(&bytes)?;
+            let node = crate::rlp::decode(bytes)?;
             debug!("node: {:?}", node);
 
             self.process_node(Entry::new(nibble, &node))?;

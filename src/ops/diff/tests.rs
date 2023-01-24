@@ -245,7 +245,7 @@ fn test_empty_tree_and_leaf() {
     }
     .unwrap();
 
-    let v: MerkleNode = crate::rlp::decode(&raw_v).unwrap();
+    let v: MerkleNode = crate::rlp::decode(raw_v).unwrap();
 
     log::info!("{:?}", v);
 

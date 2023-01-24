@@ -15,7 +15,6 @@ use crate::diff;
 use crate::gc::{DbCounter, ReachableHashes};
 use crate::merkle::MerkleNode;
 
-
 #[cfg_attr(test, derive(Serialize, Deserialize))]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct VerifiedPatch {

@@ -134,7 +134,7 @@ impl fastrlp::Encodable for NibblePair {
         let payload_length = self.payload_length();
         if !self.skip_rlp_header() {
             fastrlp::Header {
-                payload_length: payload_length,
+                payload_length,
                 list: false,
             }
             .encode(out);
@@ -145,7 +145,7 @@ impl fastrlp::Encodable for NibblePair {
         };
         if self.0.len() % 2 == 0 {
             // even
-            out.put_u8(0b00000000 | typ);
+            out.put_u8(typ);
             let mut last_u8 = 0;
             for (i, val) in self.0.iter().enumerate() {
                 let v: u8 = (*val).into();

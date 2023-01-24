@@ -347,7 +347,7 @@ impl<'a> KeyedMerkleNode<'a> {
     fn merkle_node(&self) -> MerkleNode {
         match self {
             Self::Partial(n) => n.clone(),
-            Self::FullEncoded(_, n) => crate::rlp::decode(&n).expect("Cannot deserialize value"),
+            Self::FullEncoded(_, n) => crate::rlp::decode(n).expect("Cannot deserialize value"),
         }
     }
 }

@@ -13,7 +13,7 @@ name = "triedb"
 [dependencies]
 sha3 = "0.9.1"
 rlp_old = {version= "0.5.0", package="rlp", optional = true}
-fastrlp = { path="../fastrlp", version = "0.2.2", features = ["derive", "ethereum-types", "handle-thiserror"] }
+fastrlp = { git = "https://github.com/velas/fastrlp", tag="first-release", features = ["derive", "ethereum-types", "handle-thiserror"] }
 bytes = "1"
 primitive-types = { version = "0.11.0", features = ["rlp", "serde"] }
 thiserror = "1.0.23"

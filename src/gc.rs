@@ -19,7 +19,6 @@ use primitive_types::H256;
 
 use crate::ops::debug::no_childs;
 
-
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct ReachableHashes<F> {
@@ -385,7 +384,7 @@ impl<C> DbCounter for MapWithCounterCachedParam<C> {
         match self.db.data.entry(key) {
             Entry::Occupied(_) => {}
             Entry::Vacant(v) => {
-                let node = crate::rlp::decode(&value).expect("Unable to decode Merkle Node");
+                let node = crate::rlp::decode(value).expect("Unable to decode Merkle Node");
                 trace!("inserting node {:?}=>{:?}", key, node);
                 let childs = ReachableHashes::collect(&node, child_extractor).any_childs();
                 for hash in childs {
@@ -918,7 +917,7 @@ pub mod tests {
         // CHECK CHILDS counts
         println!("root={}", root_guard.root);
         let node = collection.database.get(root_guard.root);
-        let node = crate::rlp::decode(&node).expect("Unable to decode Merkle Node");
+        let node = crate::rlp::decode(node).expect("Unable to decode Merkle Node");
         let childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 
@@ -940,7 +939,7 @@ pub mod tests {
         assert_eq!(collection.database.gc_count(another_root.root), 1);
 
         let node = collection.database.get(another_root.root);
-        let node = crate::rlp::decode(&node).expect("Unable to decode Merkle Node");
+        let node = crate::rlp::decode(node).expect("Unable to decode Merkle Node");
         let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(another_root_childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 
@@ -977,7 +976,7 @@ pub mod tests {
         let latest_root = collection.apply_increase(patch, no_childs);
 
         let node = collection.database.get(latest_root.root);
-        let node = crate::rlp::decode(&node).expect("Unable to decode Merkle Node");
+        let node = crate::rlp::decode(node).expect("Unable to decode Merkle Node");
         let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(latest_root_childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 

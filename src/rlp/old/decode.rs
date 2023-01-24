@@ -30,8 +30,6 @@ where
     }
 }
 
-
-
 impl Decodable<'_> for NibblePair {
     /// Decode a nibble from RLP bytes
     fn decode(bytes: &[u8]) -> Result<Self> {

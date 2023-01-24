@@ -20,7 +20,7 @@ impl<'a> MerkleNode<'a> {
         }
 
         let node = if is_list_consume_rlp(
-            &mut &buf[..h.payload_length],
+            &buf[..h.payload_length],
             2, // len
         ) {
             // check if rlp_list.len() == 2 (leaf or extension)

@@ -2,10 +2,6 @@
 
 use std::{cmp::min, hash::Hash};
 
-
-
-
-
 use super::{Extension, MerkleValue};
 
 /// Represents a nibble. A 16-variant value.

@@ -1622,7 +1622,7 @@ where
     {
         for (_k, v) in &patch.change.changes {
             if let Some(n) = v {
-                let node = crate::rlp::decode(&n).unwrap();
+                let node = crate::rlp::decode(n).unwrap();
                 let childs = ReachableHashes::collect(&node, D::extract).childs();
                 for n in childs.0.into_iter().chain(childs.1) {
                     roots_set.remove(&n);

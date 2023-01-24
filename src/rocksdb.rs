@@ -218,7 +218,7 @@ where
     where
         F: FnMut(&[u8]) -> Vec<H256>,
     {
-        let node = crate::rlp::decode(&value).expect("Data should be decodable node");
+        let node = crate::rlp::decode(value).expect("Data should be decodable node");
         let childs = ReachableHashes::collect(&node, &mut child_extractor).childs();
         retry! {
             let db = self.db.db.borrow();
@@ -422,7 +422,7 @@ mod tests {
         // CHECK CHILDS counts
         println!("root={}", root_guard.root);
         let node = collection.database.get(root_guard.root);
-        let node = crate::rlp::decode(&node).expect("Unable to decode Merkle Node");
+        let node = crate::rlp::decode(node).expect("Unable to decode Merkle Node");
         let childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 
@@ -444,7 +444,7 @@ mod tests {
         assert_eq!(collection.database.gc_count(another_root_guard.root), 1);
 
         let node = collection.database.get(another_root_guard.root);
-        let node = crate::rlp::decode(&node).expect("Unable to decode Merkle Node");
+        let node = crate::rlp::decode(node).expect("Unable to decode Merkle Node");
         let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(another_root_childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 
@@ -483,7 +483,7 @@ mod tests {
         collection.database.gc_pin_root(latest_root_guard.root);
 
         let node = collection.database.get(latest_root_guard.root);
-        let node = crate::rlp::decode(&node).expect("Unable to decode Merkle Node");
+        let node = crate::rlp::decode(node).expect("Unable to decode Merkle Node");
         let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(latest_root_childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 
