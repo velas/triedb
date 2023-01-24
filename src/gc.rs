@@ -727,7 +727,7 @@ pub mod tests {
         fn arbitrary(g: &mut Gen) -> Self {
             let keys_first: HashMap<K, RandomFixedData> = HashMap::arbitrary(g);
             let mut keys_second: HashMap<K, RandomShortFixedData> = HashMap::arbitrary(g);
-            while keys_second.len() < 1 {
+            while keys_second.is_empty() {
                 keys_second = HashMap::arbitrary(g);
             }
 
