@@ -3,7 +3,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use crate::cache::SyncCache;
 use crate::debug::child_extractor::DataWithRoot;
 use crate::debug::{DebugPrintExt, EntriesHex, InnerEntriesHex};
-use crate::gc::tests::{FixedKey, NodesGenerator, UniqueValue, VariableKey, RNG_DATA_SIZE, MixedNonUniqueValue};
+use crate::gc::tests::{
+    FixedKey, MixedNonUniqueValue, NodesGenerator, UniqueValue, VariableKey, RNG_DATA_SIZE,
+};
 use crate::merkle::MerkleNode;
 use crate::mutable::TrieMut;
 use crate::ops::diff::verify::VerificationError;
@@ -1658,7 +1660,10 @@ where
             [root] => {
                 let sub_trie1 = collection.trie_for(root);
                 child.for_each(|k, v, _| {
-                    assert_eq!(TrieMut::get(&sub_trie1, k).unwrap_or_default(), v);
+                    assert_eq!(
+                        hexutil::to_hex(&TrieMut::get(&sub_trie1, k).unwrap_or_default()),
+                        hexutil::to_hex(v)
+                    );
                 });
                 D::update_child_root(value, root)
             }

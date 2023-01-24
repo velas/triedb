@@ -726,25 +726,23 @@ pub mod tests {
             let mut keys_second: HashMap<K, RandomShortFixedData> = HashMap::arbitrary(g);
             while keys_second.len() < 1 {
                 keys_second = HashMap::arbitrary(g);
-                    
             }
 
-            let mut entries = vec![];
+            let mut entries = HashMap::new();
             for (key, value) in keys_first.into_iter() {
-                let entry = (key.as_ref().to_vec(), Some(value.0.to_vec()));
-                entries.push(entry);
+                entries.insert(key.as_ref().to_vec(), value.0.to_vec());
             }
             for (key, value) in keys_second.into_iter() {
-                let entry = (key.as_ref().to_vec(), Some(value.0.to_vec()));
-                entries.push(entry);
+                entries.insert(key.as_ref().to_vec(), value.0.to_vec());
             }
             Self {
-                data: debug::EntriesHex::new(entries),
+                data: debug::EntriesHex::new(
+                    entries.into_iter().map(|(k, v)| (k, Some(v))).collect(),
+                ),
                 _k: PhantomData,
                 _v: PhantomData,
             }
         }
-        
     }
 
     impl<K> Arbitrary for NodesGenerator<debug::InnerEntriesHex, K, MixedNonUniqueValue>
