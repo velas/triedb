@@ -44,7 +44,6 @@ mod tests {
 
     macro_rules! check_roundtrip {
         ($v: expr => $type: ty) => {{
-
             #[cfg(feature = "old_rlp)")]
             let old_rlp_raw: Vec<u8>;
             let rlp_raw;
