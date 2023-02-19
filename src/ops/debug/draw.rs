@@ -102,14 +102,14 @@ impl std::fmt::Display for NibbleDisplay {
         let vec: Vec<char> = self.0.iter().map(|el| (*el).into()).collect();
         let string: String = vec.iter().collect();
 
-        write!(f, "{}", string)
+        write!(f, "{string}")
     }
 }
 
 impl std::fmt::Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let hash = match self.hash {
-            Some(hash) => format!("{}", hash),
+            Some(hash) => format!("{hash}"),
             None => "None".to_owned(),
         };
         let value: String = match &self.value {
@@ -147,7 +147,7 @@ pub fn draw<D: Database, F>(
 where
     F: FnMut(&[u8]) -> Vec<H256> + Clone,
 {
-    let zero: H256 = H256::from_slice(&[0u8; 32]);
+    let zero: H256 = H256::zero();
     if let Child::Hash(root) = &root {
         if *root == empty_trie_hash() {
             return termtree::Tree::new(Node {

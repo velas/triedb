@@ -43,7 +43,8 @@ impl std::fmt::Display for VerificationError {
 }
 
 pub fn verify_hash(value: &[u8], hash: H256) -> crate::Result<()> {
-    let actual_hash = H256::from_slice(Keccak256::digest(value).as_slice());
+    let actual_hash: [u8; 32] = Keccak256::digest(value).into();
+    let actual_hash = H256(actual_hash);
     if hash != actual_hash {
         return Err(VerificationError::HashMismatch(hash, actual_hash))?;
     }
