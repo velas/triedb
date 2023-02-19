@@ -887,7 +887,8 @@ fn test_get_changeset_trivial_tree() {
     assert_eq!(diff_patch_ser, exp_patch);
 
     for (hash, _is_direct, value) in diff_patch.sorted_changes {
-        let actual_hash = H256::from_slice(Keccak256::digest(&value).as_slice());
+        let actual_hash: [u8; 32] = Keccak256::digest(&value).into();
+        let actual_hash = H256(actual_hash);
         assert_eq!(hash, actual_hash);
     }
 }
