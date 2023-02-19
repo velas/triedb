@@ -22,7 +22,7 @@ impl DataWithRoot {
 impl Default for DataWithRoot {
     fn default() -> Self {
         Self {
-            root: crate::empty_trie_hash!(),
+            root: crate::empty_trie_hash(),
         }
     }
 }

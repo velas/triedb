@@ -75,7 +75,7 @@ where
             .into_iter()
             // Empty trie is a common default value for most
             // objects that contain submap, filtering it will reduce collissions.
-            .filter(|i| *i != empty_trie_hash!())
+            .filter(|i| *i != empty_trie_hash())
             .collect();
         (direct, extracted)
     }

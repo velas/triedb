@@ -33,7 +33,7 @@ impl Default for MemoryTrieMut {
     fn default() -> Self {
         Self {
             database: HashMap::new(),
-            root: empty_trie_hash!(),
+            root: empty_trie_hash(),
         }
     }
 }
