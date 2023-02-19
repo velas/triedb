@@ -85,7 +85,7 @@ where
                 .into_iter()
                 // Empty trie is a common default value for most
                 // objects that contain submap, filtering it will reduce collissions.
-                .filter(|i| *i != empty_trie_hash!())
+                .filter(|i| *i != empty_trie_hash())
                 .collect(),
         )
     }
@@ -94,7 +94,7 @@ where
         self.direct_childs
             .into_iter()
             .chain(self.indirect_childs)
-            .filter(|i| *i != empty_trie_hash!())
+            .filter(|i| *i != empty_trie_hash())
             .collect()
     }
 }
@@ -170,7 +170,7 @@ impl<D: DbCounter + Database> TrieCollection<D> {
 
     // returns guard to empty trie;
     pub fn empty_guard<F: FnMut(&[u8]) -> Vec<H256>>(&self, child_extractor: F) -> RootGuard<D, F> {
-        RootGuard::new(&self.database, empty_trie_hash!(), child_extractor)
+        RootGuard::new(&self.database, empty_trie_hash(), child_extractor)
     }
 
     // Apply changes and only increase child counters
@@ -467,7 +467,7 @@ pub struct RootGuard<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> 
 }
 impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> RootGuard<'a, D, F> {
     pub fn new(db: &'a D, root: H256, child_collector: F) -> Self {
-        if root != empty_trie_hash!() {
+        if root != empty_trie_hash() {
             db.gc_pin_root(root);
         }
         Self {
@@ -478,7 +478,7 @@ impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> RootGuard<'a, D,
     }
     // Return true if root is valid node
     pub fn check_root_exist(&self) -> bool {
-        if self.root == empty_trie_hash!() {
+        if self.root == empty_trie_hash() {
             return true;
         }
 
@@ -488,14 +488,14 @@ impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> RootGuard<'a, D,
     pub fn leak_root(mut self) -> H256 {
         let root = self.root;
         self.db.gc_unpin_root(root);
-        self.root = empty_trie_hash!();
+        self.root = empty_trie_hash();
         root
     }
 }
 
 impl<'a, D: Database + DbCounter, F: FnMut(&[u8]) -> Vec<H256>> Drop for RootGuard<'a, D, F> {
     fn drop(&mut self) {
-        if self.root == empty_trie_hash!() {
+        if self.root == empty_trie_hash() {
             return;
         }
         if self.db.gc_unpin_root(self.root) {

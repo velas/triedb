@@ -40,6 +40,17 @@ use merkle::nibble::Entry;
 
 type Result<T> = std::result::Result<T, error::Error>;
 
+const KECCAK_NULL_RLP: H256 = H256([
+    0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8,
+    0x6e, 0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63,
+    0xb4, 0x21,
+]);
+
+/// Gets the empty trie hash for merkle trie: `56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421`
+pub const fn empty_trie_hash() -> H256 {
+    KECCAK_NULL_RLP
+}
+
 pub trait CachedDatabaseHandle {
     fn get(&self, key: H256) -> Vec<u8>;
 }
@@ -135,17 +146,12 @@ impl Change {
     }
 }
 
-/// Get the empty trie hash for merkle trie.
-pub fn empty_trie_hash() -> H256 {
-    empty_trie_hash!()
-}
-
 /// Insert to a merkle trie. Return the new root hash and the changes.
 pub fn insert<D: Database>(root: H256, database: &D, key: &[u8], value: &[u8]) -> (H256, Change) {
     let mut change = Change::default();
     let nibble = nibble::from_key(key);
 
-    let (new, subchange) = if root == empty_trie_hash!() {
+    let (new, subchange) = if root == empty_trie_hash() {
         insert::insert_by_empty(nibble, value)
     } else {
         let old =
@@ -184,7 +190,7 @@ pub fn delete<D: Database>(root: H256, database: &D, key: &[u8]) -> (H256, Chang
     let mut change = Change::default();
     let nibble = nibble::from_key(key);
 
-    let (new, subchange) = if root == empty_trie_hash!() {
+    let (new, subchange) = if root == empty_trie_hash() {
         return (root, change);
     } else {
         let old =
@@ -202,7 +208,7 @@ pub fn delete<D: Database>(root: H256, database: &D, key: &[u8]) -> (H256, Chang
             let hash = H256(hash);
             (hash, change)
         }
-        None => (empty_trie_hash!(), change),
+        None => (empty_trie_hash(), change),
     }
 }
 
@@ -212,7 +218,7 @@ pub fn build(map: &HashMap<Vec<u8>, Vec<u8>>) -> (H256, Change) {
     let mut change = Change::default();
 
     if map.is_empty() {
-        return (empty_trie_hash!(), change);
+        return (empty_trie_hash(), change);
     }
 
     let mut node_map = HashMap::new();
@@ -231,7 +237,7 @@ pub fn build(map: &HashMap<Vec<u8>, Vec<u8>>) -> (H256, Change) {
 
 /// Get a value given the root hash and the database.
 pub fn get<'a, 'b, D: Database>(root: H256, database: &'a D, key: &'b [u8]) -> Option<&'a [u8]> {
-    if root == empty_trie_hash!() {
+    if root == empty_trie_hash() {
         None
     } else {
         let nibble = nibble::from_key(key);
@@ -256,6 +262,7 @@ where
     diff_finder.get_changeset(from, to)
 }
 
+#[deprecated = "Use `const fn triedb::empty_trie_hash` instead"]
 #[doc(hidden)]
 #[macro_export]
 macro_rules! empty_trie_hash {
@@ -270,12 +277,7 @@ macro_rules! empty_trie_hash {
 mod tests {
     use super::*;
 
-    const KECCAK_NULL_RLP: H256 = H256([
-        0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8,
-        0x6e, 0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63,
-        0xb4, 0x21,
-    ]);
-
+    #[allow(deprecated)]
     #[test]
     fn it_checks_macro_generates_expected_empty_hash() {
         assert_eq!(empty_trie_hash!(), KECCAK_NULL_RLP);
