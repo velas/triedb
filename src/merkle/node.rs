@@ -132,7 +132,7 @@ impl<'a> Encodable for MerkleNode<'a> {
                     node.rlp_append(s);
                 }
                 if let Some(value) = data {
-                    value.rlp_append(s);
+                    s.append(&value);
                 } else {
                     s.append_empty_data();
                 };
