@@ -44,11 +44,6 @@ const KECCAK_NULL_RLP: H256 = H256([
     0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
 ]);
 
-/// Gets the empty trie hash for merkle trie: `56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421`
-pub const fn empty_trie_hash() -> H256 {
-    KECCAK_NULL_RLP
-}
-
 pub trait CachedDatabaseHandle {
     fn get(&self, key: H256) -> Vec<u8>;
 }
@@ -260,14 +255,17 @@ where
     diff_finder.get_changeset(from, to)
 }
 
+/// Gets the empty trie hash for merkle trie: `56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421`
+pub const fn empty_trie_hash() -> H256 {
+    crate::KECCAK_NULL_RLP
+}
+
 #[deprecated = "Use `const fn triedb::empty_trie_hash` instead"]
 #[doc(hidden)]
 #[macro_export]
 macro_rules! empty_trie_hash {
     () => {{
-        use std::str::FromStr;
-
-        H256::from_str("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421").unwrap()
+        crate::KECCAK_NULL_RLP
     }};
 }
 
@@ -275,9 +273,18 @@ macro_rules! empty_trie_hash {
 mod tests {
     use super::*;
 
-    #[allow(deprecated)]
+    use std::str::FromStr;
+
+    const NULL_RLP: &[u8] = &[0x80];
+
     #[test]
     fn it_checks_macro_generates_expected_empty_hash() {
-        assert_eq!(empty_trie_hash!(), KECCAK_NULL_RLP);
+        assert_eq!(
+            empty_trie_hash(),
+            H256::from_str("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
+                .unwrap()
+        );
+        assert_eq!(empty_trie_hash(), H256(Keccak256::digest(NULL_RLP).into()));
+        assert_eq!(NULL_RLP, rlp::encode(&""))
     }
 }
