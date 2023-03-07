@@ -455,7 +455,7 @@ impl CachedDatabaseHandle for Arc<MapWithCounter> {
     fn get(&self, key: H256) -> Vec<u8> {
         self.data
             .get(&key)
-            .unwrap_or_else(|| panic!("Value for {} not found in database", key))
+            .unwrap_or_else(|| panic!("Value for {:?} not found in database", key))
             .clone()
     }
 }

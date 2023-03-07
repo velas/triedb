@@ -159,7 +159,7 @@ impl<'a, D: Borrow<DB>> CachedDatabaseHandle for RocksDatabaseHandleGC<'a, D> {
             .borrow()
             .get(key.as_ref())
             .expect("Error on reading database")
-            .unwrap_or_else(|| panic!("Value for {} not found in database", key))
+            .unwrap_or_else(|| panic!("Value for {:?} not found in database", key))
     }
 }
 
@@ -205,7 +205,7 @@ impl<'a, D: DBAccess> CachedDatabaseHandle for RocksDatabaseHandle<'a, D> {
         self.db
             .get_opt(key.as_ref(), &ReadOptions::default())
             .expect("Error on reading database")
-            .unwrap_or_else(|| panic!("Value for {} not found in database", key))
+            .unwrap_or_else(|| panic!("Value for {:?} not found in database", key))
     }
 }
 
