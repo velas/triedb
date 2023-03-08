@@ -27,6 +27,7 @@ mod mutable;
 mod ops;
 mod walker;
 
+pub use error::Error;
 pub use ops::debug::{self, draw, Child};
 pub use ops::diff::verify::{verify as verify_diff, VerifiedPatch};
 pub use ops::diff::Change as DiffChange;
