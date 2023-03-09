@@ -150,7 +150,7 @@ mod tests {
         }
 
         assert!(mtrie.database.is_empty());
-        assert!(mtrie.root == empty_trie_hash!());
+        assert!(mtrie.root == empty_trie_hash());
     }
 
     #[test]
