@@ -82,8 +82,7 @@ impl Change {
     /// Change to add a new node.
     pub fn add_node(&mut self, node: &MerkleNode<'_>) {
         let subnode = rlp::encode(node).to_vec();
-        let hash: [u8; 32] = Keccak256::digest(&subnode).into();
-        let hash = H256(hash);
+        let hash = H256(Keccak256::digest(&subnode).into());
         self.add_raw(hash, subnode);
     }
 
@@ -93,8 +92,7 @@ impl Change {
             MerkleValue::Full(Box::new(node.clone()))
         } else {
             let subnode = rlp::encode(node).to_vec();
-            let hash: [u8; 32] = Keccak256::digest(&subnode).into();
-            let hash = H256(hash);
+            let hash = H256(Keccak256::digest(&subnode).into());
             self.add_raw(hash, subnode);
             MerkleValue::Hash(hash)
         }
@@ -112,8 +110,7 @@ impl Change {
             false
         } else {
             let subnode = rlp::encode(node).to_vec();
-            let hash: [u8; 32] = Keccak256::digest(&subnode).into();
-            let hash = H256(hash);
+            let hash = H256(Keccak256::digest(&subnode).into());
             self.remove_raw(hash);
             true
         }
@@ -156,8 +153,7 @@ pub fn insert<D: Database>(root: H256, database: &D, key: &[u8], value: &[u8]) -
     change.merge(&subchange);
     change.add_node(&new);
 
-    let hash: [u8; 32] = Keccak256::digest(&rlp::encode(&new)).into();
-    let hash = H256(hash);
+    let hash = H256(Keccak256::digest(&rlp::encode(&new)).into());
 
     (hash, change)
 }
@@ -172,8 +168,7 @@ pub fn insert_empty<D: Database>(key: &[u8], value: &[u8]) -> (H256, Change) {
     change.merge(&subchange);
     change.add_node(&new);
 
-    let hash: [u8; 32] = Keccak256::digest(&rlp::encode(&new)).into();
-    let hash = H256(hash);
+    let hash = H256(Keccak256::digest(&rlp::encode(&new)).into());
 
     (hash, change)
 }
@@ -198,8 +193,7 @@ pub fn delete<D: Database>(root: H256, database: &D, key: &[u8]) -> (H256, Chang
         Some(new) => {
             change.add_node(&new);
 
-            let hash: [u8; 32] = Keccak256::digest(&rlp::encode(&new)).into();
-            let hash = H256(hash);
+            let hash = H256(Keccak256::digest(&rlp::encode(&new)).into());
             (hash, change)
         }
         None => (empty_trie_hash(), change),
@@ -224,8 +218,7 @@ pub fn build(map: &HashMap<Vec<u8>, Vec<u8>>) -> (H256, Change) {
     change.merge(&subchange);
     change.add_node(&node);
 
-    let hash: [u8; 32] = Keccak256::digest(&rlp::encode(&node)).into();
-    let hash = H256(hash);
+    let hash = H256(Keccak256::digest(&rlp::encode(&node)).into());
     (hash, change)
 }
 
