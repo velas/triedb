@@ -261,15 +261,6 @@ pub const fn empty_trie_hash() -> H256 {
     crate::KECCAK_NULL_RLP
 }
 
-#[deprecated = "Use `const fn triedb::empty_trie_hash` instead"]
-#[doc(hidden)]
-#[macro_export]
-macro_rules! empty_trie_hash {
-    () => {{
-        crate::KECCAK_NULL_RLP
-    }};
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

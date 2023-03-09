@@ -1545,7 +1545,7 @@ impl ChildExtractor for InnerEntriesHex {
         // and execute child signe child extractor for it.
         // TODO: Make RootGuard drop bound to specific layer of trie.
         let result = if data.len() != 32 {
-            empty_trie_hash!()
+            empty_trie_hash()
         } else {
             H256::from_slice(data)
         };
@@ -1563,7 +1563,7 @@ impl ChildExtractor for InnerEntriesHex {
         for (key, value) in &self.data {
             // This struct is designed for tests and does not contain any old roots.
             // So during insert we always create new trie
-            f(key, empty_trie_hash!().as_bytes(), value)
+            f(key, empty_trie_hash().as_bytes(), value)
         }
     }
     fn join(&self, other: &Self) -> Self {
@@ -1593,7 +1593,7 @@ where
         let old_roots = old_data
             .as_deref()
             .map(D::extract)
-            .unwrap_or_else(|| vec![empty_trie_hash!()]);
+            .unwrap_or_else(|| vec![empty_trie_hash()]);
         match *old_roots {
             [] => trie1.insert(key, value),
             [old_root] => {
@@ -1632,7 +1632,7 @@ where
             }
         }
     }
-    roots_set.remove(&empty_trie_hash!());
+    roots_set.remove(&empty_trie_hash());
 
     assert!(roots_set.is_empty());
 
@@ -1694,8 +1694,8 @@ fn empty_keys_union_diff_intersection_test_body<D>(
     let collection = TrieCollection::new(SyncDashMap::default());
     let collection_2 = TrieCollection::new(SyncDashMap::default());
 
-    let first_root = insert_entries(&collection, empty_trie_hash!(), &entries_1);
-    let first_root_2 = insert_entries(&collection_2, empty_trie_hash!(), &entries_1);
+    let first_root = insert_entries(&collection, empty_trie_hash(), &entries_1);
+    let first_root_2 = insert_entries(&collection_2, empty_trie_hash(), &entries_1);
     assert_eq!(first_root.root, first_root_2.root);
 
     debug::draw(
@@ -1761,8 +1761,8 @@ fn empty_keys_distinct_diff_empty_intersection_and_reversal_test_body<D>(
     let collection_reversal_target = TrieCollection::new(SyncDashMap::default());
     let collection_direct_target = TrieCollection::new(SyncDashMap::default());
 
-    let first_root = insert_entries(&full_collection, empty_trie_hash!(), &entries_1);
-    let _first_root = insert_entries(&collection_direct_target, empty_trie_hash!(), &entries_1);
+    let first_root = insert_entries(&full_collection, empty_trie_hash(), &entries_1);
+    let _first_root = insert_entries(&collection_direct_target, empty_trie_hash(), &entries_1);
 
     debug::draw(
         &full_collection.database,
@@ -1772,8 +1772,8 @@ fn empty_keys_distinct_diff_empty_intersection_and_reversal_test_body<D>(
     )
     .print();
 
-    let second_root = insert_entries(&full_collection, empty_trie_hash!(), &entries_2);
-    let _second_root = insert_entries(&collection_reversal_target, empty_trie_hash!(), &entries_2);
+    let second_root = insert_entries(&full_collection, empty_trie_hash(), &entries_2);
+    let _second_root = insert_entries(&collection_reversal_target, empty_trie_hash(), &entries_2);
 
     debug::draw(
         &full_collection.database,
