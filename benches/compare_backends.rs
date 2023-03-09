@@ -64,12 +64,11 @@ fn rand_choose(
 
     let random = rand_collection(seed, num_random).map(|(k, _)| k);
 
-    let from_collection: Vec<_> = collection
+    let from_collection = collection
         .choose_multiple(&mut rng, num_from_collection)
-        .map(|(k, _)| *k)
-        .collect();
+        .map(|(k, _)| *k);
 
-    from_collection.into_iter().chain(random).collect()
+    from_collection.chain(random).collect()
 }
 
 fn bench_insert_backends(
@@ -181,7 +180,7 @@ fn bench_insert_backends(
                 let mut trie = collection.trie_for(root.root);
                 // Start benchmark
                 for (key, value) in &test_data {
-                    trie.insert(key.as_bytes(), &*value);
+                    trie.insert(key.as_bytes(), value);
                 }
 
                 let patch = trie.into_patch(); // FIXME: get patch without consuming `self`
@@ -235,7 +234,7 @@ fn bench_insert_backends(
                 let mut trie = collection.trie_for(root.root);
                 // Start benchmark
                 for (key, value) in &test_data {
-                    trie.insert(key.as_bytes(), &*value);
+                    trie.insert(key.as_bytes(), value);
                 }
 
                 let patch = trie.into_patch(); // FIXME: get patch without consuming `self`

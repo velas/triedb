@@ -94,8 +94,10 @@ impl<'de> fastrlp::Decodable<'de> for MerkleValue<'de> {
 pub(crate) fn is_list_consume_rlp(mut buf: &[u8], num: usize) -> bool {
     let buf = &mut buf;
     for _i in 0..num {
-        let Ok(h) = fastrlp::Header::decode(buf) else {
-            return false
+        let h = if let Ok(h) = fastrlp::Header::decode(buf) {
+            h
+        } else {
+            return false;
         };
         if h.payload_length > buf.len() {
             return false;

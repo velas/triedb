@@ -1,6 +1,6 @@
 pub mod decode;
 pub mod encode;
-#[cfg(feature = "old_rlp)")]
+#[cfg(feature = "old_rlp")]
 pub mod old;
 
 pub use decode::{Decodable, DecodeError as DecoderError};
@@ -13,7 +13,7 @@ pub use encode::encode;
 
 pub use decode::decode;
 
-#[cfg(feature = "old_rlp)")]
+#[cfg(feature = "old_rlp")]
 mod testing {
 
     //!
@@ -22,7 +22,7 @@ mod testing {
     //!
 
     trait Decodable<'a>: crate::rlp::Decodable<'a> + crate::rlp::old::Decodable<'a> {}
-    impl<T> Decodable<'a> for T where T: crate::rlp::Decodable<'a> + crate::rlp::old::Decodable<'a> {}
+    impl<'a, T> Decodable<'a> for T where T: crate::rlp::Decodable<'a> + crate::rlp::old::Decodable<'a> {}
 
     trait Encodable: crate::rlp::Encodable + crate::rlp::old::Encodable {}
     impl<T> Encodable for T where T: crate::rlp::Encodable + crate::rlp::old::Encodable {}
@@ -44,12 +44,12 @@ mod tests {
 
     macro_rules! check_roundtrip {
         ($v: expr => $type: ty) => {{
-            #[cfg(feature = "old_rlp)")]
+            #[cfg(feature = "old_rlp")]
             let old_rlp_raw: Vec<u8>;
             let rlp_raw;
-            #[cfg(feature = "old_rlp)")]
+            #[cfg(feature = "old_rlp")]
             {
-                old_rlp_raw = crate::rlp::old::encode(&$v);
+                old_rlp_raw = crate::rlp::old::encode(&$v).to_vec();
                 dbg!(hexutil::to_hex(&old_rlp_raw));
                 let decoded_node: $type = crate::rlp::old::decode(&old_rlp_raw).unwrap();
                 assert_eq!(decoded_node, $v);
@@ -61,7 +61,7 @@ mod tests {
                 assert_eq!(decoded_node, $v);
             }
 
-            #[cfg(feature = "old_rlp)")]
+            #[cfg(feature = "old_rlp")]
             {
                 assert_eq!(old_rlp_raw, rlp_raw);
             }

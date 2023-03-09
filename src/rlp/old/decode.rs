@@ -17,16 +17,17 @@ pub trait Decodable<'a>: Sized {
     fn decode(bytes: &'a [u8]) -> Result<Self>;
 }
 
+#[allow(unused)] // really used in tests
 pub fn decode<'a, T: Decodable<'a> + 'a>(bytes: &'a [u8]) -> Result<T> {
     T::decode(bytes)
 }
 
-impl<T> Decodable<'a> for T
+impl<'a, T> Decodable<'a> for T
 where
     T: DecodableOwned,
 {
-    fn decode(rlp: &Rlp) -> Result<Self> {
-        <T as DecodableOwned>::decode(rlp)
+    fn decode(rlp: &'a [u8]) -> Result<Self> {
+        <T as DecodableOwned>::decode(&Rlp::new(rlp))
     }
 }
 
@@ -71,18 +72,18 @@ impl<'a> Decodable<'a> for MerkleNode<'a> {
         let rlp = Rlp::new(bytes);
         let node = match rlp.prototype()? {
             Prototype::List(2) => {
-                let NibblePair(nibbles, typ) = NibblePair::decode(&rlp.at(0)?.as_raw())?;
+                let NibblePair(nibbles, typ) = NibblePair::decode(rlp.at(0)?.as_raw())?;
                 match typ {
                     NibbleType::Leaf => MerkleNode::leaf(nibbles, rlp.at(1)?.data()?),
                     NibbleType::Extension => {
-                        MerkleNode::extension(nibbles, MerkleValue::decode(&rlp.at(1)?.as_raw())?)
+                        MerkleNode::extension(nibbles, MerkleValue::decode(rlp.at(1)?.as_raw())?)
                     }
                 }
             }
             Prototype::List(17) => {
                 let mut nodes: [MerkleValue; 16] = empty_nodes();
                 for (i, node) in nodes.iter_mut().enumerate() {
-                    *node = MerkleValue::decode(&rlp.at(i)?.as_raw())?;
+                    *node = MerkleValue::decode(rlp.at(i)?.as_raw())?;
                 }
                 let value = if rlp.at(16)?.is_empty() {
                     None

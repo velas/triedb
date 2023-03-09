@@ -2213,7 +2213,7 @@ fn data_from_qc2() {
     reduce(entries_1, |entries_1| {
         std::panic::catch_unwind(|| {
             let collection = TrieCollection::new(SyncDashMap::default());
-            let first_root = insert_entries(&collection, empty_trie_hash!(), entries_1);
+            let first_root = insert_entries(&collection, empty_trie_hash(), entries_1);
             debug::draw(
                 &collection.database,
                 debug::Child::Hash(first_root.root),

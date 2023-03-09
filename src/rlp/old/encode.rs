@@ -11,7 +11,7 @@ pub use rlp::Encodable;
 
 impl<'a> MerkleNode<'a> {
     /// Whether the node can be inlined to a merkle value.
-    pub fn inlinable(&self) -> bool {
+    pub fn inlinable_old(&self) -> bool {
         crate::rlp::encode(self).to_vec().len() < 32
     }
 }
@@ -97,7 +97,7 @@ impl<'a> rlp::Encodable for MerkleValue<'a> {
                 s.append_empty_data();
             }
             MerkleValue::Full(ref node) => {
-                debug_assert!(node.inlinable());
+                debug_assert!(node.inlinable_old());
                 let node: &MerkleNode = node.borrow();
                 s.append(node);
             }
