@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use primitive_types::H256;
-use rlp::Rlp;
+
 use sha3::{Digest, Keccak256};
 
 #[cfg(test)]
@@ -61,7 +61,7 @@ fn verify_node(
 
     verify_hash(value, hash)?;
 
-    let node = MerkleNode::decode(&Rlp::new(value))?;
+    let node = crate::rlp::decode(value)?;
     Ok(Some((value.clone(), node)))
 }
 

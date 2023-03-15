@@ -8,7 +8,7 @@ use primitive_types::H256;
 
 use crate::{CachedDatabaseHandle, Database};
 
-// Single threaded cache implementation
+// Single threaded read cache implementation
 
 #[derive(Default, Debug)]
 pub struct CachedHandle<D, C> {

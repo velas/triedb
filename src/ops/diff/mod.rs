@@ -6,10 +6,11 @@ use crate::debug::{no_childs, OwnedData};
 use crate::gc::ReachableHashes;
 use crate::merkle::nibble::{self, Entry, Nibble};
 use crate::merkle::{Branch, Leaf, MerkleNode, MerkleValue};
+
 use crate::walker::inspector::{NoopInspector, TrieInspector};
 use crate::Database;
 use primitive_types::H256;
-use rlp::Rlp;
+
 use std::fmt;
 pub mod verify;
 
@@ -346,10 +347,7 @@ impl<'a> KeyedMerkleNode<'a> {
     fn merkle_node(&self) -> MerkleNode {
         match self {
             Self::Partial(n) => n.clone(),
-            Self::FullEncoded(_, n) => {
-                let rlp = Rlp::new(n);
-                MerkleNode::decode(&rlp).expect("Cannot deserialize value")
-            }
+            Self::FullEncoded(_, n) => crate::rlp::decode(n).expect("Cannot deserialize value"),
         }
     }
 }
@@ -625,6 +623,7 @@ impl<DB: Database + Send + Sync, F: FnMut(&[u8]) -> Vec<H256> + Clone + Send + S
                 return Changes::default();
             }
         };
+
         if !skip_root {
             ti.inspect_node(root_hash, data).unwrap();
         }

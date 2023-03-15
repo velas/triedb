@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::str::FromStr;
 
 use primitive_types::H256;
-use rlp::Rlp;
+
 use serde_json::json;
 
 use crate::cache::SyncCache;
@@ -13,6 +13,7 @@ use crate::gc::MapWithCounterCachedParam;
 use crate::gc::TrieCollection;
 use crate::merkle::MerkleNode;
 use crate::mutable::TrieMut;
+
 use crate::{debug, diff};
 
 #[cfg(feature = "tracing-enable")]
@@ -244,8 +245,7 @@ fn test_empty_tree_and_leaf() {
     }
     .unwrap();
 
-    let rlp = Rlp::new(raw_v);
-    let v = MerkleNode::decode(&rlp).unwrap();
+    let v: MerkleNode = crate::rlp::decode(raw_v).unwrap();
 
     log::info!("{:?}", v);
 

@@ -78,6 +78,6 @@ pub mod tests {
     }
     #[cfg(not(feature = "tracing-enable"))]
     pub fn tracing_sub_init() {
-        let _ = env_logger::Builder::new().parse_filters("info").try_init();
+        let _ = env_logger::Builder::new().parse_filters("error").try_init();
     }
 }

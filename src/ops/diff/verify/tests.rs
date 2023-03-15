@@ -6,13 +6,13 @@ use crate::debug::{DebugPrintExt, EntriesHex, InnerEntriesHex};
 use crate::gc::tests::{
     FixedKey, MixedNonUniqueValue, NodesGenerator, UniqueValue, VariableKey, RNG_DATA_SIZE,
 };
-use crate::merkle::MerkleNode;
 use crate::mutable::TrieMut;
 use crate::ops::diff::verify::VerificationError;
+
 use crate::{debug, diff, empty_trie_hash, verify_diff, Database, DiffChange as Change};
 use hex_literal::hex;
 use primitive_types::H256;
-use rlp::Rlp;
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha3::{Digest, Keccak256};
@@ -1622,8 +1622,7 @@ where
     {
         for (_k, v) in &patch.change.changes {
             if let Some(n) = v {
-                let rlp = Rlp::new(n);
-                let node = MerkleNode::decode(&rlp).unwrap();
+                let node = crate::rlp::decode(n).unwrap();
                 let childs = ReachableHashes::collect(&node, D::extract).childs();
                 for n in childs.0.into_iter().chain(childs.1) {
                     roots_set.remove(&n);
@@ -1983,4 +1982,247 @@ fn data_from_qc1() {
         serde_json::to_string_pretty(&entries_2).unwrap()
     );
     empty_keys_union_diff_intersection_test_body(entries_1, entries_2, true);
+}
+
+// this test was original error, but after fix serialization, is only example of usage reduce method
+#[test]
+#[should_panic = "Cant reduce, input valid"]
+fn data_from_qc2() {
+    tracing_sub_init();
+
+    let entries_1: EntriesHex = serde_json::from_str(
+        r#"[
+  [
+    "0xf30f",
+    "0x6c144af1669647efad4feba9c30009180e9d844672c1017a009bdcb6b6bb32c7"
+  ],
+  [
+    "0x000b33",
+    "0xa65b8663"
+  ],
+  [
+    "0xb0f77f0b7f33",
+    "0xe08df91f7bef9c2aeb117d8afb00c0a4fc00b8fcac010327aff400535d385501"
+  ],
+  [
+    "0xf0bb333fb7",
+    "0x5568e702e3c22b011b524ce26fb29ea336bddc8084c7b47cedff8d3ddcb8e5dc"
+  ],
+  [
+    "0xf3f0b7",
+    "0xf8e63e9312c1fa0b59653cc627562c5f824774374a8183afab15f70134d21e8c"
+  ],
+  [
+    "0x00f3",
+    "0x7bff657a"
+  ],
+  [
+    "0x000007",
+    "0x202eeaea"
+  ],
+  [
+    "0xf0",
+    "0x5b1222f8"
+  ],
+  [
+    "0x37f7bbfb",
+    "0x14858b60587d2b06531c1e4ac5d5231e6f96f3c46d6b23fd0d5df09682816ba0"
+  ],
+  [
+    "0x3fb03bf73f3b",
+    "0x19ca01d2"
+  ],
+  [
+    "0xf7fb",
+    "0x9501c26cfd01b2acff6b9feb9d98004be9ec32ffe28cd4ef1a5db84c05784983"
+  ],
+  [
+    "0xbf7b",
+    "0x4b055c40aae61e10d272009d5c1acad400fd4a442300edebff2733dee1fac0c0"
+  ],
+  [
+    "0x3fb737ff",
+    "0x2aa9ed57f83d9cb69c8f4854042fd96f8f16415e010763f1f79546d220428486"
+  ],
+  [
+    "0xbb",
+    "0x1eb922e3"
+  ],
+  [
+    "0x73",
+    "0x6bcf5e7334cd0e00c80106013021ac73037bb1a3daf9d6805b243852432e0001"
+  ],
+  [
+    "0x00",
+    "0x913b6f3c"
+  ],
+  [
+    "0xf330b730f0",
+    "0xa5bef3162562ffdd8523f33e27fcb23c8d05213c2dce7cb1c6a5d9f7c76832d2"
+  ],
+  [
+    "0xb3b7f70ffb",
+    "0xf4a500b5de0f0091c245810720d098904000df927a68ed4d13691957e02027fe"
+  ],
+  [
+    "0xff7000",
+    "0x890b3a8ed422e047fd7da0014a67ffaa058300a99aa0437a01ad014e6efe20ff"
+  ],
+  [
+    "0x33fb3f3f",
+    "0x292d01ff790c00bc3de801660000ff06f55e9529aa0c1dee00c2bac3e201847b"
+  ],
+  [
+    "0x377f7b3ff073",
+    "0xbeec13bd1dd60d6a7982f49e64967275e3f7259900f01fd5bdec25fb2cd41350"
+  ],
+  [
+    "0x3b",
+    "0xf48f38f23da27e28957a8ea59270a052e6157e329b3bde171353c7805905b7ad"
+  ],
+  [
+    "0x7b",
+    "0x3616d7966fabeaeb03daf401e3bf0c0826f65344baee87ff3e2d13754236ca79"
+  ],
+  [
+    "0x7bbf",
+    "0xbcf9697c0bc679ff5da78000818d1509104ba92ef459ff76738fff0c19223013"
+  ],
+  [
+    "0xbf",
+    "0x8303ff5be833a018bab53f00303fd5cd06b4fbb3873c416bf23e8808317d6a95"
+  ],
+  [
+    "0x0bf3f0bf",
+    "0xedfc20d9128d95085701899fff8ed5dcb7919434e3defff680699fcae5ebc02f"
+  ],
+  [
+    "0xbb703b",
+    "0x00e5d886d4e6a5b1da2f7ed0001f4053fdfbff3488ff00629a83d894d994e664"
+  ],
+  [
+    "0x33f3",
+    "0xb658a8c0ff8e387329887da3fd0130e5703bd4aff9b6d709c91de6a7432a436a"
+  ],
+  [
+    "0xfbb0",
+    "0xfffb9ab9969af7c850c4b3ac12123001a0705f502b0c202826e565a1e46cf4d8"
+  ],
+  [
+    "0x0303bbf7",
+    "0xa16546fc0095008ed3599d2ad051ffa77efffff74dd4e9464249e2a549fd37f9"
+  ],
+  [
+    "0x073f377b73",
+    "0x8dff04cdd9e0c04661bf0248cf4dbe537158749329b993440800c71f840081ce"
+  ],
+  [
+    "0x377b7030bfb7",
+    "0xa96445b1470ed4b351817c4900a253de3cffc57069c6239e0101056d1c290158"
+  ],
+  [
+    "0xb7",
+    "0x9709ef8771813000fb638b415a39539e91ad00012634d746f7f439d23a0101fe"
+  ],
+  [
+    "0xbb3bb7",
+    "0x32c35437ff34a4bd553d97124e46d71327df74dd42362c0120e92b01ef11fa7e"
+  ],
+  [
+    "0xf3373f7f07",
+    "0x450cc5b5459f90f1007af7330100732b4ef93ec12b4e4b0ddf4f7b35004f43fa"
+  ],
+  [
+    "0x70fbbb0ff3",
+    "0xf1e5c0217bcbff31d5f0ef01bae7ffd860ffd7291fe9a94fd50bb361b9201925"
+  ],
+  [
+    "0x3f3f",
+    "0x8714b788e2506f05df258fb0d92eefa4ac1e6754436a259926531662dfaba3fc"
+  ],
+  [
+    "0x703f33b70f",
+    "0xd218f04cd8b3ff90eb21b188a3acd7012ab6cc3b1be5c2295cb250c42101c4e2"
+  ],
+  [
+    "0x3fb7",
+    "0x3b38075b7f4828285c78f28b5fff3544f4b77a1a45c661dbf1280dd9afe7d20e"
+  ],
+  [
+    "0x700307333fb3",
+    "0x27c6a58892cd54f1362818863b929082cff32becba5a00ffb4f7fb019d5f39a8"
+  ],
+  [
+    "0x7f30bf07bfb3",
+    "0xc4489cff00b468f10e71fc07a063c79719c37275eb309533b5003f5abe9f2093"
+  ],
+  [
+    "0x7b3ff7003bbf",
+    "0x9c28c3d0d5d148ff9476b4b26d05f2293bb074c527cb35f9150dca0ba8b142ef"
+  ],
+  [
+    "0x73377ff307fb",
+    "0xd5c3b2289cdf016d105cb36bc0fc2c19e2bfe102dfa0f0847f2eaf4e33a90010"
+  ],
+  [
+    "0x3037b0ff00",
+    "0xd7470f3b385d2c06a3b7ea577ff701a49000016d33d79447054e4167216d5174"
+  ],
+  [
+    "0x0bbf",
+    "0xcf6af87b00b98c8f003a5b0020dbef6561df4653a914fb3239a7320b97e85ece"
+  ],
+  [
+    "0x03f33b",
+    "0x5537d535923d60864d01160ca82701007fb79bcaf113e79516003a4da9cbf282"
+  ],
+  [
+    "0xb3733ff0b7",
+    "0x0141d5f45300cc13c166e61ae39ce8eee92b0133fd46566d0029d605aae5518e"
+  ]
+]"#,
+    )
+    .unwrap();
+
+    log::warn!(
+        "entries_1 = {}",
+        serde_json::to_string_pretty(&entries_1).unwrap()
+    );
+
+    fn reduce(mut entries: EntriesHex, func: impl Fn(&EntriesHex) -> bool) {
+        if func(&entries) {
+            panic!("Cant reduce, input valid")
+        }
+        let mut idx_remove = 0;
+        while dbg!(entries.data.len()) > dbg!(idx_remove) {
+            let mut entries_cloned = entries.clone();
+            entries_cloned.data.remove(idx_remove);
+            let stil_panic = !func(&entries_cloned);
+            if stil_panic {
+                entries = entries_cloned
+            } else {
+                idx_remove += 1;
+            }
+        }
+        log::warn!(
+            "result_entries = {}",
+            serde_json::to_string_pretty(&entries).unwrap()
+        );
+    }
+
+    reduce(entries_1, |entries_1| {
+        std::panic::catch_unwind(|| {
+            let collection = TrieCollection::new(SyncDashMap::default());
+            let first_root = insert_entries(&collection, empty_trie_hash(), entries_1);
+            debug::draw(
+                &collection.database,
+                debug::Child::Hash(first_root.root),
+                vec![],
+                EntriesHex::extract,
+            )
+            .print();
+        })
+        .is_ok()
+    });
+    // panic!();
 }

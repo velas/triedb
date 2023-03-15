@@ -2,10 +2,6 @@
 
 use std::{cmp::min, hash::Hash};
 
-use rlp::{Rlp, RlpStream};
-
-use crate::Result;
-
 use super::{Extension, MerkleValue};
 
 /// Represents a nibble. A 16-variant value.
@@ -156,77 +152,6 @@ pub fn into_key(nibble: NibbleSlice) -> Vec<u8> {
     }
 
     ret
-}
-
-/// Decode a nibble from RLP.
-pub fn decode(rlp: &Rlp) -> Result<(NibbleVec, NibbleType)> {
-    let mut vec = NibbleVec::new();
-
-    let data = rlp.data()?;
-    let start_odd = data[0] & 0b00010000 == 0b00010000;
-    let start_index = if start_odd { 1 } else { 2 };
-    let is_leaf = data[0] & 0b00100000 == 0b00100000;
-
-    let len = data.len() * 2;
-
-    for i in start_index..len {
-        if i & 1 == 0 {
-            // even
-            vec.push(((data[i / 2] & 0xf0) >> 4).into());
-        } else {
-            vec.push((data[i / 2] & 0x0f).into());
-        }
-    }
-
-    Ok((
-        vec,
-        if is_leaf {
-            NibbleType::Leaf
-        } else {
-            NibbleType::Extension
-        },
-    ))
-}
-
-/// Encode a nibble into the given RLP stream.
-pub fn encode(vec: NibbleSlice, typ: NibbleType, s: &mut RlpStream) {
-    let mut ret: Vec<u8> = Vec::new();
-
-    if vec.len() & 1 == 0 {
-        // even
-        ret.push(0b00000000);
-
-        for (i, val) in vec.iter().enumerate() {
-            if i & 1 == 0 {
-                let v: u8 = (*val).into();
-                ret.push(v << 4);
-            } else {
-                let end = ret.len() - 1;
-                let v: u8 = (*val).into();
-                ret[end] |= v;
-            }
-        }
-    } else {
-        ret.push(0b00010000);
-
-        for (i, val) in vec.iter().enumerate() {
-            if i & 1 == 0 {
-                let end = ret.len() - 1;
-                let v: u8 = (*val).into();
-                ret[end] |= v;
-            } else {
-                let v: u8 = (*val).into();
-                ret.push(v << 4);
-            }
-        }
-    }
-
-    ret[0] |= match typ {
-        NibbleType::Leaf => 0b00100000,
-        NibbleType::Extension => 0b00000000,
-    };
-
-    s.append(&ret);
 }
 
 // Represents trie some db value, and nibble path, to help retrive this value from db.

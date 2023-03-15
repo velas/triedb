@@ -16,7 +16,6 @@ use dashmap::{mapref::entry::Entry, DashMap};
 use derivative::*;
 use log::*;
 use primitive_types::H256;
-use rlp::Rlp;
 
 use crate::ops::debug::no_childs;
 
@@ -212,7 +211,7 @@ impl<D: DbCounter + Database> TrieCollection<D> {
 
         // verifying, that `patch_dependencies` haven't left db since patch verification moment
         for (_, is_direct, value) in patch.sorted_changes.iter() {
-            let node = MerkleNode::decode(&Rlp::new(value))?;
+            let node = crate::rlp::decode(value)?;
             let childs = if *is_direct {
                 ReachableHashes::collect(&node, child_extractor.clone()).any_childs()
             } else {
@@ -385,8 +384,7 @@ impl<C> DbCounter for MapWithCounterCachedParam<C> {
         match self.db.data.entry(key) {
             Entry::Occupied(_) => {}
             Entry::Vacant(v) => {
-                let rlp = Rlp::new(value);
-                let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                let node = crate::rlp::decode(value).expect("Unable to decode Merkle Node");
                 trace!("inserting node {:?}=>{:?}", key, node);
                 let childs = ReachableHashes::collect(&node, child_extractor).any_childs();
                 for hash in childs {
@@ -420,8 +418,7 @@ impl<C> DbCounter for MapWithCounterCachedParam<C> {
                 // in this code we lock data, so it's okay to check counter from separate function
                 if self.gc_count(key) == 0 {
                     let value = entry.remove();
-                    let rlp = Rlp::new(&value);
-                    let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+                    let node = crate::rlp::decode(&value).expect("Unable to decode Merkle Node");
                     let childs = ReachableHashes::collect(&node, child_extractor).childs();
                     return (
                         childs
@@ -526,17 +523,16 @@ pub mod tests {
     };
 
     use crate::{
-        debug,
+        debug::{self, tests::tracing_sub_init, DebugPrintExt},
         merkle::nibble::{into_key, Nibble},
-        MerkleNode,
     };
-    use rlp::Rlp;
 
     use quickcheck::TestResult;
     use quickcheck_macros::quickcheck;
 
     use quickcheck::{Arbitrary, Gen};
     use serde::{Deserialize, Serialize};
+    use serde_json::json;
 
     use super::*;
     use crate::cache::Cache;
@@ -738,6 +734,8 @@ pub mod tests {
             for (key, value) in keys_second.into_iter() {
                 entries.insert(key.as_ref().to_vec(), value.0.to_vec());
             }
+            // remove empty value
+            entries.remove(&vec![]);
             Self {
                 data: debug::EntriesHex::new(
                     entries.into_iter().map(|(k, v)| (k, Some(v))).collect(),
@@ -768,36 +766,36 @@ pub mod tests {
                 _v: PhantomData,
             }
         }
-        // fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-        //     // Because EntriesHex doesnt have any Arbitrary implementation, we should propagate it to NodeGenerator<EntriesHex,_,_>::shrink
-        //     let data: Vec<_> = self
-        //         .data
-        //         .data
-        //         .iter()
-        //         .cloned()
-        //         .map(|(k, v)| {
-        //             (
-        //                 k,
-        //                 NodesGenerator {
-        //                     data: v,
-        //                     _k: self._k,
-        //                     _v: self._v,
-        //                 },
-        //             )
-        //         })
-        //         .collect();
-        //     Box::new(data.shrink().map(|vec_kv| {
-        //         // make uniq keys
-        //         let entries: HashMap<_, _> = vec_kv.into_iter().map(|(k, v)| (k, v.data)).collect();
-        //         Self {
-        //             data: debug::InnerEntriesHex {
-        //                 data: entries.into_iter().collect(),
-        //             },
-        //             _k: PhantomData,
-        //             _v: PhantomData,
-        //         }
-        //     }))
-        // }
+        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+            // Because EntriesHex doesnt have any Arbitrary implementation, we should propagate it to NodeGenerator<EntriesHex,_,_>::shrink
+            let data: Vec<_> = self
+                .data
+                .data
+                .iter()
+                .cloned()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        NodesGenerator {
+                            data: v,
+                            _k: self._k,
+                            _v: self._v,
+                        },
+                    )
+                })
+                .collect();
+            Box::new(data.shrink().map(|vec_kv| {
+                // make uniq keys
+                let entries: HashMap<_, _> = vec_kv.into_iter().map(|(k, v)| (k, v.data)).collect();
+                Self {
+                    data: debug::InnerEntriesHex {
+                        data: entries.into_iter().collect(),
+                    },
+                    _k: PhantomData,
+                    _v: PhantomData,
+                }
+            }))
+        }
     }
 
     impl<K> Arbitrary for NodesGenerator<debug::InnerEntriesHex, K, UniqueValue>
@@ -919,8 +917,7 @@ pub mod tests {
         // CHECK CHILDS counts
         println!("root={}", root_guard.root);
         let node = collection.database.get(root_guard.root);
-        let rlp = Rlp::new(node);
-        let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+        let node = crate::rlp::decode(node).expect("Unable to decode Merkle Node");
         let childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 
@@ -942,8 +939,7 @@ pub mod tests {
         assert_eq!(collection.database.gc_count(another_root.root), 1);
 
         let node = collection.database.get(another_root.root);
-        let rlp = Rlp::new(node);
-        let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+        let node = crate::rlp::decode(node).expect("Unable to decode Merkle Node");
         let another_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(another_root_childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 
@@ -980,8 +976,7 @@ pub mod tests {
         let latest_root = collection.apply_increase(patch, no_childs);
 
         let node = collection.database.get(latest_root.root);
-        let rlp = Rlp::new(node);
-        let node = MerkleNode::decode(&rlp).expect("Unable to decode Merkle Node");
+        let node = crate::rlp::decode(node).expect("Unable to decode Merkle Node");
         let latest_root_childs = ReachableHashes::collect(&node, no_childs).childs();
         assert_eq!(latest_root_childs.0.len(), 2); // "bb..", "ffaa", check test doc comments
 
@@ -1285,5 +1280,73 @@ pub mod tests {
         }
 
         TestResult::passed()
+    }
+
+    #[test]
+    fn test_many_inline_nodes() {
+        tracing_sub_init();
+        let first = json!([
+            ["0x70", "0x01"],
+            ["0x7010", "0x02"],
+            ["0x701101", "0x03"],
+            ["0x70110001", "0x04"],
+            ["0x7011000001", "0x05"],
+            ["0x701100000001", "0x06"],
+            ["0x7011000000001", "0x08"],
+            ["0x7011111", "0x09"],
+            ["0x70111110", "0x0a"],
+            ["0x70111111", "0x0b"],
+        ]);
+
+        let first_entries: debug::EntriesHex = serde_json::from_value(first).unwrap();
+
+        let collection = TrieCollection::new(SyncDashMap::default());
+        let mut trie = collection.trie_for(empty_trie_hash());
+        for (key, value) in &first_entries.data {
+            trie.insert(key, value.as_ref().unwrap());
+        }
+        let patch = trie.into_patch();
+        let first_root = collection.apply_increase(patch, no_childs);
+
+        let new_trie = collection.trie_for(first_root.root);
+        for (key, values) in &first_entries.data {
+            assert_eq!(&TrieMut::get(&new_trie, key), values)
+        }
+
+        debug::draw(
+            &collection.database,
+            debug::Child::Hash(first_root.root),
+            vec![],
+            no_childs,
+        )
+        .print();
+    }
+
+    #[test]
+    fn data_from_qc3() {
+        tracing_sub_init();
+        let first = json!([["0x00f3", "0x7bff657a"], ["0x00", "0x913b6f3c"]]);
+        let first_entries: debug::EntriesHex = serde_json::from_value(first).unwrap();
+
+        let collection = TrieCollection::new(SyncDashMap::default());
+        let mut trie = collection.trie_for(empty_trie_hash());
+        for (key, value) in &first_entries.data {
+            trie.insert(key, value.as_ref().unwrap());
+        }
+        let patch = trie.into_patch();
+        let first_root = collection.apply_increase(patch, no_childs);
+
+        let new_trie = collection.trie_for(first_root.root);
+        for (key, values) in &first_entries.data {
+            assert_eq!(&TrieMut::get(&new_trie, key), values)
+        }
+
+        debug::draw(
+            &collection.database,
+            debug::Child::Hash(first_root.root),
+            vec![],
+            no_childs,
+        )
+        .print();
     }
 }

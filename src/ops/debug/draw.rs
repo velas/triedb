@@ -1,10 +1,10 @@
 use std::borrow::Borrow;
 
 use primitive_types::H256;
-use rlp::Rlp;
 
 use crate::merkle::nibble::NibbleVec;
 use crate::merkle::{Branch, Extension, Leaf, MerkleNode, MerkleValue};
+
 use crate::{empty_trie_hash, Database};
 
 use super::no_childs;
@@ -161,7 +161,7 @@ where
     let (hash, node, inline) = match root {
         Child::Hash(hash) => {
             let value = db.borrow().get(hash);
-            (hash, MerkleNode::decode(&Rlp::new(value)).unwrap(), false)
+            (hash, crate::rlp::decode(value).unwrap(), false)
         }
         Child::Inline(node) => (zero, (*node).clone(), true),
     };
