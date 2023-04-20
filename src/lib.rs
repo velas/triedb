@@ -26,7 +26,7 @@ mod impls;
 mod memory;
 mod mutable;
 mod ops;
-mod rlp;
+pub mod rlp;
 mod walker;
 
 pub use error::Error;
