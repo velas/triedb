@@ -4,23 +4,20 @@ version = "0.5.0"
 edition = "2018"
 license = "Apache-2.0"
 description = "Lightweight Ethereum world state storage."
-repository = "https://github.com/hrls/triedb"
+repository = "https://github.com/velas/triedb"
 
 [lib]
 name = "triedb"
 
-
 [dependencies]
 sha3 = "0.9.1"
 rlp = "0.5.0"
-primitive-types = { version = "0.11.0", features = ["rlp", "serde"] }
+primitive-types = { version = "0.12", features = ["rlp", "serde"] }
 thiserror = "1.0.23"
 rocksdb_lib = { package = "rocksdb", version = "0.21", default-features = false, optional = true }
-
-# rocksdb_lib = { package = "rocksdb", version = "0.16.0", default-features = false, optional = true }
 dashmap = "4.0"
-log="0.4"
-derivative="2.2"
+log = "0.4"
+derivative = "2.2"
 anyhow = "1.0"
 rayon = "*"
 tracing-attributes = {version = "0.1.11", optional = true}
@@ -38,9 +35,8 @@ rand = "0.8.5"
 serde_json = "1.0.89"
 tempfile = "3.2.0"
 hex-literal="0.3"
-env_logger = "0.9"
+env_logger = "0.10.0"
 tracing-subscriber = {version="0.3", features=["json"]}
-
 
 [features]
 default = ["rocksdb"]
